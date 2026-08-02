@@ -655,7 +655,7 @@ func (s *Store) CreateEnrollmentCode(ctx context.Context, principal control.Prin
 
 func (s *Store) ExchangeEnrollmentCode(ctx context.Context, code string) (control.IssuedDeviceToken, control.EnrollmentCode, error) {
 	parts := strings.SplitN(code, "_", 4)
-	if len(parts) != 4 || parts[0] != "outback" || parts[1] != "enr" || parts[2] == "" || parts[3] == "" {
+	if len(parts) != 4 || !credentialPrefix(parts[0]) || parts[1] != "enr" || parts[2] == "" || parts[3] == "" {
 		return control.IssuedDeviceToken{}, control.EnrollmentCode{}, control.ErrUnauthenticated
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1286,7 +1286,7 @@ func (s *Store) digest(token string) string {
 
 func parseToken(token string) (control.PrincipalKind, string, bool) {
 	parts := strings.SplitN(token, "_", 4)
-	if len(parts) != 4 || parts[0] != "outback" || parts[2] == "" || parts[3] == "" {
+	if len(parts) != 4 || !credentialPrefix(parts[0]) || parts[2] == "" || parts[3] == "" {
 		return "", "", false
 	}
 	switch parts[1] {
@@ -1298,6 +1298,8 @@ func parseToken(token string) (control.PrincipalKind, string, bool) {
 		return "", "", false
 	}
 }
+
+func credentialPrefix(value string) bool { return value == "outback" || value == "rtest" }
 
 func randomID(prefix string) (string, error) {
 	value := make([]byte, 12)

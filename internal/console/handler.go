@@ -91,6 +91,7 @@ func (s *server) renderPage(response http.ResponseWriter, request *http.Request,
 		Head: []g.Node{
 			h.Meta(h.Name("theme-color"), h.Content("#0d0d0f")),
 			h.Link(h.Rel("icon"), h.Href("/app/assets/favicon.svg")),
+			h.Link(h.Rel("stylesheet"), h.Href("/app/assets/document.css")),
 			h.Script(h.Type("module"), h.Src("/app/assets/console.js")),
 		},
 		Body: []g.Node{g.El("autback-console",

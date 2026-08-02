@@ -41,6 +41,7 @@ func TestConsoleDocumentIsAStreamFirstReadOnlyShell(t *testing.T) {
 		`data-init="@get(&#39;/app/updates?route=overview&#39;, {openWhenHidden: true})"`,
 		`<autback-console`,
 		`route-kind="overview"`,
+		`href="/app/assets/document.css"`,
 		`/app/assets/datastar.js`,
 		`/app/assets/console.js`,
 	} {
@@ -56,6 +57,21 @@ func TestConsoleDocumentIsAStreamFirstReadOnlyShell(t *testing.T) {
 	}
 	if csp := response.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "script-src 'self' 'unsafe-eval'") {
 		t.Fatalf("CSP=%q", csp)
+	}
+}
+
+func TestConsoleDocumentStylesRemoveBrowserPageMargins(t *testing.T) {
+	handler, err := New(Config{Source: &fakeSource{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app/assets/document.css", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "margin: 0") {
+		t.Fatalf("document stylesheet does not reset the browser margin:\n%s", response.Body.String())
 	}
 }
 

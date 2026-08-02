@@ -86,15 +86,5 @@ if [[ "${downloaded}" == true ]]; then
   exit 0
 fi
 
-if [[ "${OUTBACK_ALLOW_SOURCE_FALLBACK:-false}" != true ]]; then
-  printf 'outback release %s is unavailable and source fallback is disabled\n' "${OUTBACK_VERSION}" >&2
-  exit 1
-fi
-: "${OUTBACK_ACTION_ROOT:?OUTBACK_ACTION_ROOT is required for source fallback}"
-go -C "${OUTBACK_ACTION_ROOT}" build -trimpath -o "${binary}" ./cmd/outback
-if [[ "$("${binary}" version)" != "${OUTBACK_VERSION}" ]]; then
-  printf 'checked-out outback source does not report requested version %s\n' "${OUTBACK_VERSION}" >&2
-  rm -f "${binary}"
-  exit 1
-fi
-record_source source
+printf 'outback release %s is unavailable\n' "${OUTBACK_VERSION}" >&2
+exit 1

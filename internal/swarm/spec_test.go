@@ -11,7 +11,7 @@ import (
 
 func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 	spec := Spec{
-		ID: "outback-job-1", Repository: "example/service", Suite: "integration", Runner: "standard",
+		ID:    "outback-job-1",
 		Image: "runner:test", CASAddress: "127.0.0.1:50051", CASInstance: "outback",
 		RootDigest: "abc/123", JobsRoot: "/var/lib/outback/jobs", Command: []string{"go", "test", "./..."},
 		Timeout: 15 * time.Minute, CPUs: "2", Memory: "4g",
@@ -35,6 +35,7 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 		{"--mount", "type=bind,src=/usr/local/lib/outback/outback-job-entrypoint,dst=/usr/local/bin/outback-job-entrypoint,readonly"},
 		{"--label", "outback.project=prj-example"},
 		{"--label", "outback.job=outback-job-1"},
+		{"--label", "outback.image=cnVubmVyOnRlc3Q"},
 		{"--env", "OUTBACK_WORKSPACE=/var/lib/outback/jobs/outback-job-1/workspace"},
 		{"--env", "OUTBACK_WORKER_LOCK=/var/lib/outback/jobs/.worker.lock"},
 		{"--env", "OUTBACK_HOST_UID=123"},

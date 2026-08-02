@@ -48,7 +48,7 @@ jq -n \
   --arg url "https://${server_names%%,*}" \
   --arg image "${OUTBACK_PROJECT_IMAGE:-}" \
   --arg ca "${ca_file}" \
-  '{backend:"service",url:$url,service:{image:$image,cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
+	'{url:$url,service:{image:$image,cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
 install -m 0755 "${build_dir}/outback" "${install_dir}/outback"

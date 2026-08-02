@@ -25,7 +25,7 @@ go -C "${OUTBACK_DIR}" build -trimpath -o "${OUTBACK_TMP_DIR}/outback" ./cmd/out
 config_file="${OUTBACK_TMP_DIR}/service-e2e-config.json"
 umask 077
 jq -n --arg url "${service_url}" --arg ca "${ca_file}" \
-  '{backend:"service",url:$url,service:{cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
+	'{url:$url,service:{cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
 export OUTBACK_CONFIG="${config_file}"

@@ -39,50 +39,24 @@ tasks:
       - ./scripts/provision.zsh
 
   deploy:
-    cmds:
-      - ./scripts/deploy.zsh
-
-  deploy:standards:
-    desc: Deploy REAPI and BuildKit to an explicitly supplied existing host; never provisions
-    cmds:
-      - ./scripts/deploy-standards.zsh
-
-  deploy:swarm:
-    desc: Deploy the shared service, CAS, private Docker Swarm jobs, and BuildKit to an explicitly supplied existing host
-    cmds:
-      - ./scripts/deploy-swarm.zsh
-
-  deploy:service:
     desc: Deploy the shared service to an explicitly supplied existing host; never provisions
     cmds:
       - ./scripts/deploy-swarm.zsh
 
-  install:
+  deploy:service:
+    desc: Alias for the canonical deployment
     cmds:
-      - ./scripts/install-cli.zsh
+      - task: deploy
 
   e2e:
-    cmds:
-      - ./scripts/e2e.zsh
-
-  e2e:standards:
-    cmds:
-      - ./scripts/e2e-standards.zsh
-
-  e2e:swarm:local:
-    desc: Run the complete CAS and Docker Swarm proof on the local Docker engine
-    cmds:
-      - ./scripts/e2e-swarm-local.zsh
-
-  e2e:service:local:
-    desc: Run the shared-service control plane, scoped mTLS, generic OCI, Testcontainers, and BuildKit proof locally
+    desc: Run the complete shared-service proof locally
     cmds:
       - ./scripts/e2e-service-local.zsh
 
-  e2e:swarm:
-    desc: Run the complete proof against an explicitly supplied existing host
+  e2e:service:local:
+    desc: Alias for the canonical local proof
     cmds:
-      - ./scripts/e2e-swarm.zsh
+      - task: e2e
 
   e2e:service:
     desc: Run the shared-service proof against an explicitly supplied existing host

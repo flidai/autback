@@ -18,9 +18,6 @@ const (
 
 type Spec struct {
 	ID                 string
-	Repository         string
-	Suite              string
-	Runner             string
 	Image              string
 	CASAddress         string
 	CASInstance        string
@@ -52,9 +49,7 @@ func CreateArgs(spec Spec) []string {
 		"--label", managedLabel + "=true",
 		"--label", "outback.project=" + spec.ProjectID,
 		"--label", "outback.job=" + spec.ID,
-		"--label", "outback.repository=" + encodeLabel(spec.Repository),
-		"--label", "outback.suite=" + encodeLabel(spec.Suite),
-		"--label", "outback.runner=" + encodeLabel(spec.Runner),
+		"--label", "outback.image=" + encodeLabel(spec.Image),
 		"--label", "outback.timeout_seconds=" + strconv.Itoa(int(spec.Timeout.Seconds())),
 		"--label", "outback.root_digest=" + spec.RootDigest,
 		"--mode", "replicated-job", "--replicas", "1", "--max-concurrent", "1",
@@ -105,7 +100,7 @@ func CreateArgs(spec Spec) []string {
 	for _, key := range keys {
 		args = append(args, "--env", key+"="+spec.Environment[key])
 	}
-	args = append(args, fallback(spec.Image, "outback-runner-standard:local"))
+	args = append(args, spec.Image)
 	return append(args, spec.Command...)
 }
 

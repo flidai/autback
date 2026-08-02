@@ -23,7 +23,6 @@ import (
 	"github.com/flidai/outback/internal/credentialfiles"
 	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
 	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
-	"github.com/flidai/outback/internal/profile"
 	"github.com/flidai/outback/internal/projectlink"
 	"github.com/flidai/outback/internal/protocol"
 	"github.com/flidai/outback/internal/workspace"
@@ -323,7 +322,7 @@ func serviceInit(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	if _, err := profile.Root(ctx, streams.Dir); err != nil {
+	if _, err := workspace.Root(ctx, streams.Dir); err != nil {
 		return fail(streams.Stderr, err)
 	}
 	path, err := projectlink.Write(streams.Dir, selected.Slug)
@@ -390,7 +389,7 @@ func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	if _, err := authorizedProject(ctx, api, project); err != nil {
 		return fail(streams.Stderr, err)
 	}
-	root, err := profile.Root(ctx, streams.Dir)
+	root, err := workspace.Root(ctx, streams.Dir)
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
@@ -758,7 +757,7 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 	if len(args) == 0 {
 		args = []string{"."}
 	}
-	if _, err := profile.Root(ctx, streams.Dir); err != nil {
+	if _, err := workspace.Root(ctx, streams.Dir); err != nil {
 		return fail(streams.Stderr, err)
 	}
 	random, err := jobID()
@@ -883,7 +882,7 @@ func serviceList(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	writer := tabwriter.NewWriter(streams.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "JOB\tSTATUS\tPROJECT\tAGE\tDURATION")
 	for _, job := range jobs {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", job.ID, job.Status, job.Repository, time.Since(job.CreatedAt).Round(time.Second), duration(job))
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", job.ID, job.Status, job.ProjectID, time.Since(job.CreatedAt).Round(time.Second), duration(job))
 	}
 	_ = writer.Flush()
 	return 0
@@ -1027,8 +1026,8 @@ func grpcAddress(endpoint string) string {
 
 func protocolJob(input *outbackv1.Job) protocol.Job {
 	job := protocol.Job{
-		ID: input.Id, Repository: input.ProjectId, Suite: "exec", Runner: "oci", Command: append([]string(nil), input.Command...),
-		SourceDigest: input.RootDigest, Status: protocolStatus(input.Status),
+		ID: input.Id, ProjectID: input.ProjectId, Image: input.Image, Command: append([]string(nil), input.Command...),
+		RootDigest: input.RootDigest, Status: protocolStatus(input.Status),
 		CancelRequested: input.CancelRequested, ErrorMessage: input.ErrorMessage, WorkerID: input.WorkerId,
 	}
 	if input.Timeout != nil {

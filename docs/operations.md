@@ -47,9 +47,9 @@ The hourly maintenance job keeps completed Swarm services for one hour and durab
 logs/workspaces for seven days. Project caches use a 12 GiB high watermark and are pruned
 oldest-first to 8 GiB, but only while the exclusive worker lock is idle. At 85% filesystem
 use, the same cache pruning runs and BuildKit retention tightens from 10 GiB to 4 GiB.
-The shell fallback removes only terminal services older than 24 hours. Its cutoff is
+The host janitor removes only terminal services older than 24 hours. Its cutoff is
 independent because Swarm does not expose the task completion timestamp in `service ls`.
-`OUTBACK_SERVICE_FALLBACK_RETENTION_SECONDS`, `OUTBACK_JOB_RETENTION_MINUTES`,
+`OUTBACK_ORPHAN_RETENTION_SECONDS`, `OUTBACK_JOB_RETENTION_MINUTES`,
 `OUTBACK_CACHE_HIGH_BYTES`, `OUTBACK_CACHE_LOW_BYTES`, and `OUTBACK_DISK_HIGH_PERCENT` override
 these defaults for a larger worker.
 
@@ -60,7 +60,7 @@ ports, and a backup/restore drill—is recorded in
 
 ## Deployment and first login
 
-`task deploy:swarm` (also exposed as `task deploy:service`) requires an explicit existing
+`task deploy` (also exposed as `task deploy:service`) requires an explicit existing
 host and SSH identity. It never provisions or replaces infrastructure. It installs the
 server and static job entrypoint, starts pinned CAS/BuildKit images, initializes Swarm,
 bootstraps the control database once, copies the private CA locally, stores the one-time
@@ -69,7 +69,7 @@ device token in the OS keychain, then removes the bootstrap handoff file from th
 ```console
 OUTBACK_SERVER_IP=62.238.54.70 \
 OUTBACK_SSH_USER=developer \
-OUTBACK_SSH_KEY=~/.ssh/outback-poc \
+OUTBACK_SSH_KEY=~/.ssh/id_ed25519 \
 OUTBACK_PROJECT=leapview \
 OUTBACK_PROJECT_NAME=LeapView \
 OUTBACK_PROJECT_IMAGE=ghcr.io/example/ci@sha256:... \

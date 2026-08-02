@@ -22,6 +22,7 @@ import (
 	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
 	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
 	"github.com/flidai/outback/internal/protocol"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -211,10 +212,10 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 	}
 	for index, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
-			copyRequest := *request
+			copyRequest := proto.Clone(request).(*outbackv1.PrepareJobRequest)
 			copyRequest.IdempotencyKey = fmt.Sprintf("invalid-cache-%02d", index)
 			copyRequest.Caches = test.caches
-			if _, err := client.PrepareJob(ctx, connect.NewRequest(&copyRequest)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			if _, err := client.PrepareJob(ctx, connect.NewRequest(copyRequest)); connect.CodeOf(err) != connect.CodeInvalidArgument {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -401,9 +402,9 @@ func TestAdmissionIdempotencyReplaysResourcesAndRejectsChangedRequests(t *testin
 	if second.Msg.Job.Id != first.Msg.Job.Id {
 		t.Fatalf("replayed job ID = %q, want %q", second.Msg.Job.Id, first.Msg.Job.Id)
 	}
-	changed := *request
+	changed := proto.Clone(request).(*outbackv1.PrepareJobRequest)
 	changed.Command = []string{"task", "ci"}
-	if _, err := client.PrepareJob(ctx, connect.NewRequest(&changed)); connect.CodeOf(err) != connect.CodeAlreadyExists {
+	if _, err := client.PrepareJob(ctx, connect.NewRequest(changed)); connect.CodeOf(err) != connect.CodeAlreadyExists {
 		t.Fatalf("changed idempotent request error = %v", err)
 	}
 
@@ -673,7 +674,7 @@ func (f *fakeScheduler) Create(_ context.Context, job control.Job) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, job)
-	f.jobs[job.ID] = protocol.Job{ID: job.ID, Repository: job.ProjectID, Command: job.Command, Status: protocol.StatusQueued, CreatedAt: job.CreatedAt, TimeoutSeconds: int(job.Timeout.Seconds())}
+	f.jobs[job.ID] = protocol.Job{ID: job.ID, ProjectID: job.ProjectID, Image: job.Image, Command: job.Command, Status: protocol.StatusQueued, CreatedAt: job.CreatedAt, TimeoutSeconds: int(job.Timeout.Seconds())}
 	return nil
 }
 

@@ -49,7 +49,7 @@ func specForJob(config Config, job control.Job) swarm.Spec {
 		caches = append(caches, swarm.CacheMount{Name: cache.Name, Target: cache.Target})
 	}
 	return swarm.Spec{
-		ID: job.ID, Repository: job.ProjectID, Suite: "exec", Runner: "oci",
+		ID:    job.ID,
 		Image: job.Image, CASAddress: config.CASAddress, CASInstance: config.CASInstance,
 		RootDigest: job.RootDigest, JobsRoot: config.JobsRoot, Command: job.Command,
 		WorkingDirectory: job.WorkingDirectory, Environment: job.Environment,
@@ -110,7 +110,7 @@ func (s *Scheduler) Cancel(ctx context.Context, id string) error {
 }
 
 func (s *Scheduler) ManagedJobs(ctx context.Context) ([]protocol.Job, error) {
-	return s.config.Client.List(ctx, "", 0)
+	return s.config.Client.List(ctx)
 }
 
 func (s *Scheduler) Remove(ctx context.Context, id string) error {

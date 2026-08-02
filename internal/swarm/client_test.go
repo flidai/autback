@@ -32,8 +32,8 @@ func TestStatusReadsServiceAndTaskState(t *testing.T) {
 		"service inspect outback-job-1": `[{
           "CreatedAt":"2026-08-01T10:00:00Z",
           "Spec":{"Name":"outback-job-1","Labels":{
-            "outback.managed":"true","outback.repository":"ZXhhbXBsZS9zZXJ2aWNl",
-            "outback.suite":"aW50ZWdyYXRpb24","outback.runner":"c3RhbmRhcmQ",
+            "outback.managed":"true","outback.project":"prj-example",
+            "outback.image":"Z2hjci5pby9leGFtcGxlL3J1bm5lckBzaGEyNTY6YWJj",
             "outback.timeout_seconds":"900","outback.root_digest":"abc/123"
           },"TaskTemplate":{"ContainerSpec":{"Args":["go","test","./..."]}}}
         }]`,
@@ -49,7 +49,7 @@ func TestStatusReadsServiceAndTaskState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status != protocol.StatusSucceeded || job.Repository != "example/service" || job.Suite != "integration" {
+	if job.Status != protocol.StatusSucceeded || job.ProjectID != "prj-example" || job.Image != "ghcr.io/example/runner@sha256:abc" {
 		t.Fatalf("job = %#v", job)
 	}
 	if job.ExitCode == nil || *job.ExitCode != 0 || job.FinishedAt == nil {
@@ -122,18 +122,12 @@ func TestLogsUseDockerServiceLogDriver(t *testing.T) {
 	}
 }
 
-func TestDockerSSHTransportIsNonInteractiveWithoutAKeyFile(t *testing.T) {
-	command := (&dockerCommander{binary: "docker", host: "ssh://developer@worker"}).command(context.Background(), "info")
-	var sshCommand string
-	for _, item := range command.Env {
-		if strings.HasPrefix(item, "DOCKER_SSH_COMMAND=") {
-			sshCommand = item
-			break
-		}
+func TestCreateRejectsMissingProjectImage(t *testing.T) {
+	commands := &fakeCommander{outputs: map[string]string{}}
+	if _, err := newClient(commands).Create(context.Background(), Spec{ID: "outback-job-1"}); err == nil || !strings.Contains(err.Error(), "image") {
+		t.Fatalf("Create() error = %v", err)
 	}
-	for _, want := range []string{"IgnoreUnknown=UseKeychain", "BatchMode=yes", "StrictHostKeyChecking=accept-new"} {
-		if !strings.Contains(sshCommand, want) {
-			t.Fatalf("DOCKER_SSH_COMMAND %q missing %q", sshCommand, want)
-		}
+	if len(commands.runs) != 0 {
+		t.Fatalf("Docker invoked for invalid spec: %#v", commands.runs)
 	}
 }

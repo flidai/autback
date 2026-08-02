@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-service_retention_seconds="${OUTBACK_SERVICE_FALLBACK_RETENTION_SECONDS:-86400}"
+service_retention_seconds="${OUTBACK_ORPHAN_RETENTION_SECONDS:-86400}"
 job_retention_minutes="${OUTBACK_JOB_RETENTION_MINUTES:-10080}"
 cache_high_bytes="${OUTBACK_CACHE_HIGH_BYTES:-12884901888}"
 cache_low_bytes="${OUTBACK_CACHE_LOW_BYTES:-8589934592}"

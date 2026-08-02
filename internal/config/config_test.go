@@ -9,122 +9,11 @@ import (
 	"github.com/flidai/outback/internal/config"
 )
 
-func TestLoadReadsSecureClientConfiguration(t *testing.T) {
+func TestLoadReadsServiceConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	data := []byte(`{
-  "token": "secret",
-  "ssh": {
-    "host": "203.0.113.10",
-    "user": "root",
-    "identity_file": "/tmp/operator",
-    "remote_address": "127.0.0.1:8080"
-  }
-}`)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("OUTBACK_CONFIG", path)
-	t.Setenv("OUTBACK_URL", "")
-	t.Setenv("OUTBACK_TOKEN", "")
-
-	got, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Token != "secret" || got.SSH == nil || got.SSH.User != "root" || got.SSH.RemoteAddress != "127.0.0.1:8080" {
-		t.Fatalf("config = %#v", got)
-	}
-}
-
-func TestEnvironmentOverridesConfigurationFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"url":"http://old.invalid","token":"old"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("OUTBACK_CONFIG", path)
-	t.Setenv("OUTBACK_URL", "http://127.0.0.1:9999")
-	t.Setenv("OUTBACK_TOKEN", "new")
-
-	got, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.URL != "http://127.0.0.1:9999" || got.Token != "new" {
-		t.Fatalf("config = %#v", got)
-	}
-}
-
-func TestLoadReadsREAPIConfigurationWithoutLegacyToken(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	data := []byte(`{
-  "backend": "reapi",
-  "ssh": {
-    "host": "203.0.113.10",
-    "identity_file": "/tmp/operator"
-  },
-  "reapi": {
-    "instance": "outback"
-  },
-  "buildkit": {}
-}`)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("OUTBACK_CONFIG", path)
-	t.Setenv("OUTBACK_URL", "")
-	t.Setenv("OUTBACK_TOKEN", "")
-
-	got, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Backend != config.BackendREAPI || got.REAPI == nil || got.REAPI.RemoteAddress != "127.0.0.1:50051" {
-		t.Fatalf("config = %#v", got)
-	}
-	if got.BuildKit == nil || got.BuildKit.RemoteAddress != "127.0.0.1:1234" {
-		t.Fatalf("buildkit config = %#v", got.BuildKit)
-	}
-}
-
-func TestLoadReadsSwarmConfigurationWithoutLegacyToken(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	data := []byte(`{
-  "backend": "swarm",
-  "ssh": {
-    "host": "203.0.113.10",
-    "identity_file": "/tmp/operator"
-  },
-  "cas": {
-    "instance": "outback"
-  },
-  "swarm": {}
-}`)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("OUTBACK_CONFIG", path)
-	t.Setenv("OUTBACK_URL", "")
-	t.Setenv("OUTBACK_TOKEN", "")
-
-	got, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Backend != config.BackendSwarm || got.CAS == nil || got.CAS.RemoteAddress != "127.0.0.1:50051" {
-		t.Fatalf("config = %#v", got)
-	}
-	if got.Swarm == nil || got.Swarm.JobsRoot != "/var/lib/outback/jobs" || got.Swarm.Image != "outback-runner-standard:local" {
-		t.Fatalf("swarm config = %#v", got.Swarm)
-	}
-}
-
-func TestLoadRejectsSilentGlobalServiceProject(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	data := []byte(`{
-  "backend": "service",
   "url": "https://outback.example",
   "service": {
-    "project": "example-service",
     "image": "ghcr.io/example/ci@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "cpus": "2",
     "memory": "4g",
@@ -137,35 +26,95 @@ func TestLoadRejectsSilentGlobalServiceProject(t *testing.T) {
 	}
 	t.Setenv("OUTBACK_CONFIG", path)
 	t.Setenv("OUTBACK_URL", "")
-	t.Setenv("OUTBACK_TOKEN", "")
 
-	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "outback.json") {
-		t.Fatalf("global project error = %v", err)
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.URL != "https://outback.example" || got.Service == nil || got.Service.CACertFile != "/tmp/outback-ca.pem" {
+		t.Fatalf("config = %#v", got)
 	}
 }
 
-func TestLoadReadsSharedServiceConfigurationWithoutProjectOrPersistedToken(t *testing.T) {
+func TestEnvironmentOverridesServiceURL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	data := []byte(`{
-  "backend": "service",
-  "url": "https://outback.example",
-  "service": {
-    "image": "ghcr.io/example/ci@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "cpus": "2",
-    "memory": "4g"
-  }
-}`)
+	if err := os.WriteFile(path, []byte(`{"url":"https://old.invalid","service":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OUTBACK_CONFIG", path)
+	t.Setenv("OUTBACK_URL", "https://outback.example")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.URL != "https://outback.example" {
+		t.Fatalf("url = %q", got.URL)
+	}
+}
+
+func TestLoadRejectsRemovedClientBackends(t *testing.T) {
+	for _, backend := range []string{"legacy", "reapi", "swarm", "service"} {
+		t.Run(backend, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			data := []byte(`{"backend":"` + backend + `","url":"https://outback.example","service":{}}`)
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("OUTBACK_CONFIG", path)
+			t.Setenv("OUTBACK_URL", "")
+			if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsPersistedCredentialsAndTransportTunnels(t *testing.T) {
+	for _, field := range []string{"token", "ssh", "reapi", "cas", "swarm", "buildkit"} {
+		t.Run(field, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			data := []byte(`{"url":"https://outback.example","service":{},"` + field + `":{}}`)
+			if field == "token" {
+				data = []byte(`{"url":"https://outback.example","service":{},"token":"secret"}`)
+			}
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("OUTBACK_CONFIG", path)
+			t.Setenv("OUTBACK_URL", "")
+			if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsGlobalProjectDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{"url":"https://outback.example","service":{"project":"example"}}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("OUTBACK_CONFIG", path)
 	t.Setenv("OUTBACK_URL", "")
-	t.Setenv("OUTBACK_TOKEN", "")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadAppliesServiceDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"url":"https://outback.example","service":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OUTBACK_CONFIG", path)
+	t.Setenv("OUTBACK_URL", "")
 	got, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Backend != config.BackendService || got.Service == nil || got.Token != "" {
-		t.Fatalf("config = %#v", got)
+	if got.Service.CPUs != "2" || got.Service.Memory != "4g" || got.Service.OIDCAudience != got.URL {
+		t.Fatalf("service defaults = %#v", got.Service)
 	}
 }

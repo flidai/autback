@@ -43,10 +43,10 @@ while retaining standard, independently replaceable execution and storage compon
 
 ## Consequences
 
-- The existing SSH/Swarm path remains POC evidence and a temporary migration backend, not
-  the long-term API.
-- The legacy HTTP coordinator cannot be promoted unchanged: its single bearer token mixes
-  user and worker identity and has no project authorization.
+- Superseded SSH/Swarm, direct REAPI, and shared-token coordinator client paths are not
+  shipped in the product; historical measurements remain evidence only.
+- The CLI has one service transport, one repository project-link format, and no language
+  suite/profile fallback.
 - The implementation includes project/user storage, token lifecycle, GitHub trust
   relationships, OIDC exchange, operation-scoped credentials, TLS ingress, audit, and a
   server-owned scheduler adapter.

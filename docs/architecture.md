@@ -1,7 +1,6 @@
 # Architecture
 
-This document describes the implemented shared-service architecture for outback. The legacy
-SSH backends remain migration evidence, not the client contract.
+This document describes the implemented shared-service architecture for outback.
 The binding decision and its consequences are recorded in
 [ADR 0001](decisions/0001-shared-service-architecture.md).
 
@@ -24,8 +23,8 @@ The core contract is deliberately small:
 - Docker Swarm initially schedules trusted OCI jobs behind the service boundary.
 - OpenTelemetry and JUnit are optional standard observability and test-result formats.
 
-There are no language-specific runner types, generated preparation hooks, or required
-`.outback.json` suite definitions in the target contract. A Dev Container adapter can be
+There are no language-specific runner types, generated preparation hooks, or
+`.outback.json` suite definitions. A Dev Container adapter can be
 added later if real consumers need it, but the Dev Container specification is not a CI
 or remote-execution dependency.
 
@@ -177,19 +176,10 @@ Buildx/BuildKit, and HTTPS. Docker Swarm and the initial CAS implementation are 
 server internals. Hetzner is the current host, not a product dependency, and Terraform
 remains the provisioning source of truth for dedicated infrastructure.
 
-## Legacy migration boundary
+## Deliberately absent client paths
 
-The service implements the accepted target while legacy backends remain available for
-migration:
-
-| Current POC | Accepted target |
-| --- | --- |
-| SSH/Tailscale authenticates every client | HTTPS control plane with device tokens or GitHub OIDC |
-| CLI talks directly to Docker Swarm | Control plane owns Docker and scheduling |
-| SSH tunnels expose CAS and BuildKit | Job-scoped CAS credentials and build-scoped BuildKit mTLS |
-| One shared legacy server token | Separate user, CI, job/build, and worker identities |
-| Pinned `standard` Go runner | Project-selected, digest-pinned OCI image |
-| `.outback.json` defines named suites | Existing project tooling supplies arbitrary commands |
-
-No new product feature should deepen the SSH backend, direct client-to-Docker access, the
-legacy shared-token coordinator, or language-specific runner/profile abstractions.
+The CLI has one transport and execution contract: Connect/HTTPS to the shared service.
+It has no direct Docker, Swarm, REAPI, CAS, BuildKit, worker, or SSH backend; those are
+private server implementation details. It also has no shared bearer-token coordinator,
+named suite/profile format, standard language runner, or source-build installation path.
+SSH remains only in host deployment and break-glass operations.

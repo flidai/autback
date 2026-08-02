@@ -51,12 +51,10 @@ the release checksum manifest, verifies SHA-256 before extraction, verifies the 
 reported version, and caches only that verified release under an OS/architecture/version
 key. A restored cache entry must report the requested version before it is trusted.
 
-The `allow-source-fallback` input exists only for the transition before a requested tag
-has been published. It compiles the checked-out module after a release download failure,
-requires the resulting binary to report the requested version, and deliberately does not
-save that binary under the release cache key. Disable the fallback after the first stable
-release is available. Publishing a `v0.1.0` tag runs `release.yml`; the job
-refuses a tag that disagrees with `outback version` and publishes checksummed archives.
+Installation fails closed when the requested release or checksum is unavailable; the
+action never compiles repository source or stores an unverified binary under a release
+cache key. Publishing a `v0.1.0` tag runs `release.yml`; the job refuses a tag that
+disagrees with `outback version` and publishes checksummed archives.
 
 The POC stays `workflow_dispatch`-only until its manual hosted proof passes. For a
 `pull_request` trust, outback requires an `--environment`; configure that GitHub environment

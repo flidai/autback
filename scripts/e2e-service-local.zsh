@@ -8,8 +8,17 @@ fixture="$(mktemp -d "${TMPDIR:-/tmp}/outback-service-local-fixture.XXXXXX")"
 data_dir="$(mktemp -d "${TMPDIR:-/tmp}/outback-service-local-data.XXXXXX")"
 server_pid=""
 keychain_enrolled=false
+service_containers=()
 
 cleanup() {
+  local exit_status=$?
+  if (( exit_status != 0 && ${#service_containers[@]} > 0 )); then
+    local container
+    for container in "${service_containers[@]}"; do
+      print -u2 -- "--- ${container} logs ---"
+      docker logs --tail 100 "${container}" >&2 || true
+    done
+  fi
   if [[ "${keychain_enrolled}" == "true" && -x "${build_dir:-}/outback" && -n "${config_file:-}" ]]; then
     env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" logout >/dev/null 2>&1 || true
   fi
@@ -17,7 +26,15 @@ cleanup() {
     kill "${server_pid}" >/dev/null 2>&1 || true
     wait "${server_pid}" >/dev/null 2>&1 || true
   fi
+  if (( ${#service_containers[@]} > 0 )); then
+    docker rm --force "${service_containers[@]}" >/dev/null 2>&1 || true
+  fi
+  if [[ -d "${data_dir}/cache" ]]; then
+    docker run --rm --volume "${data_dir}:/data" alpine:3.22.1 \
+      chmod -R u+rwX /data/cache >/dev/null 2>&1 || true
+  fi
   rm -rf "${fixture}" "${data_dir}"
+  return ${exit_status}
 }
 trap cleanup EXIT INT TERM
 
@@ -30,36 +47,63 @@ buildkit_image='moby/buildkit@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c9874
 registry_image='registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373'
 project_image='golang:1.25-bookworm@sha256:ea341baa9bd5ba6784f6d7161ace70544349a6242d54d34a0fbfd2c4d51c9d58'
 
-ensure_container() {
-  local name="$1"
-  shift
-  if ! docker inspect "${name}" >/dev/null 2>&1; then
-    docker run --detach --name "${name}" "$@" >/dev/null
-  elif [[ "$(docker inspect --format '{{.State.Running}}' "${name}")" != "true" ]]; then
-    docker start "${name}" >/dev/null
-  fi
+allocate_ports() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+
+sockets = []
+for _ in range(int(sys.argv[1])):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    sockets.append(listener)
+for listener in sockets:
+    print(listener.getsockname()[1])
+PY
 }
 
-ensure_container outback-cas-service-local --network host --volume outback-cas-service-local:/data \
-  "${cas_image}" --dir /data --max_size 5 --grpc_address 127.0.0.1:50051 \
-  --http_address 127.0.0.1:50050 --access_log_level none
-ensure_container outback-registry-service-local --network host --volume outback-registry-service-local:/var/lib/registry \
-  --env REGISTRY_HTTP_ADDR=0.0.0.0:15000 "${registry_image}"
+ports=("${(@f)$(allocate_ports 7)}")
+cas_internal_port="${ports[1]}"
+cas_http_port="${ports[2]}"
+registry_port="${ports[3]}"
+buildkit_internal_port="${ports[4]}"
+control_port="${ports[5]}"
+cas_gateway_port="${ports[6]}"
+buildkit_gateway_port="${ports[7]}"
+
+run_id="outback-service-local-$$"
+cas_container="${run_id}-cas"
+registry_container="${run_id}-registry"
+buildkit_container="${run_id}-buildkit"
+service_containers=("${cas_container}" "${registry_container}" "${buildkit_container}")
+
+start_container() {
+  local name="$1"
+  shift
+  docker run --detach --name "${name}" "$@" >/dev/null
+}
+
+start_container "${cas_container}" --network host --volume outback-cas-service-local:/data \
+  "${cas_image}" --dir /data --max_size 5 --grpc_address "127.0.0.1:${cas_internal_port}" \
+  --http_address "127.0.0.1:${cas_http_port}" --profile_address none --access_log_level none
+start_container "${registry_container}" --network host --volume outback-registry-service-local:/var/lib/registry \
+  --env "REGISTRY_HTTP_ADDR=0.0.0.0:${registry_port}" "${registry_image}"
 buildkit_config="${OUTBACK_TMP_DIR}/service-local-buildkitd.toml"
-print '[registry."127.0.0.1:15000"]\n  http = true' > "${buildkit_config}"
-ensure_container outback-buildkit-service-local-image-lifecycle --privileged --network host \
+print "[registry.\"127.0.0.1:${registry_port}\"]\n  http = true" > "${buildkit_config}"
+start_container "${buildkit_container}" --privileged --network host \
   --volume outback-buildkit-service-local-image-lifecycle:/var/lib/buildkit \
   --volume "${buildkit_config}:/etc/buildkit/buildkitd.toml:ro" \
-  "${buildkit_image}" --config /etc/buildkit/buildkitd.toml --addr tcp://127.0.0.1:1236
+  "${buildkit_image}" --config /etc/buildkit/buildkitd.toml --addr "tcp://127.0.0.1:${buildkit_internal_port}"
 
 for attempt in {1..80}; do
-  if curl --silent --fail http://127.0.0.1:15000/v2/ >/dev/null && \
-    docker exec outback-buildkit-service-local-image-lifecycle \
-      buildctl --addr tcp://127.0.0.1:1236 debug workers >/dev/null 2>&1; then
+  if nc -z 127.0.0.1 "${cas_internal_port}" >/dev/null 2>&1 && \
+    curl --silent --fail "http://127.0.0.1:${registry_port}/v2/" >/dev/null && \
+    docker exec "${buildkit_container}" \
+      buildctl --addr "tcp://127.0.0.1:${buildkit_internal_port}" debug workers >/dev/null 2>&1; then
     break
   fi
   if [[ ${attempt} -eq 80 ]]; then
-    print -u2 'local OCI registry or image-lifecycle BuildKit did not become ready'
+    print -u2 'local CAS, OCI registry, or image-lifecycle BuildKit did not become ready'
     exit 1
   fi
   sleep 0.25
@@ -97,19 +141,20 @@ fi
 
 OUTBACK_DATA_DIR="${data_dir}" \
 OUTBACK_SERVER_NAMES='localhost,127.0.0.1' \
-OUTBACK_LISTEN='127.0.0.1:18443' \
-OUTBACK_CAS_LISTEN='127.0.0.1:15052' \
-OUTBACK_CAS_ENDPOINT='localhost:15052' \
-OUTBACK_CAS_INTERNAL='127.0.0.1:50051' \
-OUTBACK_BUILDKIT_LISTEN='127.0.0.1:11235' \
-OUTBACK_BUILDKIT_ENDPOINT='localhost:11235' \
-OUTBACK_BUILDKIT_INTERNAL='127.0.0.1:1236' \
+OUTBACK_LISTEN="127.0.0.1:${control_port}" \
+OUTBACK_CAS_LISTEN="127.0.0.1:${cas_gateway_port}" \
+OUTBACK_CAS_ENDPOINT="localhost:${cas_gateway_port}" \
+OUTBACK_CAS_INTERNAL="127.0.0.1:${cas_internal_port}" \
+OUTBACK_BUILDKIT_LISTEN="127.0.0.1:${buildkit_gateway_port}" \
+OUTBACK_BUILDKIT_ENDPOINT="localhost:${buildkit_gateway_port}" \
+OUTBACK_BUILDKIT_INTERNAL="127.0.0.1:${buildkit_internal_port}" \
+OUTBACK_CACHE_ROOT="${data_dir}/cache" \
 OUTBACK_JOB_ENTRYPOINT='/var/lib/outback/bin/outback-job-entrypoint' \
 "${build_dir}/outback-server" > "${proof_dir}/server.log" 2>&1 &
 server_pid=$!
 
 for attempt in {1..80}; do
-  if curl --silent --fail --cacert "${data_dir}/pki/ca.pem" https://localhost:18443/healthz >/dev/null; then
+  if curl --silent --fail --cacert "${data_dir}/pki/ca.pem" "https://localhost:${control_port}/healthz" >/dev/null; then
     break
   fi
   if ! kill -0 "${server_pid}" >/dev/null 2>&1; then
@@ -141,7 +186,8 @@ config_file="${data_dir}/client.json"
 umask 077
 jq -n \
   --arg ca "${data_dir}/pki/ca.pem" \
-  '{backend:"service",url:"https://localhost:18443",service:{cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:"https://localhost:18443"}}' \
+  --arg url "https://localhost:${control_port}" \
+	'{url:$url,service:{cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
 export OUTBACK_CONFIG="${config_file}"
@@ -198,7 +244,7 @@ mkdir -p "${runner_fixture}"
 print "FROM ${project_image}\nLABEL org.opencontainers.image.source=outback-e2e" > "${runner_fixture}/Dockerfile"
 (
   cd "${runner_fixture}"
-  "${build_dir}/outback" image build --tag 127.0.0.1:15000/outback/e2e:latest -- --progress plain
+  "${build_dir}/outback" image build --tag "127.0.0.1:${registry_port}/outback/e2e:latest" -- --progress plain
 ) 2>&1 | tee "${proof_dir}/image-build.log"
 (
   cd "${fixture}"
@@ -211,7 +257,10 @@ run_remote_test() {
   local start_time="${EPOCHREALTIME}"
   (
     cd "${fixture}"
-    "${build_dir}/outback" exec -- go test -count=1 -v ./...
+    "${build_dir}/outback" exec \
+      --cache go-build=/root/.cache/go-build \
+      --cache go-mod=/go/pkg/mod \
+      -- go test -count=1 -v ./...
   ) 2>&1 | tee "${log_file}" >&2
   local end_time="${EPOCHREALTIME}"
   printf '%.3f' "$((end_time - start_time))"
@@ -349,7 +398,7 @@ jq -n \
   --arg queue_first_job "${queue_first_job}" --arg queue_second_job "${queue_second_job}" --arg cancel_build "${cancel_build}" \
   --arg project_image "${project_image}" \
   --argjson first_seconds "${first_seconds}" --argjson cached_seconds "${cached_seconds}" \
-  '{completed_at:$completed,backend:"connect-https+reapi-cas+docker-swarm+buildkit",project_image:$project_image,first_job:$first_job,cached_job:$cached_job,timeout_job:$timeout_job,cancel_job:$cancel_job,cancel_build:$cancel_build,queue_first_job:$queue_first_job,queue_second_job:$queue_second_job,first_seconds:$first_seconds,cached_seconds:$cached_seconds,generic_oci:true,repository_project_discovery:true,project_image_lifecycle:true,image_default_resolution:true,image_validation:true,image_rollback:true,image_history:true,image_override_policy:true,image_build_push_activate_execute:true,connect_https:true,device_token:true,one_time_device_enrollment:true,os_keychain_storage:true,enrollment_single_use:true,independent_device_revocation:true,logout:true,job_scoped_cas_mtls:true,build_scoped_buildkit_mtls:true,two_project_shared_cas:true,two_project_shared_buildkit_cache:true,buildkit_cancellation:true,testcontainers:true,dirty_worktree:true,incremental_cas:true,timeout:true,cancellation:true,capacity_queue:true}' \
+  '{completed_at:$completed,backend:"connect-https+reapi-cas+docker-swarm+buildkit",project_image:$project_image,first_job:$first_job,cached_job:$cached_job,timeout_job:$timeout_job,cancel_job:$cancel_job,cancel_build:$cancel_build,queue_first_job:$queue_first_job,queue_second_job:$queue_second_job,first_seconds:$first_seconds,cached_seconds:$cached_seconds,generic_oci:true,repository_project_discovery:true,project_image_lifecycle:true,image_default_resolution:true,image_validation:true,image_rollback:true,image_history:true,image_override_policy:true,image_build_push_activate_execute:true,connect_https:true,device_token:true,one_time_device_enrollment:true,os_keychain_storage:true,enrollment_single_use:true,independent_device_revocation:true,logout:true,job_scoped_cas_mtls:true,build_scoped_buildkit_mtls:true,two_project_shared_cas:true,two_project_shared_buildkit_cache:true,explicit_project_caches:true,buildkit_cancellation:true,testcontainers:true,dirty_worktree:true,incremental_cas:true,timeout:true,cancellation:true,capacity_queue:true}' \
   > "${proof_dir}/proof.json"
 
 print "shared-service E2E passed: cached ${cached_seconds}s (first ${first_seconds}s)"

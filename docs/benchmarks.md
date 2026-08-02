@@ -165,7 +165,7 @@ earlier first deployment sample uploaded only 590 bytes because the prior legacy
 benchmarks had already populated most CAS/image content. The committed proof is
 [`evidence/service/proof.json`](../evidence/service/proof.json).
 
-## LeapView Testcontainers baseline
+## Legacy LeapView Testcontainers baseline
 
 Measured on 2026-08-01 at LeapView merge commit
 `23248fa0c4ebbef579b10f090a7ad26e7ccc67f3` using the existing Hetzner CPX32:
@@ -185,8 +185,9 @@ Measured on 2026-08-01 at LeapView merge commit
 
 “End-to-end” starts before source selection/CAS negotiation and stops after the CLI has
 reported the terminal result. “Remote” is the Swarm task lifetime. “outback boundary” is
-their difference and includes local input hashing, zero-byte CAS negotiation, SSH setup,
-Swarm submission/status, and final result retrieval.
+their difference and, for this pre-service client, included local input hashing, zero-byte
+CAS negotiation, SSH setup, Swarm submission/status, and final result retrieval. Current
+clients use only the Connect/HTTPS service boundary measured in the preceding sections.
 
 The committed five-run summaries are
 [`leapview-minio-warm/summary.json`](../evidence/benchmarks/leapview-minio-warm/summary.json)
@@ -203,21 +204,24 @@ disturb the useful POC state and is not necessary for the primary warm-cache dec
 
 LeapView's build-only generated Go packages are intentionally gitignored. The benchmark
 ran the normal source-generation step once and explicitly included those derived files in
-the immutable input snapshot; generation time is outside the measurements. A production
-LeapView suite must make that preparation reproducible without weakening Git ignore
-semantics. The project OCI image supplies the toolchain, and a repository-owned command
-such as `task test` performs generation and testing inside one remote job.
+the immutable input snapshot; generation time is outside the measurements. LeapView's
+project image and repository command must make that preparation reproducible without
+weakening Git ignore semantics. The project OCI image supplies the toolchain, and a
+repository-owned command such as `task test` performs generation and testing inside one
+remote job.
 
 The first full qualification attempt also found that Debian Bookworm's `docker.io` CLI
 only supported API 1.41, while the worker's Docker 29 daemon requires API 1.44 or newer.
-The standard runner now copies the official digest-pinned Docker 29.1.3 CLI. After the
-upgrade, the complete merged qualification lifecycle passed both its `docker-cli` and
-`testcontainers` implementations remotely in one job.
+The then-current runner was corrected to copy the official digest-pinned Docker 29.1.3
+CLI. After that upgrade, the complete merged qualification lifecycle passed both its
+`docker-cli` and `testcontainers` implementations remotely in one job. Outback no longer
+ships that language-specific runner; the same dependency now belongs in LeapView's OCI
+project image.
 
-The immediate performance target is the roughly 4.5-second outback boundary. It is stable
-across both workloads and therefore worth profiling before buying a larger worker. More
-CPU should reduce Go compilation and test execution, but it will not remove fixed SSH,
-CAS negotiation, or Swarm lifecycle latency.
+This legacy run established a roughly 4.5-second boundary. The current service proof above
+replaced the SSH client path and reduced that boundary. More CPU can reduce Go compilation
+and test execution, but it does not remove fixed CAS, control-plane, or Swarm lifecycle
+latency.
 
 ## LeapView canonical CI cutover
 

@@ -43,9 +43,8 @@ outback exec --project example -- go test -race ./...
 
 The committed `outback.json` contains only the outback project identifier. It is discovered
 from the nearest directory up to the Git root and is safe to commit; flags and
-`OUTBACK_PROJECT` can override it. The current POC still accepts named suites from the
-legacy `.outback.json` during migration. That profile format and the `standard` Go runner are not part of the accepted long-term
-contract. See [the architecture](docs/architecture.md) and
+`OUTBACK_PROJECT` can override it. Outback accepts no suite/profile file and supplies no
+language runner: repositories own commands and project images. See [the architecture](docs/architecture.md) and
 [ADR 0001](docs/decisions/0001-shared-service-architecture.md). The versioned service
 contract is documented in [Control API v1](docs/control-api.md).
 
@@ -58,7 +57,7 @@ an explicit existing host and never provisions a replacement:
 cd outback
 task test
 OUTBACK_SERVER_IP=62.238.54.70 OUTBACK_SSH_USER=developer \
-OUTBACK_SSH_KEY=~/.ssh/id_ed25519 task deploy:swarm
+OUTBACK_SSH_KEY=~/.ssh/id_ed25519 task deploy
 OUTBACK_SERVER_IP=62.238.54.70 OUTBACK_SSH_USER=developer \
 OUTBACK_SSH_KEY=~/.ssh/id_ed25519 OUTBACK_PROJECT=leapview task e2e:service
 ```
@@ -88,9 +87,6 @@ The manual GitHub Actions POC exchanges GitHub OIDC directly for a short-lived p
 credential; see [GitHub Actions](docs/github-actions.md). It deliberately has no
 pull-request trigger until the protected environment and trusted-change policy are proven.
 
-The original tar.zst/HTTP/SQLite coordinator remains in-tree as evidence and a fallback
-for detached jobs. It is not the target architecture.
-
 ## Proven boundary
 
 The E2E proves dirty and untracked bytes, ignored-file exclusion, Redis through
@@ -114,7 +110,7 @@ candidates while preserving raw logs and an exact source fingerprint.
 ## Layout
 
 - `cmd/outback`: project-aware CLI.
-- `api/rtest/v1`: the compatibility-preserving v1 protobuf source for the Connect control API.
+- `api/rtest/v1`: the frozen deployed v1 protobuf ABI for the Connect control API.
 - `internal/control`: projects, credentials, OIDC, authorization, audit, PKI, and scheduling.
 - `internal/cas`, `internal/workspace`: standard CAS transfer and exact Git input selection.
 - `internal/swarm`: server-private Docker job specifications and lifecycle operations.

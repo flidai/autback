@@ -7,7 +7,7 @@ ensure_ssh_key
 public_ip="$(curl -fsS --max-time 10 https://api.ipify.org)"
 [[ "${public_ip}" == <->.<->.<->.<-> ]] || { print -u2 'could not determine operator IPv4'; exit 1; }
 
-workspace_url="https://app.terraform.io/api/v2/organizations/Flid/workspaces/leapview-outback-poc"
+workspace_url="https://app.terraform.io/api/v2/organizations/Flid/workspaces/outback-poc"
 response="${OUTBACK_TMP_DIR}/hcp-workspace.json"
 http_status="$(curl -sS -o "${response}" -w '%{http_code}' \
   -H "Authorization: Bearer ${HCP_API_TOKEN}" \
@@ -17,7 +17,7 @@ if [[ "${http_status}" == 404 ]]; then
   http_status="$(curl -sS -o "${response}" -w '%{http_code}' -X POST \
     -H "Authorization: Bearer ${HCP_API_TOKEN}" \
     -H 'Content-Type: application/vnd.api+json' \
-    --data '{"data":{"type":"workspaces","attributes":{"name":"leapview-outback-poc","execution-mode":"local","auto-apply":false}}}' \
+    --data '{"data":{"type":"workspaces","attributes":{"name":"outback-poc","execution-mode":"local","auto-apply":false}}}' \
     'https://app.terraform.io/api/v2/organizations/Flid/workspaces')"
 fi
 [[ "${http_status}" == 2* ]] || { print -u2 "HCP workspace request failed with HTTP ${http_status}"; exit 1; }
@@ -33,7 +33,7 @@ jq -n --arg key "${OUTBACK_SSH_KEY}.pub" --arg cidr "${public_ip}/32" \
 
 terraform -chdir="${OUTBACK_INFRA_DIR}" init \
   -backend-config='organization=Flid' \
-  -backend-config='workspaces.name=leapview-outback-poc'
+  -backend-config='workspaces.name=outback-poc'
 terraform -chdir="${OUTBACK_INFRA_DIR}" apply -auto-approve \
   -var-file="${OUTBACK_TMP_DIR}/terraform.auto.tfvars.json"
 

@@ -22,7 +22,7 @@ import (
 )
 
 func TestParseExecUsesGenericProjectImageAndArbitraryArgv(t *testing.T) {
-	settings := config.Config{Service: &config.Service{Project: "example", Image: "image@sha256:digest", CPUs: "2", Memory: "4g"}}
+	settings := config.Config{Service: &config.Service{Image: "image@sha256:digest", CPUs: "2", Memory: "4g"}}
 	got, err := parseExec(settings, "example", []string{"--timeout", "5m", "--workdir", "service", "--env", "CI=true", "--cache", "go-build=/root/.cache/go-build", "--cache", "modules=/go/pkg/mod", "--", "task", "test", "--race"})
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestParseExecUsesGenericProjectImageAndArbitraryArgv(t *testing.T) {
 }
 
 func TestParseExecRequiresExplicitCommandBoundary(t *testing.T) {
-	settings := config.Config{Service: &config.Service{Project: "example", Image: "image", CPUs: "2", Memory: "4g"}}
+	settings := config.Config{Service: &config.Service{Image: "image", CPUs: "2", Memory: "4g"}}
 	if _, err := parseExec(settings, "example", []string{"go", "test", "./..."}); err == nil {
 		t.Fatal("exec accepted a command without -- boundary")
 	}
@@ -53,6 +53,27 @@ func TestParseExecAllowsServerOwnedDefaultImage(t *testing.T) {
 	}
 	if got.project != "example" || got.image != "" || !reflect.DeepEqual(got.command, []string{"go", "version"}) {
 		t.Fatalf("options = %#v", got)
+	}
+}
+
+func TestUsageContainsOnlySharedServiceCommands(t *testing.T) {
+	var output bytes.Buffer
+	usage(&output)
+	text := output.String()
+	for _, removed := range []string{
+		"outback run ",
+		"<suite>",
+		"legacy",
+		"backend",
+	} {
+		if strings.Contains(text, removed) {
+			t.Fatalf("usage retains removed client path %q:\n%s", removed, text)
+		}
+	}
+	for _, required := range []string{" exec [", " build [", "outback doctor"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("usage missing %q:\n%s", required, text)
+		}
 	}
 }
 

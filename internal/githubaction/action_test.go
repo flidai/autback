@@ -16,13 +16,11 @@ func TestSetupActionHasSecureProjectAwareContract(t *testing.T) {
 		"using: composite",
 		"version:",
 		"repository:",
-		"allow-source-fallback:",
 		"service-url:",
 		"project:",
 		"image:",
 		"ca-certificate:",
 		"oidc-audience:",
-		"backend: \"service\"",
 		"actions/cache/restore@",
 		"actions/cache/save@",
 		"install-release.sh",
@@ -36,6 +34,11 @@ func TestSetupActionHasSecureProjectAwareContract(t *testing.T) {
 	}
 	if strings.Contains(data, "go build -trimpath -o \"${bin_dir}/outback\"") {
 		t.Fatal("action.yml must not unconditionally compile outback")
+	}
+	for _, removed := range []string{"allow-source-fallback", "OUTBACK_ALLOW_SOURCE_FALLBACK", "OUTBACK_ACTION_ROOT", "backend: \"service\""} {
+		if strings.Contains(data, removed) {
+			t.Fatalf("action.yml retains removed compatibility path %q", removed)
+		}
 	}
 }
 
@@ -122,31 +125,23 @@ func TestReleaseInstallerRejectsChecksumMismatch(t *testing.T) {
 	}
 }
 
-func TestReleaseInstallerUsesExplicitSourceFallbackWithoutRelease(t *testing.T) {
+func TestReleaseInstallerNeverCompilesSourceWhenReleaseIsUnavailable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("release installer targets POSIX GitHub runners")
 	}
-	source := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(source, "cmd", "outback"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.test/outback\n\ngo 1.25\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	program := "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"9.8.7\") }\n"
-	if err := os.WriteFile(filepath.Join(source, "cmd", "outback", "main.go"), []byte(program), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	result := runInstaller(t, map[string]string{
+	output, err := installerCommand(map[string]string{
 		"OUTBACK_VERSION":               "9.8.7",
 		"OUTBACK_REPOSITORY":            "example/outback",
 		"OUTBACK_RELEASE_BASE_URL":      "file://" + t.TempDir(),
 		"OUTBACK_INSTALL_ROOT":          t.TempDir(),
-		"OUTBACK_ACTION_ROOT":           source,
+		"OUTBACK_ACTION_ROOT":           t.TempDir(),
 		"OUTBACK_ALLOW_SOURCE_FALLBACK": "true",
-	})
-	if !strings.Contains(result, "source=source") {
-		t.Fatalf("installer output = %q, want source fallback", result)
+	}).CombinedOutput()
+	if err == nil {
+		t.Fatalf("installer unexpectedly compiled source: %s", output)
+	}
+	if strings.Contains(string(output), "source=source") || !strings.Contains(string(output), "release 9.8.7 is unavailable") {
+		t.Fatalf("installer output = %q", output)
 	}
 }
 
@@ -174,8 +169,8 @@ func TestReleaseInstallerSelectsGitHubRunnerPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := runInstaller(t, map[string]string{
-		"RUNNER_OS":              "Linux",
-		"RUNNER_ARCH":            "ARM64",
+		"RUNNER_OS":                "Linux",
+		"RUNNER_ARCH":              "ARM64",
 		"OUTBACK_VERSION":          version,
 		"OUTBACK_REPOSITORY":       "example/outback",
 		"OUTBACK_RELEASE_BASE_URL": "file://" + releaseRoot,
@@ -203,12 +198,11 @@ func TestReleaseWorkflowPackagesPortableChecksummedAssets(t *testing.T) {
 	}
 }
 
-func TestPOCWorkflowIsManualOIDCAndRepositoryScoped(t *testing.T) {
+func TestPOCWorkflowIsManualAndUsesOIDC(t *testing.T) {
 	data := read(t, filepath.Join("..", "..", ".github", "workflows", "poc.yml"))
 	for _, want := range []string{
 		"workflow_dispatch:",
 		"id-token: write",
-		"github.repository == 'flidai/outback'",
 		"environment: outback-poc",
 		"uses: ./action/setup-outback",
 		"service-url: ${{ vars.OUTBACK_SERVICE_URL }}",
@@ -223,7 +217,7 @@ func TestPOCWorkflowIsManualOIDCAndRepositoryScoped(t *testing.T) {
 	if strings.Contains(data, "pull_request:") {
 		t.Fatal("POC workflow must not run automatically for pull requests")
 	}
-	for _, forbidden := range []string{"tailscale/github-action", "ssh-private-key", "OUTBACK_TOKEN"} {
+	for _, forbidden := range []string{"github.repository ==", "tailscale/github-action", "ssh-private-key", "OUTBACK_TOKEN"} {
 		if strings.Contains(data, forbidden) {
 			t.Fatalf("POC workflow still contains legacy authentication %q", forbidden)
 		}

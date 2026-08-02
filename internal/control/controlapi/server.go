@@ -23,6 +23,7 @@ import (
 	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
 	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
 	"github.com/flidai/outback/internal/protocol"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -266,7 +267,7 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[outbac
 	if err != nil {
 		return nil, connectError(err)
 	}
-	message := *request.Msg
+	message := proto.Clone(request.Msg).(*outbackv1.PrepareJobRequest)
 	if message.Image == "" {
 		message.Image = project.ActiveImage
 	} else if project.ActiveImage != "" && message.Image != project.ActiveImage && !project.AllowImageOverrides {
@@ -275,7 +276,7 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[outbac
 	if message.Image == "" {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("project has no active runner image; activate one or pass --image while overrides are enabled"))
 	}
-	input, err := s.validateJob(project.ID, &message)
+	input, err := s.validateJob(project.ID, message)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -23,9 +22,8 @@ type commander interface {
 }
 
 type Config struct {
-	Binary      string
-	Host        string
-	SSHIdentity string
+	Binary string
+	Host   string
 }
 
 type Client struct {
@@ -37,7 +35,7 @@ func New(config Config) *Client {
 	if binary == "" {
 		binary = "docker"
 	}
-	return newClient(&dockerCommander{binary: binary, host: config.Host, sshIdentity: config.SSHIdentity})
+	return newClient(&dockerCommander{binary: binary, host: config.Host})
 }
 
 func newClient(commands commander) *Client {
@@ -74,6 +72,9 @@ func (c *Client) Create(ctx context.Context, spec Spec) (string, error) {
 	if spec.ID == "" {
 		return "", errors.New("job ID is required")
 	}
+	if spec.Image == "" {
+		return "", errors.New("project image is required")
+	}
 	var output bytes.Buffer
 	if err := c.commands.Run(ctx, &output, &output, CreateArgs(spec)...); err != nil {
 		return "", fmt.Errorf("create Swarm job: %w: %s", err, strings.TrimSpace(output.String()))
@@ -93,8 +94,7 @@ func (c *Client) Status(ctx context.Context, id string) (protocol.Job, error) {
 	service := services[0]
 	labels := service.Spec.Labels
 	job := protocol.Job{
-		ID: id, Repository: decodeLabel(labels["outback.repository"]), Suite: decodeLabel(labels["outback.suite"]),
-		Runner: decodeLabel(labels["outback.runner"]), SourceDigest: labels["outback.root_digest"],
+		ID: id, ProjectID: labels["outback.project"], Image: decodeLabel(labels["outback.image"]), RootDigest: labels["outback.root_digest"],
 		Command: append([]string(nil), service.Spec.TaskTemplate.ContainerSpec.Args...), CreatedAt: service.CreatedAt,
 		Status: protocol.StatusQueued, CancelRequested: labels[cancelledLabel] == "true",
 	}
@@ -208,7 +208,7 @@ func (c *Client) Remove(ctx context.Context, id string) error {
 	return nil
 }
 
-func (c *Client) List(ctx context.Context, repository string, limit int) ([]protocol.Job, error) {
+func (c *Client) List(ctx context.Context) ([]protocol.Job, error) {
 	data, err := c.commands.Output(ctx, "service", "ls", "--filter", "label="+managedLabel+"=true", "--format", "{{.Name}}")
 	if err != nil {
 		return nil, fmt.Errorf("list Swarm jobs: %w", err)
@@ -219,14 +219,9 @@ func (c *Client) List(ctx context.Context, repository string, limit int) ([]prot
 		if err != nil {
 			return nil, err
 		}
-		if repository == "" || job.Repository == repository {
-			jobs = append(jobs, job)
-		}
+		jobs = append(jobs, job)
 	}
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].CreatedAt.After(jobs[j].CreatedAt) })
-	if limit > 0 && len(jobs) > limit {
-		jobs = jobs[:limit]
-	}
 	return jobs, nil
 }
 
@@ -266,9 +261,8 @@ func decodeError(err error, count int) error {
 }
 
 type dockerCommander struct {
-	binary      string
-	host        string
-	sshIdentity string
+	binary string
+	host   string
 }
 
 func (d *dockerCommander) Output(ctx context.Context, args ...string) ([]byte, error) {
@@ -291,17 +285,5 @@ func (d *dockerCommander) command(ctx context.Context, args ...string) *exec.Cmd
 		args = append([]string{"--host", d.host}, args...)
 	}
 	command := exec.CommandContext(ctx, d.binary, args...)
-	command.Env = os.Environ()
-	if strings.HasPrefix(d.host, "ssh://") {
-		sshCommand := "ssh -o IgnoreUnknown=UseKeychain -o BatchMode=yes -o UseKeychain=yes -o AddKeysToAgent=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-		if d.sshIdentity != "" {
-			sshCommand += " -i " + shellQuote(d.sshIdentity)
-		}
-		command.Env = append(command.Env, "DOCKER_SSH_COMMAND="+sshCommand)
-	}
 	return command
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

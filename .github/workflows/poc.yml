@@ -13,7 +13,6 @@ concurrency:
 
 jobs:
   integration:
-    if: github.repository == 'flidai/outback'
     environment: outback-poc
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -21,17 +20,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - name: Set up Outback
         uses: ./action/setup-outback
         with:
           version: 0.1.0
-          allow-source-fallback: true
           service-url: ${{ vars.OUTBACK_SERVICE_URL }}
           project: poc
           image: ${{ vars.OUTBACK_PROJECT_IMAGE }}

@@ -8,7 +8,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
+
+// Root returns the canonical root of the Git worktree containing directory.
+func Root(ctx context.Context, directory string) (string, error) {
+	command := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	command.Dir = directory
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("current directory is not inside a Git worktree")
+	}
+	return strings.TrimSpace(string(output)), nil
+}
 
 // Files returns the tracked and untracked, non-ignored files that describe the
 // current Git worktree. Deleted tracked paths are intentionally omitted.

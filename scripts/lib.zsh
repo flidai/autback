@@ -25,7 +25,7 @@ load_secrets() {
 
 ensure_ssh_key() {
   if [[ ! -f "${OUTBACK_SSH_KEY}" ]]; then
-    ssh-keygen -q -t ed25519 -N '' -C 'leapview-outback-poc' -f "${OUTBACK_SSH_KEY}"
+    ssh-keygen -q -t ed25519 -N '' -C 'outback-poc' -f "${OUTBACK_SSH_KEY}"
   fi
 }
 

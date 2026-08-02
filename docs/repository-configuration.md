@@ -26,7 +26,6 @@ defaults:
 
 ```json
 {
-  "backend": "service",
   "url": "https://outback.example.com",
   "service": {
     "cpus": "2",
@@ -92,7 +91,7 @@ privileges without opening the private host-backed job directory. Source, result
 logs remain under the private durable job path; temporary browser profiles do not.
 
 `--project`, `--cpus`, and `--memory` can override repository or local defaults. `--image`
-is an explicit migration/debugging override and can be disabled per project. Every image
+is an explicit per-run override and can be disabled per project. Every image
 scheduled by the service must be pinned by SHA-256 digest. Commands are transmitted as
 argument vectors without shell interpretation unless the caller explicitly invokes a shell.
 
@@ -105,5 +104,6 @@ are ignored in the source worktree, compare against the exact uploaded input. If
 requires generated input, the repository should run its normal generation command locally
 or remotely as an explicit project step. outback does not infer language-specific pre-hooks.
 
-The legacy `.outback.json` suite file and `standard` runner remain available only through the legacy migration
-backends and are not part of the service contract.
+Unknown configuration fields fail closed. In particular, client-side backend selectors,
+SSH tunnels, persisted tokens, direct data-plane addresses, suite profiles, and global
+project defaults are rejected rather than silently ignored.

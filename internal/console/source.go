@@ -201,7 +201,7 @@ func (s *SQLiteSource) readSnapshot(ctx context.Context, principal control.Princ
 		auditViews = append(auditViews, AuditView{ID: event.ID, Actor: actor, Action: event.Action, Target: event.TargetID, Project: project.Slug, Metadata: metadata, CreatedAt: event.CreatedAt})
 	}
 	workerStatus := "online"
-	statusMessage := "Live from SQLite"
+	statusMessage := "Live"
 	if err := s.scheduler.Check(ctx); err != nil {
 		workerStatus, statusMessage = "degraded", "Worker unavailable"
 	}

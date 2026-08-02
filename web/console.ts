@@ -20,7 +20,7 @@ const EMPTY: ConsoleSignals = {
   operation: null,
   log: { available: false, truncated: false, content: '' },
   audit: [],
-  status: { ready: false, route: '', message: 'Connecting to SQLite', updatedAt: '' },
+  status: { ready: false, route: '', message: 'Connecting', updatedAt: '' },
 }
 
 class AutbackConsole extends DatastarLit(LitElement) {
@@ -114,20 +114,20 @@ class AutbackConsole extends DatastarLit(LitElement) {
     const active = signals.operations.filter((operation) => ['running', 'active', 'preparing'].includes(operation.status)).length
     const waiting = signals.queue.filter((item) => item.status === 'queued').length
     return html`
-      ${this.pageHead('Shared runner', 'One trusted queue. Every heavy task gets the machine.', 'Live governance for jobs, builds, projects, and trust. All changes remain CLI-only.')}
+      ${this.pageHead('Shared runner', 'One queue. Full machine.', 'Jobs and builds across your trusted projects, updated as they run.')}
       <section class="metrics" aria-label="Service metrics">
-        ${metric('Worker', signals.worker.status, signals.worker.capacity, 'cpu')}
-        ${metric('Active', String(active), active === 1 ? 'operation using the VM' : 'operations using the VM', 'pulse')}
-        ${metric('Waiting', String(waiting), waiting === 1 ? 'operation in strict FIFO' : 'operations in strict FIFO', 'queue')}
-        ${metric('Success', successRate(signals.operations.map((item) => item.status)), 'recent terminal operations', 'trend')}
+        ${metric('Runner', signals.worker.status, signals.worker.capacity, 'cpu')}
+        ${metric('Active', String(active), active === 1 ? 'operation running now' : 'operations running now', 'pulse')}
+        ${metric('Waiting', String(waiting), waiting === 1 ? 'operation next in line' : 'operations in line', 'queue')}
+        ${metric('Success', successRate(signals.operations.map((item) => item.status)), 'completed operations', 'trend')}
       </section>
       <section class="grid">
         ${this.queuePanel(signals.queue)}
         <article class="panel">
-          <header class="panel-head"><div class="panel-title">${icon('cpu')}Worker lease</div><span class="badge ${signals.worker.status}">${signals.worker.status}</span></header>
+          <header class="panel-head"><div class="panel-title">${icon('cpu')}Runner</div><span class="badge ${signals.worker.status}">${signals.worker.status}</span></header>
           <div class="worker-orbit">
             <div class="worker-core">${icon('cpu')}</div>
-            <div class="worker-label"><strong>${signals.worker.activeId ? shortID(signals.worker.activeId, 16) : 'Available'}</strong><span>${signals.worker.activeId ? 'holds the single lease' : 'next job gets the machine'}</span></div>
+            <div class="worker-label"><strong>${signals.worker.activeId ? shortID(signals.worker.activeId, 16) : 'Available'}</strong><span>${signals.worker.activeId ? 'current operation' : 'ready for the next operation'}</span></div>
           </div>
         </article>
       </section>
@@ -137,9 +137,9 @@ class AutbackConsole extends DatastarLit(LitElement) {
 
   private projectPage(signals: ConsoleSignals): TemplateResult {
     const project = signals.session.projects.find((item) => item.slug === this.project)
-    if (!project) return this.notFound('Project is not available to this device.')
+    if (!project) return this.notFound('You do not have access to this project.')
     return html`
-      ${this.pageHead('Project', project.name, 'Runner image, trust posture, queue position, and recent remote work.')}
+      ${this.pageHead('Project', project.name, 'Image policy, access, queue position, and recent operations.')}
       <section class="project-banner">
         <div><div class="project-name">${project.name}</div><div class="project-slug">${project.slug}</div><p class="digest">${shortDigest(project.activeImage)}</p></div>
         <div class="project-facts">
@@ -151,8 +151,8 @@ class AutbackConsole extends DatastarLit(LitElement) {
       <section class="grid">
         ${this.queuePanel(signals.queue)}
         <article class="panel">
-          <header class="panel-head"><div class="panel-title">${icon('terminal')}CLI control</div><span class="panel-meta">read only</span></header>
-          <div class="panel-body"><p class="lede">The console reflects durable state. Change this project from a trusted terminal.</p><pre class="command"><span class="prompt">$</span> autback image show --project ${project.slug}</pre></div>
+          <header class="panel-head"><div class="panel-title">${icon('terminal')}Manage project</div><span class="panel-meta">CLI</span></header>
+          <div class="panel-body"><p class="lede">Use the Autback CLI to inspect or update project settings.</p><pre class="command"><span class="prompt">$</span> autback image show --project ${project.slug}</pre></div>
         </article>
       </section>
       ${this.operationsPanel(signals.operations, 'Project operations')}
@@ -161,14 +161,14 @@ class AutbackConsole extends DatastarLit(LitElement) {
 
   private operationPage(signals: ConsoleSignals): TemplateResult {
     const operation = signals.operation
-    if (!operation) return this.notFound('Operation is not available to this device.')
+    if (!operation) return this.notFound('You do not have access to this operation.')
     const title = operation.command || `${capitalize(operation.kind)} ${shortID(operation.id, 18)}`
     return html`
       ${this.pageHead(`${capitalize(operation.kind)} operation`, title, `${operation.projectName} · ${shortID(operation.id, 26)}`)}
       <section class="metrics" aria-label="Operation metrics">
         ${metric('Status', operation.status, operation.kind, 'pulse')}
-        ${metric('Duration', duration(operation.startedAt, operation.finishedAt), operation.startedAt ? 'wall-clock execution' : 'not started', 'clock')}
-        ${metric('Exit code', operation.exitCode == null ? '—' : String(operation.exitCode), operation.finishedAt ? 'process result' : 'pending', 'terminal')}
+        ${metric('Duration', duration(operation.startedAt, operation.finishedAt), operation.startedAt ? 'elapsed time' : 'not started', 'clock')}
+        ${metric('Exit code', operation.exitCode == null ? '—' : String(operation.exitCode), operation.finishedAt ? 'command result' : 'pending', 'terminal')}
         ${metric('Created', relativeTime(operation.createdAt), operation.projectName, 'calendar')}
       </section>
       <section class="detail-grid">
@@ -182,8 +182,8 @@ class AutbackConsole extends DatastarLit(LitElement) {
         <div class="detail-stack">
           ${this.provenancePanel(operation)}
           <article class="panel">
-            <header class="panel-head"><div class="panel-title">${icon('terminal')}Continue in CLI</div><span class="panel-meta">authoritative</span></header>
-            <div class="panel-body"><p class="lede">Stream the complete log or inspect this operation from any enrolled device.</p><pre class="command"><span class="prompt">$</span> autback ${operation.kind === 'job' ? 'logs' : 'build status'} ${operation.id}</pre></div>
+            <header class="panel-head"><div class="panel-title">${icon('terminal')}Continue in CLI</div><span class="panel-meta">CLI</span></header>
+            <div class="panel-body"><p class="lede">View the full log or inspect this operation from your terminal.</p><pre class="command"><span class="prompt">$</span> autback ${operation.kind === 'job' ? 'logs' : 'build status'} ${operation.id}</pre></div>
           </article>
         </div>
       </section>
@@ -192,10 +192,10 @@ class AutbackConsole extends DatastarLit(LitElement) {
 
   private auditPage(signals: ConsoleSignals): TemplateResult {
     return html`
-      ${this.pageHead('Governance', 'Audit log', 'An append-only account of project, trust, token, image, job, and build lifecycle events.')}
+      ${this.pageHead('Governance', 'Audit log', 'Project, access, image, job, and build activity across Autback.')}
       <article class="panel">
         <header class="panel-head"><div class="panel-title">${icon('shield')}Recent events</div><span class="panel-meta">${signals.audit.length} records</span></header>
-        ${signals.audit.length === 0 ? emptyState('shield', 'No audit events yet', 'CLI mutations will appear here.') : this.auditTable(signals.audit)}
+        ${signals.audit.length === 0 ? emptyState('shield', 'No audit events yet', 'Changes made with the Autback CLI will appear here.') : this.auditTable(signals.audit)}
       </article>
     `
   }
@@ -204,7 +204,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
     return html`
       <header class="page-head">
         <div><p class="eyebrow">${eyebrow}</p><h1>${title}</h1><p class="lede">${description}</p></div>
-        <div class="read-only">${icon('eye')}Read-only console · use the CLI to make changes</div>
+        <div class="read-only">${icon('eye')}CLI-managed</div>
       </header>
     `
   }
@@ -214,7 +214,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
       <article class="panel">
         <header class="panel-head"><div class="panel-title">${icon('queue')}Strict FIFO queue</div><span class="panel-meta">${queue.length} operations</span></header>
         <div class="queue-list">
-          ${queue.length === 0 ? emptyState('queue', 'The queue is clear', 'The next submitted task receives the worker lease.') : queue.map((item) => html`
+          ${queue.length === 0 ? emptyState('queue', 'The queue is clear', 'The next submitted operation starts immediately.') : queue.map((item) => html`
             <div class="queue-row">
               <span class="position">${item.position}</span>
               <div class="queue-main"><a href=${operationURL(item.kind, item.id)}>${item.id}</a><div class="queue-sub">${item.projectName} · ${relativeTime(item.acceptedAt)}</div></div>
@@ -249,10 +249,10 @@ class AutbackConsole extends DatastarLit(LitElement) {
   private logPanel(signals: ConsoleSignals, operation: OperationDetailView): TemplateResult {
     return html`
       <article class="panel">
-        <header class="panel-head"><div class="panel-title">${icon('terminal')}Log tail</div><span class="panel-meta">${signals.log.available ? 'live projection' : 'not available'}</span></header>
+        <header class="panel-head"><div class="panel-title">${icon('terminal')}Output</div><span class="panel-meta">${signals.log.available ? 'Live' : 'Unavailable'}</span></header>
         ${signals.log.available
-          ? html`<pre class="log">${signals.log.content || 'Waiting for output…'}</pre>${signals.log.truncated ? html`<div class="log-note">Showing the newest 64 KiB. Use <span class="mono">autback logs ${operation.id}</span> for the complete stream.</div>` : nothing}`
-          : emptyState('terminal', 'No log tail available', operation.kind === 'build' ? 'Build progress remains in the invoking terminal.' : 'The worker has not produced output yet.')}
+          ? html`<pre class="log">${signals.log.content || 'Waiting for output…'}</pre>${signals.log.truncated ? html`<div class="log-note">Showing the latest output. Use <span class="mono">autback logs ${operation.id}</span> for the full log.</div>` : nothing}`
+          : emptyState('terminal', 'No output available', operation.kind === 'build' ? 'Build progress remains in the invoking terminal.' : 'The runner has not produced output yet.')}
       </article>
     `
   }
@@ -261,7 +261,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
     const cacheSummary = operation.caches?.length ? operation.caches.map((cache) => cache.name).join(', ') : 'None declared'
     return html`
       <article class="panel">
-        <header class="panel-head"><div class="panel-title">${icon('fingerprint')}Provenance</div><span class="panel-meta">immutable inputs</span></header>
+        <header class="panel-head"><div class="panel-title">${icon('fingerprint')}Provenance</div><span class="panel-meta">Execution inputs</span></header>
         <dl class="definition">
           <dt>Operation</dt><dd>${operation.id}</dd>
           <dt>Project</dt><dd>${operation.project}</dd>

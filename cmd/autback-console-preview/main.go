@@ -76,7 +76,7 @@ func newFixtureSource() *fixtureSource {
 			{ID: 187, Actor: "GitHub Actions", Action: "github.exchange", Target: "ght_leapview_main", Project: "leapview", Metadata: map[string]string{"repository_id": "927418102"}, CreatedAt: now.Add(-39 * time.Minute)},
 			{ID: 186, Actor: "Jacob Østergaard", Action: "device-token.create", Target: "dt_coworker", Metadata: map[string]string{}, CreatedAt: now.Add(-3 * time.Hour)},
 		},
-		Status: console.StatusView{Ready: true, Route: "overview", Message: "Live from SQLite", UpdatedAt: now},
+		Status: console.StatusView{Ready: true, Route: "overview", Message: "Live", UpdatedAt: now},
 	}
 	source := &fixtureSource{updates: make(chan struct{}), now: now, base: base}
 	source.revision.Store(190)

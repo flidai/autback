@@ -192,6 +192,6 @@ func exampleSnapshot() Snapshot {
 		Queue:      []QueueView{{Position: 1, Kind: "job", ID: "job_example", Project: "example", Status: "active", AcceptedAt: now}},
 		Operations: []OperationView{{Kind: "job", ID: "job_example", Project: "example", ProjectName: "Example Service", Status: "running", Command: "task ci", CreatedAt: now}},
 		Audit:      []AuditView{{ID: 1, Actor: "Jacob", Action: "job.start", Target: "job_example", CreatedAt: now}},
-		Status:     StatusView{Ready: true, Route: "overview", Message: "Live from SQLite", UpdatedAt: now},
+		Status:     StatusView{Ready: true, Route: "overview", Message: "Live", UpdatedAt: now},
 	}
 }

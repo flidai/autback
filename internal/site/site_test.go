@@ -30,17 +30,22 @@ func TestPageContract(t *testing.T) {
 	for _, required := range []string{
 		`<html lang="en">`,
 		`<meta name="viewport"`,
-		`<meta name="description"`,
 		`class="skip-link"`,
 		`<main id="main-content">`,
-		`Remote compute for the work your laptop shouldn’t carry.`,
+		`Heavy work.`,
+		`Light laptop.`,
+		`role="tablist"`,
+		`aria-selected="true"`,
 		`REAPI CAS`,
 		`Buildx`,
-		`FIFO`,
+		`Strict FIFO`,
 	} {
 		if !strings.Contains(page, required) {
 			t.Errorf("index.html is missing %q", required)
 		}
+	}
+	if strings.Contains(strings.ToLower(page), "railway") {
+		t.Error("the site must not copy reference-site branding or copy")
 	}
 }
 
@@ -92,7 +97,39 @@ func TestInternalLinksAndAssetsResolve(t *testing.T) {
 	}
 }
 
-func TestPagesWorkflowPublishesSiteArtifact(t *testing.T) {
+func TestLandscapeIsVendored(t *testing.T) {
+	t.Parallel()
+
+	info, err := os.Stat(sitePath("assets", "landscape.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() < 100_000 {
+		t.Fatalf("landscape image is unexpectedly small: %d bytes", info.Size())
+	}
+}
+
+func TestInteractionContract(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile(sitePath("script.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(contents)
+
+	for _, required := range []string{
+		`event.key === 'Escape'`,
+		`navigation?.removeAttribute('data-open')`,
+		`menuButton?.focus()`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("script.js is missing accessible menu behavior %q", required)
+		}
+	}
+}
+
+func TestPagesWorkflowPublishesCanonicalSite(t *testing.T) {
 	t.Parallel()
 
 	contents, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "pages.yml"))

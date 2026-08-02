@@ -29,3 +29,6 @@ evidence/benchmarks/leapview-testcontainers-lifecycle-warm/**
 !evidence/benchmarks/leapview-provider-comparison/
 evidence/benchmarks/leapview-provider-comparison/**
 !evidence/benchmarks/leapview-provider-comparison/summary.json
+!evidence/benchmarks/leapview-digest-push-warm/
+evidence/benchmarks/leapview-digest-push-warm/**
+!evidence/benchmarks/leapview-digest-push-warm/summary.json

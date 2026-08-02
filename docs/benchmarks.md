@@ -78,6 +78,44 @@ builder still did not retain the expensive layer reliably.
 The compact machine-readable evidence is
 [`leapview-provider-comparison/summary.json`](../evidence/benchmarks/leapview-provider-comparison/summary.json).
 
+## Hosted digest-push proof
+
+The LeapView consumer then replaced trusted `--load` jobs with the standard registry
+handoff documented in [Build, push, and smoke-test an immutable image](build-push-smoke.md).
+GitHub Actions run [30742453481, attempt 2](https://github.com/flidai/leapview/actions/runs/30742453481)
+reran the exact unchanged merge commit after the first complete run had populated the
+cache. The remote builder pushed to GHCR, Buildx reported the immutable manifest digest,
+and a separate Outback job exercised that exact digest on the worker.
+
+| Workload | Warm build + push | Remote exact-digest check | Source upload | GitHub job |
+| --- | ---: | ---: | ---: | ---: |
+| Public site image | 11.96 s | 5.50 s smoke | 0 B | 62 s |
+| Production runner image | 9.54 s | — | — | part of production job |
+| Production application image | 13.41 s | 56.11 s full qualification | 0 B | 139 s |
+
+The GitHub job duration includes checkout, tool installation, Buildx setup, registry
+login, OIDC exchange, and post-job cleanup. The build column starts when Outback reports
+the native Buildx backend and ends when the digest-addressed manifest push completes.
+The production qualification includes image pull, smoke validation, API generation,
+remote CLI compilation, Compose startup, and browser checks; it is intentionally broader
+than a build benchmark.
+
+This result removes the production image-size penalty seen in the earlier `--load`
+comparison: the production build-and-push was 13.41 seconds instead of Outback's 29.19
+second `--load` median. It is also below the earlier Depot 31.00 second median, while
+Depot's final fully settled samples remained faster at roughly 7–8 seconds. The site
+result was 11.96 seconds versus the earlier 15.13 second Outback and 13.17 second Depot
+medians. These comparisons describe the observed runs, not a new five-sample
+distribution; the committed evidence labels the hosted proof as a single warm repeat.
+
+The exact runner digest from this proof was activated only after both image jobs passed.
+A default-image verification reported Docker Compose v5.0.0 and completed in 1.665
+seconds with `0 B` uploaded. The prior runner digest remains in the audited image history
+for one-command rollback.
+
+The machine-readable evidence is
+[`leapview-digest-push-warm/summary.json`](../evidence/benchmarks/leapview-digest-push-warm/summary.json).
+
 ## Shared-service local proof
 
 The generic service E2E on 2026-08-01 ran a project-selected pinned Go image through

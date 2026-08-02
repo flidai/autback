@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "benchmark": "leapview-digest-push-warm",
+  "completed_at": "2026-08-02T10:02:48Z",
+  "classification": "single unchanged hosted warm repeat",
+  "source": {
+    "repository": "flidai/leapview",
+    "head_commit": "b6e3bab51906f88eabe514f73ae88244d4746c1b",
+    "pull_request_merge_commit": "14b02eaddb2f6da290e29eb6a6d0353c2591f674",
+    "workflow_run": "https://github.com/flidai/leapview/actions/runs/30742453481",
+    "run_attempt": 2
+  },
+  "methodology": {
+    "cache_state": "same workflow merge commit rerun after a successful first attempt",
+    "platform": "linux/amd64",
+    "output": "buildx --push with containerimage.digest metadata",
+    "worker": "existing Hetzner CPX32, 4 vCPU, 8 GiB",
+    "outback_cli_version": "0.1.0",
+    "service_compatibility_version": "0.7.0",
+    "measured_runs": 1,
+    "distribution_claimed": false
+  },
+  "site": {
+    "job": "https://github.com/flidai/leapview/actions/runs/30742453481/job/91483308639",
+    "github_job_seconds": 62,
+    "build_push_seconds": 11.9625297,
+    "remote_smoke_seconds": 5.495,
+    "source_upload_bytes": 0,
+    "image": "ghcr.io/flidai/leapview-site@sha256:b959100f2c9af589ec42a80d6f6d25a417f27d4c08755880fe58dfe3b8feae46",
+    "outback_job": "jobff7a4310e98741e5185cddcb",
+    "result": "succeeded"
+  },
+  "production": {
+    "job": "https://github.com/flidai/leapview/actions/runs/30742453481/job/91483308670",
+    "github_job_seconds": 139,
+    "runner_build_push_seconds": 9.5392143,
+    "runner_image": "ghcr.io/flidai/leapview@sha256:00326751d707c227d56622e00552c3b26b074900ad7f9ce54f113fc0444a5a4d",
+    "application_build_push_seconds": 13.4057853,
+    "application_image": "ghcr.io/flidai/leapview@sha256:40cc79c76e485512cf06445416488b3d6e6e34238eef339f5bbea58ed6bba4d3",
+    "remote_qualification_seconds": 56.108,
+    "source_upload_bytes": 0,
+    "outback_job": "jobb600be0e84e907ae0b3b8d74",
+    "result": "succeeded"
+  },
+  "activation": {
+    "runner_image": "ghcr.io/flidai/leapview@sha256:00326751d707c227d56622e00552c3b26b074900ad7f9ce54f113fc0444a5a4d",
+    "previous_image": "ghcr.io/flidai/leapview@sha256:91e76ceef3f0f56206986ed536802bd9917937ca74c48a609e2b909992cb93ce",
+    "verification_seconds": 1.665,
+    "verification_source_upload_bytes": 0,
+    "verification_command": ["docker", "compose", "version"],
+    "verification_result": "Docker Compose version v5.0.0"
+  }
+}

@@ -100,7 +100,7 @@ func TestInternalLinksAndAssetsResolve(t *testing.T) {
 func TestLandscapeIsVendored(t *testing.T) {
 	t.Parallel()
 
-	info, err := os.Stat(rootPath("assets", "outback.jpg"))
+	info, err := os.Stat(rootPath("assets", "landscape.jpg"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ The core contract is deliberately small:
 - REAPI v2 Merkle trees, CAS, FindMissingBlobs, and ByteStream provide incremental content
   transfer.
 - An OCI image defines the command environment; an argument vector, working directory,
-  environment, resources, timeout, exit code, stdout, and stderr define execution.
+  environment, timeout, exit code, stdout, and stderr define execution.
 - Dockerfiles and native Buildx/BuildKit define image builds.
 - Docker Swarm initially schedules trusted OCI jobs behind the service boundary.
 - OpenTelemetry and JUnit are optional standard observability and test-result formats.
@@ -166,10 +166,22 @@ VM or equivalent strong sandbox per job and is a future architecture decision.
 
 ## Capacity and portability
 
-CPU and memory reservations equal hard limits. When a worker lacks capacity, a job remains
-queued instead of causing host-level memory pressure. The initial CPX32 therefore favors
-one predictable heavy job; larger or additional workers increase parallelism without a
-client change.
+Builds and commands share one SQLite-backed FIFO. Submission order is represented by a
+monotonic database sequence, and exactly one row may hold the active worker lease. The
+dispatcher admits the oldest queued operation and makes no priority, fairness, or resource
+estimates. Queue and lease state survive a control-plane restart.
+Active build leases have a configurable two-hour safety timeout so a client killed without
+a cancellation request cannot block every later operation indefinitely.
+
+The admitted operation receives the VM's available CPU and memory: Outback does not set
+per-job Swarm reservations or limits, and BuildKit is not capped separately. A repository
+that wants parallel work submits one command whose own Taskfile, Makefile, test runner, or
+script runs tasks concurrently. This keeps project orchestration in the repository while
+preventing unrelated dispatchers from oversubscribing the trusted single worker.
+
+The initial deployment has one worker and therefore one active operation. A future worker
+pool can assign the oldest queued operation to the next free worker without changing the
+client contract or adding per-user scheduling controls.
 
 The portable boundaries are Linux, Git, OCI, REAPI CAS/ByteStream, Dockerfiles,
 Buildx/BuildKit, and HTTPS. Docker Swarm and the initial CAS implementation are replaceable

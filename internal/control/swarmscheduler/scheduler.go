@@ -54,8 +54,8 @@ func specForJob(config Config, job control.Job) swarm.Spec {
 		RootDigest: job.RootDigest, JobsRoot: config.JobsRoot, Command: job.Command,
 		WorkingDirectory: job.WorkingDirectory, Environment: job.Environment,
 		EntrypointHostPath: config.EntrypointHostPath,
-		Timeout:            job.Timeout, CPUs: job.CPUs, Memory: job.Memory,
-		CacheRoot: config.CacheRoot, ProjectID: job.ProjectID, Caches: caches,
+		Timeout:            job.Timeout,
+		CacheRoot:          config.CacheRoot, ProjectID: job.ProjectID, Caches: caches,
 		HostUID: config.HostUID, HostGID: config.HostGID,
 	}
 }

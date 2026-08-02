@@ -208,6 +208,17 @@ CREATE TABLE IF NOT EXISTS control_builds (
   request_hash TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS control_builds_project_idx ON control_builds(project_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS control_queue (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  accepted_at INTEGER NOT NULL,
+  leased_at INTEGER,
+  UNIQUE(kind, operation_id)
+);
+CREATE INDEX IF NOT EXISTS control_queue_fifo_idx ON control_queue(state, sequence);
+CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(state) WHERE state = 'active';
 `)
 	if err != nil {
 		return err
@@ -913,11 +924,11 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 		ID: id, ProjectID: input.ProjectID, Image: input.Image,
 		Command: append([]string(nil), input.Command...), WorkingDirectory: input.WorkingDirectory,
 		Environment: cloneMap(input.Environment), Status: protocol.StatusPreparing, Timeout: input.Timeout,
-		CPUs: input.CPUs, Memory: input.Memory, Caches: cloneCaches(input.Caches), CreatedAt: now,
+		Caches: cloneCaches(input.Caches), CreatedAt: now,
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO control_jobs(id,project_id,image,command_json,working_directory,environment_json,caches_json,status,timeout_millis,cpus,memory,created_at,idempotency_key,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		job.ID, job.ProjectID, job.Image, string(command), job.WorkingDirectory, string(environment), string(caches), job.Status,
-		job.Timeout.Milliseconds(), job.CPUs, job.Memory, unix(now), idempotency.Key, idempotency.RequestHash)
+		job.Timeout.Milliseconds(), "", "", unix(now), idempotency.Key, idempotency.RequestHash)
 	if err != nil {
 		return control.Job{}, false, err
 	}
@@ -927,8 +938,13 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 	return job, false, nil
 }
 
-func (s *Store) StartJob(ctx context.Context, id, rootDigest string) (control.Job, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE control_jobs SET root_digest=?,status=? WHERE id=? AND status=?`, rootDigest, protocol.StatusQueued, id, protocol.StatusPreparing)
+func (s *Store) QueueJob(ctx context.Context, id, rootDigest string) (control.Job, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Job{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE control_jobs SET root_digest=?,status=? WHERE id=? AND status=?`, rootDigest, protocol.StatusQueued, id, protocol.StatusPreparing)
 	if err != nil {
 		return control.Job{}, err
 	}
@@ -936,7 +952,18 @@ func (s *Store) StartJob(ctx context.Context, id, rootDigest string) (control.Jo
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO control_queue(kind,operation_id,state,accepted_at) VALUES(?,?,?,?)`,
+		control.OperationJob, id, control.OperationQueued, time.Now().UTC().UnixNano()); err != nil {
+		return control.Job{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return control.Job{}, err
+	}
 	return s.Job(ctx, id)
+}
+
+func (s *Store) StartJob(ctx context.Context, id, rootDigest string) (control.Job, error) {
+	return s.QueueJob(ctx, id, rootDigest)
 }
 
 func (s *Store) Job(ctx context.Context, id string) (control.Job, error) {
@@ -945,7 +972,7 @@ func (s *Store) Job(ctx context.Context, id string) (control.Job, error) {
 }
 
 func (s *Store) ScheduledJobs(ctx context.Context) ([]control.Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE status IN (?,?) ORDER BY created_at,id`, protocol.StatusQueued, protocol.StatusRunning)
+	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.project_id,j.image,j.command_json,j.working_directory,j.environment_json,j.caches_json,j.root_digest,j.status,j.timeout_millis,j.cpus,j.memory,j.created_at,j.started_at,j.finished_at,j.exit_code,j.error_message,j.cancel_requested,j.worker_id FROM control_jobs j JOIN control_queue q ON q.kind=? AND q.operation_id=j.id AND q.state=? WHERE j.status IN (?,?) ORDER BY j.created_at,j.id`, control.OperationJob, control.OperationActive, protocol.StatusQueued, protocol.StatusRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,18 +1032,40 @@ func (s *Store) ListJobs(ctx context.Context, projectID string, pageSize int, pa
 }
 
 func (s *Store) SyncJob(ctx context.Context, id string, remote protocol.Job) (control.Job, error) {
-	_, err := s.db.ExecContext(ctx, `UPDATE control_jobs SET status=?,started_at=?,finished_at=?,exit_code=?,error_message=?,cancel_requested=?,worker_id=? WHERE id=?`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Job{}, err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,started_at=?,finished_at=?,exit_code=?,error_message=?,cancel_requested=?,worker_id=? WHERE id=?`,
 		remote.Status, timeValue(remote.StartedAt), timeValue(remote.FinishedAt), intValue(remote.ExitCode), remote.ErrorMessage,
 		boolInt(remote.CancelRequested), remote.WorkerID, id)
 	if err != nil {
+		return control.Job{}, err
+	}
+	if remote.Status.Terminal() {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationJob, id); err != nil {
+			return control.Job{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return control.Job{}, err
 	}
 	return s.Job(ctx, id)
 }
 
 func (s *Store) RequestJobCancellation(ctx context.Context, id string) (control.Job, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE control_jobs SET cancel_requested=1,status=CASE WHEN status=? THEN ? ELSE status END,finished_at=CASE WHEN status=? THEN ? ELSE finished_at END WHERE id=? AND status NOT IN (?,?,?,?,?)`,
-		protocol.StatusPreparing, protocol.StatusCancelled, protocol.StatusPreparing, unix(time.Now().UTC()), id,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Job{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE control_jobs SET cancel_requested=1,
+status=CASE WHEN status=? OR (status=? AND NOT EXISTS (SELECT 1 FROM control_queue WHERE kind=? AND operation_id=? AND state=?)) THEN ? ELSE status END,
+finished_at=CASE WHEN status=? OR (status=? AND NOT EXISTS (SELECT 1 FROM control_queue WHERE kind=? AND operation_id=? AND state=?)) THEN ? ELSE finished_at END
+WHERE id=? AND status NOT IN (?,?,?,?,?)`,
+		protocol.StatusPreparing, protocol.StatusQueued, control.OperationJob, id, control.OperationActive, protocol.StatusCancelled,
+		protocol.StatusPreparing, protocol.StatusQueued, control.OperationJob, id, control.OperationActive, unix(time.Now().UTC()), id,
 		protocol.StatusSucceeded, protocol.StatusFailed, protocol.StatusCancelled, protocol.StatusTimedOut, protocol.StatusLost)
 	if err != nil {
 		return control.Job{}, err
@@ -1025,12 +1074,23 @@ func (s *Store) RequestJobCancellation(ctx context.Context, id string) (control.
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, control.OperationJob, id, control.OperationQueued); err != nil {
+		return control.Job{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return control.Job{}, err
+	}
 	return s.Job(ctx, id)
 }
 
 func (s *Store) FailJob(ctx context.Context, id, message string) (control.Job, error) {
 	exitCode := 1
-	result, err := s.db.ExecContext(ctx, `UPDATE control_jobs SET status=?,finished_at=?,exit_code=?,error_message=? WHERE id=? AND status IN (?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Job{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,finished_at=?,exit_code=?,error_message=? WHERE id=? AND status IN (?,?)`,
 		protocol.StatusFailed, unix(time.Now().UTC()), exitCode, message, id, protocol.StatusPreparing, protocol.StatusQueued)
 	if err != nil {
 		return control.Job{}, err
@@ -1038,6 +1098,12 @@ func (s *Store) FailJob(ctx context.Context, id, message string) (control.Job, e
 	count, _ := result.RowsAffected()
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationJob, id); err != nil {
+		return control.Job{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return control.Job{}, err
 	}
 	return s.Job(ctx, id)
 }
@@ -1073,15 +1139,112 @@ func (s *Store) CreateBuild(ctx context.Context, projectID string, idempotency c
 		return control.Build{}, false, err
 	}
 	now := time.Now().UTC()
-	build := control.Build{ID: id, ProjectID: projectID, Status: control.BuildRunning, CreatedAt: now}
+	build := control.Build{ID: id, ProjectID: projectID, Status: control.BuildQueued, CreatedAt: now}
 	_, err = tx.ExecContext(ctx, `INSERT INTO control_builds(id,project_id,status,created_at,idempotency_key,request_hash) VALUES(?,?,?,?,?,?)`, build.ID, build.ProjectID, build.Status, unix(now), idempotency.Key, idempotency.RequestHash)
 	if err != nil {
+		return control.Build{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO control_queue(kind,operation_id,state,accepted_at) VALUES(?,?,?,?)`,
+		control.OperationBuild, build.ID, control.OperationQueued, now.UnixNano()); err != nil {
 		return control.Build{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return control.Build{}, false, err
 	}
 	return build, false, nil
+}
+
+func (s *Store) AcquireNextOperation(ctx context.Context) (*control.Operation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state=?`, control.OperationActive).Scan(&active); err != nil {
+		return nil, err
+	}
+	if active > 0 {
+		return nil, nil
+	}
+	var operation control.Operation
+	var acceptedAt int64
+	err = tx.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at FROM control_queue WHERE state=? ORDER BY sequence LIMIT 1`, control.OperationQueued).
+		Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	leasedAt := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,leased_at=? WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationActive, leasedAt.UnixNano(), operation.Kind, operation.ID, control.OperationQueued)
+	if err != nil {
+		return nil, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return nil, errors.New("operation was concurrently admitted")
+	}
+	if operation.Kind == control.OperationBuild {
+		result, err = tx.ExecContext(ctx, `UPDATE control_builds SET status=? WHERE id=? AND status=?`, control.BuildRunning, operation.ID, control.BuildQueued)
+		if err != nil {
+			return nil, err
+		}
+		if count, _ := result.RowsAffected(); count != 1 {
+			return nil, errors.New("queued build is missing")
+		}
+	}
+	operation.State = control.OperationActive
+	operation.AcceptedAt = time.Unix(0, acceptedAt).UTC()
+	operation.LeasedAt = &leasedAt
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &operation, nil
+}
+
+func (s *Store) ReleaseOperation(ctx context.Context, kind control.OperationKind, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, kind, id, control.OperationActive)
+	return err
+}
+
+func (s *Store) CancelQueuedOperation(ctx context.Context, kind control.OperationKind, id string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, kind, id, control.OperationQueued)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) OperationState(ctx context.Context, kind control.OperationKind, id string) (control.OperationState, error) {
+	var state control.OperationState
+	err := s.db.QueryRowContext(ctx, `SELECT state FROM control_queue WHERE kind=? AND operation_id=?`, kind, id).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", control.ErrNotFound
+	}
+	return state, err
+}
+
+func (s *Store) Operation(ctx context.Context, kind control.OperationKind, id string) (control.Operation, error) {
+	var operation control.Operation
+	var acceptedAt int64
+	var leasedAt sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at FROM control_queue WHERE kind=? AND operation_id=?`, kind, id).
+		Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt, &leasedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return control.Operation{}, control.ErrNotFound
+	}
+	if err != nil {
+		return control.Operation{}, err
+	}
+	operation.AcceptedAt = time.Unix(0, acceptedAt).UTC()
+	if leasedAt.Valid {
+		value := time.Unix(0, leasedAt.Int64).UTC()
+		operation.LeasedAt = &value
+	}
+	return operation, nil
 }
 
 func (s *Store) Build(ctx context.Context, id string) (control.Build, error) {
@@ -1101,17 +1264,55 @@ func (s *Store) Build(ctx context.Context, id string) (control.Build, error) {
 	return build, err
 }
 
+func (s *Store) StaleBuilds(ctx context.Context, before time.Time) ([]control.Build, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT b.id,b.project_id,b.status,b.created_at,b.finished_at,b.exit_code
+FROM control_builds b JOIN control_queue q ON q.kind=? AND q.operation_id=b.id AND q.state=?
+WHERE b.status=? AND q.leased_at IS NOT NULL AND q.leased_at<? ORDER BY q.leased_at`,
+		control.OperationBuild, control.OperationActive, control.BuildRunning, before.UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var builds []control.Build
+	for rows.Next() {
+		var build control.Build
+		var created int64
+		var finished, exitCode sql.NullInt64
+		if err := rows.Scan(&build.ID, &build.ProjectID, &build.Status, &created, &finished, &exitCode); err != nil {
+			return nil, err
+		}
+		build.CreatedAt, build.FinishedAt = fromUnix(created), nullableTime(finished)
+		if exitCode.Valid {
+			value := int(exitCode.Int64)
+			build.ExitCode = &value
+		}
+		builds = append(builds, build)
+	}
+	return builds, rows.Err()
+}
+
 func (s *Store) FinishBuild(ctx context.Context, id string, status control.BuildStatus, exitCode int) (control.Build, error) {
 	if status != control.BuildSucceeded && status != control.BuildFailed && status != control.BuildCancelled {
 		return control.Build{}, errors.New("build status is not terminal")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE control_builds SET status=?,finished_at=?,exit_code=? WHERE id=? AND status=?`, status, unix(time.Now().UTC()), exitCode, id, control.BuildRunning)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Build{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE control_builds SET status=?,finished_at=?,exit_code=? WHERE id=? AND status IN (?,?)`, status, unix(time.Now().UTC()), exitCode, id, control.BuildQueued, control.BuildRunning)
 	if err != nil {
 		return control.Build{}, err
 	}
 	count, _ := result.RowsAffected()
 	if count != 1 {
 		return control.Build{}, control.ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationBuild, id); err != nil {
+		return control.Build{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return control.Build{}, err
 	}
 	return s.Build(ctx, id)
 }
@@ -1172,8 +1373,9 @@ func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 	var timeoutMillis, created int64
 	var started, finished, exitCode sql.NullInt64
 	var cancelled int
+	var legacyCPUs, legacyMemory string
 	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &caches,
-		&job.RootDigest, &status, &timeoutMillis, &job.CPUs, &job.Memory, &created, &started, &finished,
+		&job.RootDigest, &status, &timeoutMillis, &legacyCPUs, &legacyMemory, &created, &started, &finished,
 		&exitCode, &job.ErrorMessage, &cancelled, &job.WorkerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return control.Job{}, control.ErrNotFound
@@ -1204,8 +1406,9 @@ func scanIdempotentJob(row interface{ Scan(...any) error }) (control.Job, string
 	var timeoutMillis, created int64
 	var started, finished, exitCode sql.NullInt64
 	var cancelled int
+	var legacyCPUs, legacyMemory string
 	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &caches,
-		&job.RootDigest, &status, &timeoutMillis, &job.CPUs, &job.Memory, &created, &started, &finished,
+		&job.RootDigest, &status, &timeoutMillis, &legacyCPUs, &legacyMemory, &created, &started, &finished,
 		&exitCode, &job.ErrorMessage, &cancelled, &job.WorkerID, &requestHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return control.Job{}, "", control.ErrNotFound

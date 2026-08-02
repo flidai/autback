@@ -67,9 +67,23 @@ that admission.
   another resource.
 - Keys are scoped by project and resource kind, so job and build keys do not collide.
 
-`StartJob`, `CancelJob`, and `FinishBuild` mutate a named resource and are naturally
+`StartJob`, `CancelJob`, `CancelBuild`, and `FinishBuild` mutate a named resource and are naturally
 retryable to the extent allowed by its state transition. Clients should read the resource
 after an ambiguous transport failure before attempting a different operation.
+
+## FIFO admission
+
+`StartJob` and `PrepareBuild` append operations to one durable FIFO shared by all projects
+and users. At most one operation is active on the initial worker. A queued build has
+`BUILD_STATUS_QUEUED` and no BuildKit connection; clients poll `GetBuild` by stable ID until
+it becomes running, then receive a fresh operation-scoped connection. `CancelBuild` removes
+a waiting build or terminates the active build record and advances the queue.
+The initial service also expires an unreleased active build lease after two hours by
+default; this is a worker safety bound, not a scheduler priority.
+
+The API exposes no priorities, resource sizes, or task graph. Parallelism is part of the
+single admitted command, not separate dispatcher policy. The deprecated v1 `cpus` and
+`memory` fields remain wire-compatible but are ignored.
 
 ## Pagination
 

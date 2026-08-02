@@ -14,7 +14,7 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 		ID:    "outback-job-1",
 		Image: "runner:test", CASAddress: "127.0.0.1:50051", CASInstance: "outback",
 		RootDigest: "abc/123", JobsRoot: "/var/lib/outback/jobs", Command: []string{"go", "test", "./..."},
-		Timeout: 15 * time.Minute, CPUs: "2", Memory: "4g",
+		Timeout:          15 * time.Minute,
 		WorkingDirectory: "cmd/service", Environment: map[string]string{"OUTBACK_PROOF": "generic-oci"},
 		EntrypointHostPath: "/usr/local/lib/outback/outback-job-entrypoint",
 		HostUID:            "123", HostGID: "456",
@@ -26,8 +26,6 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 		{"--mode", "replicated-job"},
 		{"--restart-condition", "none"},
 		{"--network", "host"},
-		{"--reserve-cpu", "2"},
-		{"--reserve-memory", "4g"},
 		{"--mount", "type=tmpfs,dst=/dev/shm,tmpfs-size=1073741824"},
 		{"--mount", "type=bind,src=/var/lib/outback/jobs,dst=/var/lib/outback/jobs"},
 		{"--mount", "type=bind,src=/var/lib/outback/cache/prj-example/go-build,dst=/root/.cache/go-build"},
@@ -37,7 +35,6 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 		{"--label", "outback.job=outback-job-1"},
 		{"--label", "outback.image=cnVubmVyOnRlc3Q"},
 		{"--env", "OUTBACK_WORKSPACE=/var/lib/outback/jobs/outback-job-1/workspace"},
-		{"--env", "OUTBACK_WORKER_LOCK=/var/lib/outback/jobs/.worker.lock"},
 		{"--env", "OUTBACK_HOST_UID=123"},
 		{"--env", "OUTBACK_HOST_GID=456"},
 		{"--env", "OUTBACK_ROOT_DIGEST=abc/123"},
@@ -52,7 +49,7 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 			t.Fatalf("args %#v missing sequence %#v", args, sequence)
 		}
 	}
-	for _, forbidden := range []string{"outback-go-build-cache", "outback-go-mod-cache"} {
+	for _, forbidden := range []string{"outback-go-build-cache", "outback-go-mod-cache", "--limit-cpu", "--reserve-cpu", "--limit-memory", "--reserve-memory", "OUTBACK_WORKER_LOCK"} {
 		if strings.Contains(strings.Join(args, "\n"), forbidden) {
 			t.Fatalf("args %#v contain global cache %q", args, forbidden)
 		}

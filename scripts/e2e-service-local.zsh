@@ -187,7 +187,7 @@ umask 077
 jq -n \
   --arg ca "${data_dir}/pki/ca.pem" \
   --arg url "https://localhost:${control_port}" \
-	'{url:$url,service:{cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
+	'{url:$url,service:{ca_cert_file:$ca,oidc_audience:$url}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
 export OUTBACK_CONFIG="${config_file}"
@@ -398,7 +398,7 @@ jq -n \
   --arg queue_first_job "${queue_first_job}" --arg queue_second_job "${queue_second_job}" --arg cancel_build "${cancel_build}" \
   --arg project_image "${project_image}" \
   --argjson first_seconds "${first_seconds}" --argjson cached_seconds "${cached_seconds}" \
-  '{completed_at:$completed,backend:"connect-https+reapi-cas+docker-swarm+buildkit",project_image:$project_image,first_job:$first_job,cached_job:$cached_job,timeout_job:$timeout_job,cancel_job:$cancel_job,cancel_build:$cancel_build,queue_first_job:$queue_first_job,queue_second_job:$queue_second_job,first_seconds:$first_seconds,cached_seconds:$cached_seconds,generic_oci:true,repository_project_discovery:true,project_image_lifecycle:true,image_default_resolution:true,image_validation:true,image_rollback:true,image_history:true,image_override_policy:true,image_build_push_activate_execute:true,connect_https:true,device_token:true,one_time_device_enrollment:true,os_keychain_storage:true,enrollment_single_use:true,independent_device_revocation:true,logout:true,job_scoped_cas_mtls:true,build_scoped_buildkit_mtls:true,two_project_shared_cas:true,two_project_shared_buildkit_cache:true,explicit_project_caches:true,buildkit_cancellation:true,testcontainers:true,dirty_worktree:true,incremental_cas:true,timeout:true,cancellation:true,capacity_queue:true}' \
+  '{completed_at:$completed,backend:"connect-https+reapi-cas+docker-swarm+buildkit",project_image:$project_image,first_job:$first_job,cached_job:$cached_job,timeout_job:$timeout_job,cancel_job:$cancel_job,cancel_build:$cancel_build,queue_first_job:$queue_first_job,queue_second_job:$queue_second_job,first_seconds:$first_seconds,cached_seconds:$cached_seconds,generic_oci:true,repository_project_discovery:true,project_image_lifecycle:true,image_default_resolution:true,image_validation:true,image_rollback:true,image_history:true,image_override_policy:true,image_build_push_activate_execute:true,connect_https:true,device_token:true,one_time_device_enrollment:true,os_keychain_storage:true,enrollment_single_use:true,independent_device_revocation:true,logout:true,job_scoped_cas_mtls:true,build_scoped_buildkit_mtls:true,two_project_shared_cas:true,two_project_shared_buildkit_cache:true,explicit_project_caches:true,buildkit_cancellation:true,testcontainers:true,dirty_worktree:true,incremental_cas:true,timeout:true,cancellation:true,strict_fifo_queue:true}' \
   > "${proof_dir}/proof.json"
 
 print "shared-service E2E passed: cached ${cached_seconds}s (first ${first_seconds}s)"

@@ -80,6 +80,11 @@ const (
 	// ControlServicePrepareBuildProcedure is the fully-qualified name of the ControlService's
 	// PrepareBuild RPC.
 	ControlServicePrepareBuildProcedure = "/rtest.v1.ControlService/PrepareBuild"
+	// ControlServiceGetBuildProcedure is the fully-qualified name of the ControlService's GetBuild RPC.
+	ControlServiceGetBuildProcedure = "/rtest.v1.ControlService/GetBuild"
+	// ControlServiceCancelBuildProcedure is the fully-qualified name of the ControlService's
+	// CancelBuild RPC.
+	ControlServiceCancelBuildProcedure = "/rtest.v1.ControlService/CancelBuild"
 	// ControlServiceFinishBuildProcedure is the fully-qualified name of the ControlService's
 	// FinishBuild RPC.
 	ControlServiceFinishBuildProcedure = "/rtest.v1.ControlService/FinishBuild"
@@ -130,6 +135,8 @@ type ControlServiceClient interface {
 	CancelJob(context.Context, *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error)
 	StreamJobLogs(context.Context, *connect.Request[v1.StreamJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamJobLogsResponse], error)
 	PrepareBuild(context.Context, *connect.Request[v1.PrepareBuildRequest]) (*connect.Response[v1.PrepareBuildResponse], error)
+	GetBuild(context.Context, *connect.Request[v1.GetBuildRequest]) (*connect.Response[v1.GetBuildResponse], error)
+	CancelBuild(context.Context, *connect.Request[v1.CancelBuildRequest]) (*connect.Response[v1.CancelBuildResponse], error)
 	FinishBuild(context.Context, *connect.Request[v1.FinishBuildRequest]) (*connect.Response[v1.FinishBuildResponse], error)
 	ExchangeGitHubOIDC(context.Context, *connect.Request[v1.ExchangeGitHubOIDCRequest]) (*connect.Response[v1.ExchangeGitHubOIDCResponse], error)
 	CreateGitHubTrust(context.Context, *connect.Request[v1.CreateGitHubTrustRequest]) (*connect.Response[v1.CreateGitHubTrustResponse], error)
@@ -249,6 +256,18 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(controlServiceMethods.ByName("PrepareBuild")),
 			connect.WithClientOptions(opts...),
 		),
+		getBuild: connect.NewClient[v1.GetBuildRequest, v1.GetBuildResponse](
+			httpClient,
+			baseURL+ControlServiceGetBuildProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("GetBuild")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelBuild: connect.NewClient[v1.CancelBuildRequest, v1.CancelBuildResponse](
+			httpClient,
+			baseURL+ControlServiceCancelBuildProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("CancelBuild")),
+			connect.WithClientOptions(opts...),
+		),
 		finishBuild: connect.NewClient[v1.FinishBuildRequest, v1.FinishBuildResponse](
 			httpClient,
 			baseURL+ControlServiceFinishBuildProcedure,
@@ -330,6 +349,8 @@ type controlServiceClient struct {
 	cancelJob               *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
 	streamJobLogs           *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
 	prepareBuild            *connect.Client[v1.PrepareBuildRequest, v1.PrepareBuildResponse]
+	getBuild                *connect.Client[v1.GetBuildRequest, v1.GetBuildResponse]
+	cancelBuild             *connect.Client[v1.CancelBuildRequest, v1.CancelBuildResponse]
 	finishBuild             *connect.Client[v1.FinishBuildRequest, v1.FinishBuildResponse]
 	exchangeGitHubOIDC      *connect.Client[v1.ExchangeGitHubOIDCRequest, v1.ExchangeGitHubOIDCResponse]
 	createGitHubTrust       *connect.Client[v1.CreateGitHubTrustRequest, v1.CreateGitHubTrustResponse]
@@ -422,6 +443,16 @@ func (c *controlServiceClient) PrepareBuild(ctx context.Context, req *connect.Re
 	return c.prepareBuild.CallUnary(ctx, req)
 }
 
+// GetBuild calls rtest.v1.ControlService.GetBuild.
+func (c *controlServiceClient) GetBuild(ctx context.Context, req *connect.Request[v1.GetBuildRequest]) (*connect.Response[v1.GetBuildResponse], error) {
+	return c.getBuild.CallUnary(ctx, req)
+}
+
+// CancelBuild calls rtest.v1.ControlService.CancelBuild.
+func (c *controlServiceClient) CancelBuild(ctx context.Context, req *connect.Request[v1.CancelBuildRequest]) (*connect.Response[v1.CancelBuildResponse], error) {
+	return c.cancelBuild.CallUnary(ctx, req)
+}
+
 // FinishBuild calls rtest.v1.ControlService.FinishBuild.
 func (c *controlServiceClient) FinishBuild(ctx context.Context, req *connect.Request[v1.FinishBuildRequest]) (*connect.Response[v1.FinishBuildResponse], error) {
 	return c.finishBuild.CallUnary(ctx, req)
@@ -490,6 +521,8 @@ type ControlServiceHandler interface {
 	CancelJob(context.Context, *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error)
 	StreamJobLogs(context.Context, *connect.Request[v1.StreamJobLogsRequest], *connect.ServerStream[v1.StreamJobLogsResponse]) error
 	PrepareBuild(context.Context, *connect.Request[v1.PrepareBuildRequest]) (*connect.Response[v1.PrepareBuildResponse], error)
+	GetBuild(context.Context, *connect.Request[v1.GetBuildRequest]) (*connect.Response[v1.GetBuildResponse], error)
+	CancelBuild(context.Context, *connect.Request[v1.CancelBuildRequest]) (*connect.Response[v1.CancelBuildResponse], error)
 	FinishBuild(context.Context, *connect.Request[v1.FinishBuildRequest]) (*connect.Response[v1.FinishBuildResponse], error)
 	ExchangeGitHubOIDC(context.Context, *connect.Request[v1.ExchangeGitHubOIDCRequest]) (*connect.Response[v1.ExchangeGitHubOIDCResponse], error)
 	CreateGitHubTrust(context.Context, *connect.Request[v1.CreateGitHubTrustRequest]) (*connect.Response[v1.CreateGitHubTrustResponse], error)
@@ -605,6 +638,18 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		connect.WithSchema(controlServiceMethods.ByName("PrepareBuild")),
 		connect.WithHandlerOptions(opts...),
 	)
+	controlServiceGetBuildHandler := connect.NewUnaryHandler(
+		ControlServiceGetBuildProcedure,
+		svc.GetBuild,
+		connect.WithSchema(controlServiceMethods.ByName("GetBuild")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceCancelBuildHandler := connect.NewUnaryHandler(
+		ControlServiceCancelBuildProcedure,
+		svc.CancelBuild,
+		connect.WithSchema(controlServiceMethods.ByName("CancelBuild")),
+		connect.WithHandlerOptions(opts...),
+	)
 	controlServiceFinishBuildHandler := connect.NewUnaryHandler(
 		ControlServiceFinishBuildProcedure,
 		svc.FinishBuild,
@@ -699,6 +744,10 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServiceStreamJobLogsHandler.ServeHTTP(w, r)
 		case ControlServicePrepareBuildProcedure:
 			controlServicePrepareBuildHandler.ServeHTTP(w, r)
+		case ControlServiceGetBuildProcedure:
+			controlServiceGetBuildHandler.ServeHTTP(w, r)
+		case ControlServiceCancelBuildProcedure:
+			controlServiceCancelBuildHandler.ServeHTTP(w, r)
 		case ControlServiceFinishBuildProcedure:
 			controlServiceFinishBuildHandler.ServeHTTP(w, r)
 		case ControlServiceExchangeGitHubOIDCProcedure:
@@ -790,6 +839,14 @@ func (UnimplementedControlServiceHandler) StreamJobLogs(context.Context, *connec
 
 func (UnimplementedControlServiceHandler) PrepareBuild(context.Context, *connect.Request[v1.PrepareBuildRequest]) (*connect.Response[v1.PrepareBuildResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("rtest.v1.ControlService.PrepareBuild is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) GetBuild(context.Context, *connect.Request[v1.GetBuildRequest]) (*connect.Response[v1.GetBuildResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("rtest.v1.ControlService.GetBuild is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) CancelBuild(context.Context, *connect.Request[v1.CancelBuildRequest]) (*connect.Response[v1.CancelBuildResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("rtest.v1.ControlService.CancelBuild is not implemented"))
 }
 
 func (UnimplementedControlServiceHandler) FinishBuild(context.Context, *connect.Request[v1.FinishBuildRequest]) (*connect.Response[v1.FinishBuildResponse], error) {

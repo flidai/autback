@@ -28,8 +28,6 @@ type Spec struct {
 	Environment        map[string]string
 	EntrypointHostPath string
 	Timeout            time.Duration
-	CPUs               string
-	Memory             string
 	CacheRoot          string
 	ProjectID          string
 	Caches             []CacheMount
@@ -56,14 +54,11 @@ func CreateArgs(spec Spec) []string {
 		"--restart-condition", "none", "--stop-grace-period", "15s",
 		"--network", "host",
 		"--user", "0:0",
-		"--limit-cpu", fallback(spec.CPUs, "1.5"), "--limit-memory", fallback(spec.Memory, "2500m"),
-		"--reserve-cpu", fallback(spec.CPUs, "1.5"), "--reserve-memory", fallback(spec.Memory, "2500m"),
 		"--mount", "type=bind,src=" + spec.JobsRoot + ",dst=" + spec.JobsRoot,
 		"--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock",
 		"--mount", "type=tmpfs,dst=/dev/shm,tmpfs-size=" + defaultSharedMemoryBytes,
 		"--env", "OUTBACK_JOB_ID=" + spec.ID,
 		"--env", "OUTBACK_WORKSPACE=" + workspace,
-		"--env", "OUTBACK_WORKER_LOCK=" + filepath.Join(spec.JobsRoot, ".worker.lock"),
 		"--env", "OUTBACK_HOST_UID=" + spec.HostUID,
 		"--env", "OUTBACK_HOST_GID=" + spec.HostGID,
 		"--env", "OUTBACK_CAS_ADDRESS=" + spec.CASAddress,

@@ -28,13 +28,20 @@ Docker Swarm respond, so it is the endpoint to use for alerts and deployment ver
 
 ## Capacity
 
-The reused CPX32 has 4 vCPU and 8 GB RAM. Jobs default to 2 CPU and 4 GB RAM; reservations
-equal limits. The single-worker service also holds an exclusive host-backed admission lock
-while a project command runs. This intentionally serializes Docker/Testcontainers-heavy
-jobs across projects instead of relying only on Swarm's memory arithmetic. Jobs may
-materialize source concurrently but wait before executing. BuildKit is capped separately
-at 3 GB; do not overlap a large image build and a memory-heavy test until measurements
-justify a larger or additional worker.
+The reused CPX32 has 4 vCPU and 8 GB RAM. Builds and commands enter one durable FIFO, and
+the control plane admits exactly one operation at a time. The admitted operation can use
+the VM's available CPU and memory; there are no per-job Swarm reservations/limits or a
+separate BuildKit memory cap. A command may run its own tasks concurrently, so repositories
+control useful parallelism without allowing independent submissions to oversubscribe the
+worker.
+
+Queued operations consume control-plane state only. Swarm services and BuildKit credentials
+are created only after admission. A one-second reconciliation loop releases completed or
+lost detached jobs and immediately admits the next FIFO entry. Queue state and the active
+lease are persisted in `/var/lib/outback/control.db` and survive a server restart.
+An active build lease has a configurable two-hour safety timeout so a killed client cannot
+block the FIFO indefinitely (`OUTBACK_BUILD_LEASE_TIMEOUT`). Repository builds that
+legitimately need longer must raise that worker setting explicitly.
 
 CAS data lives under `/var/lib/outback/cas`; workspaces live under `/var/lib/outback/jobs`;
 explicit project caches live under `/var/lib/outback/cache/<project-id>/<cache-name>`;
@@ -45,7 +52,7 @@ confidentiality between these projects.
 
 The hourly maintenance job keeps completed Swarm services for one hour and durable job
 logs/workspaces for seven days. Project caches use a 12 GiB high watermark and are pruned
-oldest-first to 8 GiB, but only while the exclusive worker lock is idle. At 85% filesystem
+oldest-first to 8 GiB, but only while no managed job is active. At 85% filesystem
 use, the same cache pruning runs and BuildKit retention tightens from 10 GiB to 4 GiB.
 The host janitor removes only terminal services older than 24 hours. Its cutoff is
 independent because Swarm does not expose the task completion timestamp in `service ls`.

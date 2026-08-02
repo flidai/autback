@@ -12,6 +12,117 @@ import (
 	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
 )
 
+func TestOperationsShareOneDurableFIFO(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-1", RequestHash: "job-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueJob(ctx, first.ID, "digest/1"); err != nil {
+		t.Fatal(err)
+	}
+	build, _, err := store.CreateBuild(ctx, bootstrap.Project.ID, control.Idempotency{Key: "build-1", RequestHash: "build-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-2", RequestHash: "job-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueJob(ctx, second.ID, "digest/2"); err != nil {
+		t.Fatal(err)
+	}
+
+	assertNextOperation(t, store, control.OperationJob, first.ID)
+	if operation, err := store.AcquireNextOperation(ctx); err != nil || operation != nil {
+		t.Fatalf("second acquire = %#v, %v; want no operation while lease is active", operation, err)
+	}
+	if err := store.ReleaseOperation(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationBuild, build.ID)
+	storedBuild, err := store.Build(ctx, build.ID)
+	if err != nil || storedBuild.Status != control.BuildRunning {
+		t.Fatalf("build = %#v, %v; want running", storedBuild, err)
+	}
+	if err := store.ReleaseOperation(ctx, control.OperationBuild, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationJob, second.ID)
+}
+
+func TestCancelQueuedOperationPreservesFIFO(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-1", RequestHash: "job-1"})
+	second, _, _ := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-2", RequestHash: "job-2"})
+	_, _ = store.QueueJob(ctx, first.ID, "digest/1")
+	_, _ = store.QueueJob(ctx, second.ID, "digest/2")
+	if cancelled, err := store.CancelQueuedOperation(ctx, control.OperationJob, first.ID); err != nil || !cancelled {
+		t.Fatalf("cancelled=%v err=%v", cancelled, err)
+	}
+	assertNextOperation(t, store, control.OperationJob, second.ID)
+}
+
+func TestActiveWorkerLeaseSurvivesStoreRestart(t *testing.T) {
+	root := t.TempDir()
+	pepper := []byte("test-pepper-that-is-at-least-32-bytes")
+	store, err := controlsqlite.Open(root, pepper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-1", RequestHash: "job-1"})
+	second, _, _ := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-2", RequestHash: "job-2"})
+	_, _ = store.QueueJob(ctx, first.ID, "digest/1")
+	_, _ = store.QueueJob(ctx, second.ID, "digest/2")
+	assertNextOperation(t, store, control.OperationJob, first.ID)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = controlsqlite.Open(root, pepper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if operation, err := store.AcquireNextOperation(ctx); err != nil || operation != nil {
+		t.Fatalf("acquire after restart = %#v, %v; active lease was not preserved", operation, err)
+	}
+	if err := store.ReleaseOperation(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationJob, second.ID)
+}
+
+func assertNextOperation(t *testing.T, store *controlsqlite.Store, kind control.OperationKind, id string) {
+	t.Helper()
+	operation, err := store.AcquireNextOperation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation == nil || operation.Kind != kind || operation.ID != id || operation.State != control.OperationActive {
+		t.Fatalf("operation = %#v, want %s %s active", operation, kind, id)
+	}
+}
+
+func testPreparedJob(projectID string) control.PrepareJob {
+	return control.PrepareJob{ProjectID: projectID, Image: "runner@test", Command: []string{"true"}, Timeout: time.Minute}
+}
+
 func TestOpenMigratesAdmissionIdempotencyColumns(t *testing.T) {
 	root := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(root, "control.db"))

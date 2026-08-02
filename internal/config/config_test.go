@@ -15,8 +15,6 @@ func TestLoadReadsServiceConfiguration(t *testing.T) {
   "url": "https://outback.example",
   "service": {
     "image": "ghcr.io/example/ci@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "cpus": "2",
-    "memory": "4g",
     "ca_cert_file": "/tmp/outback-ca.pem",
     "oidc_audience": "https://outback.example"
   }
@@ -114,7 +112,7 @@ func TestLoadAppliesServiceDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Service.CPUs != "2" || got.Service.Memory != "4g" || got.Service.OIDCAudience != got.URL {
+	if got.Service.OIDCAudience != got.URL {
 		t.Fatalf("service defaults = %#v", got.Service)
 	}
 }

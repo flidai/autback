@@ -101,6 +101,7 @@ const (
 	BuildStatus_BUILD_STATUS_SUCCEEDED   BuildStatus = 2
 	BuildStatus_BUILD_STATUS_FAILED      BuildStatus = 3
 	BuildStatus_BUILD_STATUS_CANCELLED   BuildStatus = 4
+	BuildStatus_BUILD_STATUS_QUEUED      BuildStatus = 5
 )
 
 // Enum value maps for BuildStatus.
@@ -111,6 +112,7 @@ var (
 		2: "BUILD_STATUS_SUCCEEDED",
 		3: "BUILD_STATUS_FAILED",
 		4: "BUILD_STATUS_CANCELLED",
+		5: "BUILD_STATUS_QUEUED",
 	}
 	BuildStatus_value = map[string]int32{
 		"BUILD_STATUS_UNSPECIFIED": 0,
@@ -118,6 +120,7 @@ var (
 		"BUILD_STATUS_SUCCEEDED":   2,
 		"BUILD_STATUS_FAILED":      3,
 		"BUILD_STATUS_CANCELLED":   4,
+		"BUILD_STATUS_QUEUED":      5,
 	}
 )
 
@@ -1535,18 +1538,20 @@ type Job struct {
 	RootDigest       string                 `protobuf:"bytes,7,opt,name=root_digest,json=rootDigest,proto3" json:"root_digest,omitempty"`
 	Status           JobStatus              `protobuf:"varint,8,opt,name=status,proto3,enum=rtest.v1.JobStatus" json:"status,omitempty"`
 	Timeout          *durationpb.Duration   `protobuf:"bytes,9,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	Cpus             string                 `protobuf:"bytes,10,opt,name=cpus,proto3" json:"cpus,omitempty"`
-	Memory           string                 `protobuf:"bytes,11,opt,name=memory,proto3" json:"memory,omitempty"`
-	CreatedAt        *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	StartedAt        *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt       *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	ExitCode         *int32                 `protobuf:"varint,15,opt,name=exit_code,json=exitCode,proto3,oneof" json:"exit_code,omitempty"`
-	ErrorMessage     string                 `protobuf:"bytes,16,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	CancelRequested  bool                   `protobuf:"varint,17,opt,name=cancel_requested,json=cancelRequested,proto3" json:"cancel_requested,omitempty"`
-	WorkerId         string                 `protobuf:"bytes,18,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
-	Caches           []*CacheMount          `protobuf:"bytes,19,rep,name=caches,proto3" json:"caches,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Deprecated: Marked as deprecated in rtest/v1/control.proto.
+	Cpus string `protobuf:"bytes,10,opt,name=cpus,proto3" json:"cpus,omitempty"`
+	// Deprecated: Marked as deprecated in rtest/v1/control.proto.
+	Memory          string                 `protobuf:"bytes,11,opt,name=memory,proto3" json:"memory,omitempty"`
+	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	StartedAt       *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt      *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	ExitCode        *int32                 `protobuf:"varint,15,opt,name=exit_code,json=exitCode,proto3,oneof" json:"exit_code,omitempty"`
+	ErrorMessage    string                 `protobuf:"bytes,16,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	CancelRequested bool                   `protobuf:"varint,17,opt,name=cancel_requested,json=cancelRequested,proto3" json:"cancel_requested,omitempty"`
+	WorkerId        string                 `protobuf:"bytes,18,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	Caches          []*CacheMount          `protobuf:"bytes,19,rep,name=caches,proto3" json:"caches,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
@@ -1642,6 +1647,7 @@ func (x *Job) GetTimeout() *durationpb.Duration {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in rtest/v1/control.proto.
 func (x *Job) GetCpus() string {
 	if x != nil {
 		return x.Cpus
@@ -1649,6 +1655,7 @@ func (x *Job) GetCpus() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in rtest/v1/control.proto.
 func (x *Job) GetMemory() string {
 	if x != nil {
 		return x.Memory
@@ -1772,12 +1779,14 @@ type PrepareJobRequest struct {
 	WorkingDirectory string                 `protobuf:"bytes,4,opt,name=working_directory,json=workingDirectory,proto3" json:"working_directory,omitempty"`
 	Environment      map[string]string      `protobuf:"bytes,5,rep,name=environment,proto3" json:"environment,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Timeout          *durationpb.Duration   `protobuf:"bytes,6,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	Cpus             string                 `protobuf:"bytes,7,opt,name=cpus,proto3" json:"cpus,omitempty"`
-	Memory           string                 `protobuf:"bytes,8,opt,name=memory,proto3" json:"memory,omitempty"`
-	IdempotencyKey   string                 `protobuf:"bytes,9,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	Caches           []*CacheMount          `protobuf:"bytes,10,rep,name=caches,proto3" json:"caches,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Deprecated: Marked as deprecated in rtest/v1/control.proto.
+	Cpus string `protobuf:"bytes,7,opt,name=cpus,proto3" json:"cpus,omitempty"`
+	// Deprecated: Marked as deprecated in rtest/v1/control.proto.
+	Memory         string        `protobuf:"bytes,8,opt,name=memory,proto3" json:"memory,omitempty"`
+	IdempotencyKey string        `protobuf:"bytes,9,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	Caches         []*CacheMount `protobuf:"bytes,10,rep,name=caches,proto3" json:"caches,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PrepareJobRequest) Reset() {
@@ -1852,6 +1861,7 @@ func (x *PrepareJobRequest) GetTimeout() *durationpb.Duration {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in rtest/v1/control.proto.
 func (x *PrepareJobRequest) GetCpus() string {
 	if x != nil {
 		return x.Cpus
@@ -1859,6 +1869,7 @@ func (x *PrepareJobRequest) GetCpus() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in rtest/v1/control.proto.
 func (x *PrepareJobRequest) GetMemory() string {
 	if x != nil {
 		return x.Memory
@@ -3710,6 +3721,190 @@ func (*RevokeDeviceTokenResponse) Descriptor() ([]byte, []int) {
 	return file_rtest_v1_control_proto_rawDescGZIP(), []int{61}
 }
 
+type GetBuildRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBuildRequest) Reset() {
+	*x = GetBuildRequest{}
+	mi := &file_rtest_v1_control_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBuildRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBuildRequest) ProtoMessage() {}
+
+func (x *GetBuildRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rtest_v1_control_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBuildRequest.ProtoReflect.Descriptor instead.
+func (*GetBuildRequest) Descriptor() ([]byte, []int) {
+	return file_rtest_v1_control_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *GetBuildRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type GetBuildResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Build         *Build                 `protobuf:"bytes,1,opt,name=build,proto3" json:"build,omitempty"`
+	Buildkit      *DataPlaneConnection   `protobuf:"bytes,2,opt,name=buildkit,proto3" json:"buildkit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBuildResponse) Reset() {
+	*x = GetBuildResponse{}
+	mi := &file_rtest_v1_control_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBuildResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBuildResponse) ProtoMessage() {}
+
+func (x *GetBuildResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rtest_v1_control_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBuildResponse.ProtoReflect.Descriptor instead.
+func (*GetBuildResponse) Descriptor() ([]byte, []int) {
+	return file_rtest_v1_control_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *GetBuildResponse) GetBuild() *Build {
+	if x != nil {
+		return x.Build
+	}
+	return nil
+}
+
+func (x *GetBuildResponse) GetBuildkit() *DataPlaneConnection {
+	if x != nil {
+		return x.Buildkit
+	}
+	return nil
+}
+
+type CancelBuildRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelBuildRequest) Reset() {
+	*x = CancelBuildRequest{}
+	mi := &file_rtest_v1_control_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelBuildRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelBuildRequest) ProtoMessage() {}
+
+func (x *CancelBuildRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rtest_v1_control_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelBuildRequest.ProtoReflect.Descriptor instead.
+func (*CancelBuildRequest) Descriptor() ([]byte, []int) {
+	return file_rtest_v1_control_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *CancelBuildRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type CancelBuildResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Build         *Build                 `protobuf:"bytes,1,opt,name=build,proto3" json:"build,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelBuildResponse) Reset() {
+	*x = CancelBuildResponse{}
+	mi := &file_rtest_v1_control_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelBuildResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelBuildResponse) ProtoMessage() {}
+
+func (x *CancelBuildResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rtest_v1_control_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelBuildResponse.ProtoReflect.Descriptor instead.
+func (*CancelBuildResponse) Descriptor() ([]byte, []int) {
+	return file_rtest_v1_control_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *CancelBuildResponse) GetBuild() *Build {
+	if x != nil {
+		return x.Build
+	}
+	return nil
+}
+
 var File_rtest_v1_control_proto protoreflect.FileDescriptor
 
 const file_rtest_v1_control_proto_rawDesc = "" +
@@ -3807,7 +4002,7 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\x1eListProjectImageHistoryRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"V\n" +
 	"\x1fListProjectImageHistoryResponse\x123\n" +
-	"\x06events\x18\x01 \x03(\v2\x1b.rtest.v1.ProjectImageEventR\x06events\"\xc0\x06\n" +
+	"\x06events\x18\x01 \x03(\v2\x1b.rtest.v1.ProjectImageEventR\x06events\"\xc8\x06\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -3819,10 +4014,10 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\vroot_digest\x18\a \x01(\tR\n" +
 	"rootDigest\x12+\n" +
 	"\x06status\x18\b \x01(\x0e2\x13.rtest.v1.JobStatusR\x06status\x123\n" +
-	"\atimeout\x18\t \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x12\n" +
+	"\atimeout\x18\t \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x16\n" +
 	"\x04cpus\x18\n" +
-	" \x01(\tR\x04cpus\x12\x16\n" +
-	"\x06memory\x18\v \x01(\tR\x06memory\x129\n" +
+	" \x01(\tB\x02\x18\x01R\x04cpus\x12\x1a\n" +
+	"\x06memory\x18\v \x01(\tB\x02\x18\x01R\x06memory\x129\n" +
 	"\n" +
 	"created_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
@@ -3842,16 +4037,16 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"CacheMount\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
-	"\x06target\x18\x02 \x01(\tR\x06target\"\xd2\x03\n" +
+	"\x06target\x18\x02 \x01(\tR\x06target\"\xda\x03\n" +
 	"\x11PrepareJobRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x18\n" +
 	"\acommand\x18\x03 \x03(\tR\acommand\x12+\n" +
 	"\x11working_directory\x18\x04 \x01(\tR\x10workingDirectory\x12N\n" +
 	"\venvironment\x18\x05 \x03(\v2,.rtest.v1.PrepareJobRequest.EnvironmentEntryR\venvironment\x123\n" +
-	"\atimeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x12\n" +
-	"\x04cpus\x18\a \x01(\tR\x04cpus\x12\x16\n" +
-	"\x06memory\x18\b \x01(\tR\x06memory\x12'\n" +
+	"\atimeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x16\n" +
+	"\x04cpus\x18\a \x01(\tB\x02\x18\x01R\x04cpus\x12\x1a\n" +
+	"\x06memory\x18\b \x01(\tB\x02\x18\x01R\x06memory\x12'\n" +
 	"\x0fidempotency_key\x18\t \x01(\tR\x0eidempotencyKey\x12,\n" +
 	"\x06caches\x18\n" +
 	" \x03(\v2\x14.rtest.v1.CacheMountR\x06caches\x1a>\n" +
@@ -3990,7 +4185,16 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\x06tokens\x18\x01 \x03(\v2\x15.rtest.v1.DeviceTokenR\x06tokens\"*\n" +
 	"\x18RevokeDeviceTokenRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x1b\n" +
-	"\x19RevokeDeviceTokenResponse*\xea\x01\n" +
+	"\x19RevokeDeviceTokenResponse\"!\n" +
+	"\x0fGetBuildRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"t\n" +
+	"\x10GetBuildResponse\x12%\n" +
+	"\x05build\x18\x01 \x01(\v2\x0f.rtest.v1.BuildR\x05build\x129\n" +
+	"\bbuildkit\x18\x02 \x01(\v2\x1d.rtest.v1.DataPlaneConnectionR\bbuildkit\"$\n" +
+	"\x12CancelBuildRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"<\n" +
+	"\x13CancelBuildResponse\x12%\n" +
+	"\x05build\x18\x01 \x01(\v2\x0f.rtest.v1.BuildR\x05build*\xea\x01\n" +
 	"\tJobStatus\x12\x1a\n" +
 	"\x16JOB_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14JOB_STATUS_PREPARING\x10\x01\x12\x15\n" +
@@ -4000,13 +4204,14 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\x11JOB_STATUS_FAILED\x10\x05\x12\x18\n" +
 	"\x14JOB_STATUS_CANCELLED\x10\x06\x12\x18\n" +
 	"\x14JOB_STATUS_TIMED_OUT\x10\a\x12\x13\n" +
-	"\x0fJOB_STATUS_LOST\x10\b*\x96\x01\n" +
+	"\x0fJOB_STATUS_LOST\x10\b*\xaf\x01\n" +
 	"\vBuildStatus\x12\x1c\n" +
 	"\x18BUILD_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BUILD_STATUS_RUNNING\x10\x01\x12\x1a\n" +
 	"\x16BUILD_STATUS_SUCCEEDED\x10\x02\x12\x17\n" +
 	"\x13BUILD_STATUS_FAILED\x10\x03\x12\x1a\n" +
-	"\x16BUILD_STATUS_CANCELLED\x10\x042\xf6\x11\n" +
+	"\x16BUILD_STATUS_CANCELLED\x10\x04\x12\x17\n" +
+	"\x13BUILD_STATUS_QUEUED\x10\x052\x85\x13\n" +
 	"\x0eControlService\x12S\n" +
 	"\x0eGetServiceInfo\x12\x1f.rtest.v1.GetServiceInfoRequest\x1a .rtest.v1.GetServiceInfoResponse\x12G\n" +
 	"\n" +
@@ -4025,7 +4230,9 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\bListJobs\x12\x19.rtest.v1.ListJobsRequest\x1a\x1a.rtest.v1.ListJobsResponse\x12D\n" +
 	"\tCancelJob\x12\x1a.rtest.v1.CancelJobRequest\x1a\x1b.rtest.v1.CancelJobResponse\x12R\n" +
 	"\rStreamJobLogs\x12\x1e.rtest.v1.StreamJobLogsRequest\x1a\x1f.rtest.v1.StreamJobLogsResponse0\x01\x12M\n" +
-	"\fPrepareBuild\x12\x1d.rtest.v1.PrepareBuildRequest\x1a\x1e.rtest.v1.PrepareBuildResponse\x12J\n" +
+	"\fPrepareBuild\x12\x1d.rtest.v1.PrepareBuildRequest\x1a\x1e.rtest.v1.PrepareBuildResponse\x12A\n" +
+	"\bGetBuild\x12\x19.rtest.v1.GetBuildRequest\x1a\x1a.rtest.v1.GetBuildResponse\x12J\n" +
+	"\vCancelBuild\x12\x1c.rtest.v1.CancelBuildRequest\x1a\x1d.rtest.v1.CancelBuildResponse\x12J\n" +
 	"\vFinishBuild\x12\x1c.rtest.v1.FinishBuildRequest\x1a\x1d.rtest.v1.FinishBuildResponse\x12_\n" +
 	"\x12ExchangeGitHubOIDC\x12#.rtest.v1.ExchangeGitHubOIDCRequest\x1a$.rtest.v1.ExchangeGitHubOIDCResponse\x12\\\n" +
 	"\x11CreateGitHubTrust\x12\".rtest.v1.CreateGitHubTrustRequest\x1a#.rtest.v1.CreateGitHubTrustResponse\x12Y\n" +
@@ -4050,7 +4257,7 @@ func file_rtest_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_rtest_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_rtest_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 64)
+var file_rtest_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 68)
 var file_rtest_v1_control_proto_goTypes = []any{
 	(JobStatus)(0),                          // 0: rtest.v1.JobStatus
 	(BuildStatus)(0),                        // 1: rtest.v1.BuildStatus
@@ -4116,39 +4323,43 @@ var file_rtest_v1_control_proto_goTypes = []any{
 	(*ListDeviceTokensResponse)(nil),        // 61: rtest.v1.ListDeviceTokensResponse
 	(*RevokeDeviceTokenRequest)(nil),        // 62: rtest.v1.RevokeDeviceTokenRequest
 	(*RevokeDeviceTokenResponse)(nil),       // 63: rtest.v1.RevokeDeviceTokenResponse
-	nil,                                     // 64: rtest.v1.Job.EnvironmentEntry
-	nil,                                     // 65: rtest.v1.PrepareJobRequest.EnvironmentEntry
-	(*timestamppb.Timestamp)(nil),           // 66: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),             // 67: google.protobuf.Duration
+	(*GetBuildRequest)(nil),                 // 64: rtest.v1.GetBuildRequest
+	(*GetBuildResponse)(nil),                // 65: rtest.v1.GetBuildResponse
+	(*CancelBuildRequest)(nil),              // 66: rtest.v1.CancelBuildRequest
+	(*CancelBuildResponse)(nil),             // 67: rtest.v1.CancelBuildResponse
+	nil,                                     // 68: rtest.v1.Job.EnvironmentEntry
+	nil,                                     // 69: rtest.v1.PrepareJobRequest.EnvironmentEntry
+	(*timestamppb.Timestamp)(nil),           // 70: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),             // 71: google.protobuf.Duration
 }
 var file_rtest_v1_control_proto_depIdxs = []int32{
-	66, // 0: rtest.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	70, // 0: rtest.v1.User.created_at:type_name -> google.protobuf.Timestamp
 	4,  // 1: rtest.v1.CreateUserResponse.user:type_name -> rtest.v1.User
-	66, // 2: rtest.v1.Project.created_at:type_name -> google.protobuf.Timestamp
+	70, // 2: rtest.v1.Project.created_at:type_name -> google.protobuf.Timestamp
 	7,  // 3: rtest.v1.CreateProjectResponse.project:type_name -> rtest.v1.Project
 	7,  // 4: rtest.v1.ListProjectsResponse.projects:type_name -> rtest.v1.Project
-	66, // 5: rtest.v1.EnrollmentCode.created_at:type_name -> google.protobuf.Timestamp
-	66, // 6: rtest.v1.EnrollmentCode.expires_at:type_name -> google.protobuf.Timestamp
-	66, // 7: rtest.v1.EnrollmentCode.consumed_at:type_name -> google.protobuf.Timestamp
-	66, // 8: rtest.v1.CreateEnrollmentCodeRequest.expires_at:type_name -> google.protobuf.Timestamp
+	70, // 5: rtest.v1.EnrollmentCode.created_at:type_name -> google.protobuf.Timestamp
+	70, // 6: rtest.v1.EnrollmentCode.expires_at:type_name -> google.protobuf.Timestamp
+	70, // 7: rtest.v1.EnrollmentCode.consumed_at:type_name -> google.protobuf.Timestamp
+	70, // 8: rtest.v1.CreateEnrollmentCodeRequest.expires_at:type_name -> google.protobuf.Timestamp
 	14, // 9: rtest.v1.CreateEnrollmentCodeResponse.enrollment:type_name -> rtest.v1.EnrollmentCode
 	57, // 10: rtest.v1.ExchangeEnrollmentCodeResponse.device_token:type_name -> rtest.v1.DeviceToken
 	7,  // 11: rtest.v1.ActivateProjectImageResponse.project:type_name -> rtest.v1.Project
 	7,  // 12: rtest.v1.RollbackProjectImageResponse.project:type_name -> rtest.v1.Project
 	7,  // 13: rtest.v1.SetProjectImagePolicyResponse.project:type_name -> rtest.v1.Project
-	66, // 14: rtest.v1.ProjectImageEvent.created_at:type_name -> google.protobuf.Timestamp
+	70, // 14: rtest.v1.ProjectImageEvent.created_at:type_name -> google.protobuf.Timestamp
 	25, // 15: rtest.v1.ListProjectImageHistoryResponse.events:type_name -> rtest.v1.ProjectImageEvent
-	64, // 16: rtest.v1.Job.environment:type_name -> rtest.v1.Job.EnvironmentEntry
+	68, // 16: rtest.v1.Job.environment:type_name -> rtest.v1.Job.EnvironmentEntry
 	0,  // 17: rtest.v1.Job.status:type_name -> rtest.v1.JobStatus
-	67, // 18: rtest.v1.Job.timeout:type_name -> google.protobuf.Duration
-	66, // 19: rtest.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	66, // 20: rtest.v1.Job.started_at:type_name -> google.protobuf.Timestamp
-	66, // 21: rtest.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
+	71, // 18: rtest.v1.Job.timeout:type_name -> google.protobuf.Duration
+	70, // 19: rtest.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	70, // 20: rtest.v1.Job.started_at:type_name -> google.protobuf.Timestamp
+	70, // 21: rtest.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
 	29, // 22: rtest.v1.Job.caches:type_name -> rtest.v1.CacheMount
-	65, // 23: rtest.v1.PrepareJobRequest.environment:type_name -> rtest.v1.PrepareJobRequest.EnvironmentEntry
-	67, // 24: rtest.v1.PrepareJobRequest.timeout:type_name -> google.protobuf.Duration
+	69, // 23: rtest.v1.PrepareJobRequest.environment:type_name -> rtest.v1.PrepareJobRequest.EnvironmentEntry
+	71, // 24: rtest.v1.PrepareJobRequest.timeout:type_name -> google.protobuf.Duration
 	29, // 25: rtest.v1.PrepareJobRequest.caches:type_name -> rtest.v1.CacheMount
-	66, // 26: rtest.v1.DataPlaneConnection.expires_at:type_name -> google.protobuf.Timestamp
+	70, // 26: rtest.v1.DataPlaneConnection.expires_at:type_name -> google.protobuf.Timestamp
 	28, // 27: rtest.v1.PrepareJobResponse.job:type_name -> rtest.v1.Job
 	31, // 28: rtest.v1.PrepareJobResponse.cas:type_name -> rtest.v1.DataPlaneConnection
 	28, // 29: rtest.v1.StartJobResponse.job:type_name -> rtest.v1.Job
@@ -4157,80 +4368,87 @@ var file_rtest_v1_control_proto_depIdxs = []int32{
 	28, // 32: rtest.v1.CancelJobResponse.job:type_name -> rtest.v1.Job
 	28, // 33: rtest.v1.StreamJobLogsResponse.terminal_job:type_name -> rtest.v1.Job
 	1,  // 34: rtest.v1.Build.status:type_name -> rtest.v1.BuildStatus
-	66, // 35: rtest.v1.Build.created_at:type_name -> google.protobuf.Timestamp
-	66, // 36: rtest.v1.Build.finished_at:type_name -> google.protobuf.Timestamp
+	70, // 35: rtest.v1.Build.created_at:type_name -> google.protobuf.Timestamp
+	70, // 36: rtest.v1.Build.finished_at:type_name -> google.protobuf.Timestamp
 	43, // 37: rtest.v1.PrepareBuildResponse.build:type_name -> rtest.v1.Build
 	31, // 38: rtest.v1.PrepareBuildResponse.buildkit:type_name -> rtest.v1.DataPlaneConnection
 	43, // 39: rtest.v1.FinishBuildResponse.build:type_name -> rtest.v1.Build
-	66, // 40: rtest.v1.ExchangeGitHubOIDCResponse.expires_at:type_name -> google.protobuf.Timestamp
-	66, // 41: rtest.v1.GitHubTrust.created_at:type_name -> google.protobuf.Timestamp
-	66, // 42: rtest.v1.GitHubTrust.revoked_at:type_name -> google.protobuf.Timestamp
+	70, // 40: rtest.v1.ExchangeGitHubOIDCResponse.expires_at:type_name -> google.protobuf.Timestamp
+	70, // 41: rtest.v1.GitHubTrust.created_at:type_name -> google.protobuf.Timestamp
+	70, // 42: rtest.v1.GitHubTrust.revoked_at:type_name -> google.protobuf.Timestamp
 	50, // 43: rtest.v1.CreateGitHubTrustResponse.trust:type_name -> rtest.v1.GitHubTrust
 	50, // 44: rtest.v1.ListGitHubTrustsResponse.trusts:type_name -> rtest.v1.GitHubTrust
-	66, // 45: rtest.v1.DeviceToken.created_at:type_name -> google.protobuf.Timestamp
-	66, // 46: rtest.v1.DeviceToken.expires_at:type_name -> google.protobuf.Timestamp
-	66, // 47: rtest.v1.DeviceToken.last_used_at:type_name -> google.protobuf.Timestamp
-	66, // 48: rtest.v1.DeviceToken.revoked_at:type_name -> google.protobuf.Timestamp
-	66, // 49: rtest.v1.CreateDeviceTokenRequest.expires_at:type_name -> google.protobuf.Timestamp
+	70, // 45: rtest.v1.DeviceToken.created_at:type_name -> google.protobuf.Timestamp
+	70, // 46: rtest.v1.DeviceToken.expires_at:type_name -> google.protobuf.Timestamp
+	70, // 47: rtest.v1.DeviceToken.last_used_at:type_name -> google.protobuf.Timestamp
+	70, // 48: rtest.v1.DeviceToken.revoked_at:type_name -> google.protobuf.Timestamp
+	70, // 49: rtest.v1.CreateDeviceTokenRequest.expires_at:type_name -> google.protobuf.Timestamp
 	57, // 50: rtest.v1.CreateDeviceTokenResponse.token_metadata:type_name -> rtest.v1.DeviceToken
 	57, // 51: rtest.v1.ListDeviceTokensResponse.tokens:type_name -> rtest.v1.DeviceToken
-	2,  // 52: rtest.v1.ControlService.GetServiceInfo:input_type -> rtest.v1.GetServiceInfoRequest
-	5,  // 53: rtest.v1.ControlService.CreateUser:input_type -> rtest.v1.CreateUserRequest
-	8,  // 54: rtest.v1.ControlService.CreateProject:input_type -> rtest.v1.CreateProjectRequest
-	10, // 55: rtest.v1.ControlService.ListProjects:input_type -> rtest.v1.ListProjectsRequest
-	12, // 56: rtest.v1.ControlService.AddProjectMember:input_type -> rtest.v1.AddProjectMemberRequest
-	19, // 57: rtest.v1.ControlService.ActivateProjectImage:input_type -> rtest.v1.ActivateProjectImageRequest
-	21, // 58: rtest.v1.ControlService.RollbackProjectImage:input_type -> rtest.v1.RollbackProjectImageRequest
-	23, // 59: rtest.v1.ControlService.SetProjectImagePolicy:input_type -> rtest.v1.SetProjectImagePolicyRequest
-	26, // 60: rtest.v1.ControlService.ListProjectImageHistory:input_type -> rtest.v1.ListProjectImageHistoryRequest
-	30, // 61: rtest.v1.ControlService.PrepareJob:input_type -> rtest.v1.PrepareJobRequest
-	33, // 62: rtest.v1.ControlService.StartJob:input_type -> rtest.v1.StartJobRequest
-	35, // 63: rtest.v1.ControlService.GetJob:input_type -> rtest.v1.GetJobRequest
-	37, // 64: rtest.v1.ControlService.ListJobs:input_type -> rtest.v1.ListJobsRequest
-	39, // 65: rtest.v1.ControlService.CancelJob:input_type -> rtest.v1.CancelJobRequest
-	41, // 66: rtest.v1.ControlService.StreamJobLogs:input_type -> rtest.v1.StreamJobLogsRequest
-	44, // 67: rtest.v1.ControlService.PrepareBuild:input_type -> rtest.v1.PrepareBuildRequest
-	46, // 68: rtest.v1.ControlService.FinishBuild:input_type -> rtest.v1.FinishBuildRequest
-	48, // 69: rtest.v1.ControlService.ExchangeGitHubOIDC:input_type -> rtest.v1.ExchangeGitHubOIDCRequest
-	51, // 70: rtest.v1.ControlService.CreateGitHubTrust:input_type -> rtest.v1.CreateGitHubTrustRequest
-	53, // 71: rtest.v1.ControlService.ListGitHubTrusts:input_type -> rtest.v1.ListGitHubTrustsRequest
-	55, // 72: rtest.v1.ControlService.RevokeGitHubTrust:input_type -> rtest.v1.RevokeGitHubTrustRequest
-	58, // 73: rtest.v1.ControlService.CreateDeviceToken:input_type -> rtest.v1.CreateDeviceTokenRequest
-	60, // 74: rtest.v1.ControlService.ListDeviceTokens:input_type -> rtest.v1.ListDeviceTokensRequest
-	62, // 75: rtest.v1.ControlService.RevokeDeviceToken:input_type -> rtest.v1.RevokeDeviceTokenRequest
-	15, // 76: rtest.v1.ControlService.CreateEnrollmentCode:input_type -> rtest.v1.CreateEnrollmentCodeRequest
-	17, // 77: rtest.v1.ControlService.ExchangeEnrollmentCode:input_type -> rtest.v1.ExchangeEnrollmentCodeRequest
-	3,  // 78: rtest.v1.ControlService.GetServiceInfo:output_type -> rtest.v1.GetServiceInfoResponse
-	6,  // 79: rtest.v1.ControlService.CreateUser:output_type -> rtest.v1.CreateUserResponse
-	9,  // 80: rtest.v1.ControlService.CreateProject:output_type -> rtest.v1.CreateProjectResponse
-	11, // 81: rtest.v1.ControlService.ListProjects:output_type -> rtest.v1.ListProjectsResponse
-	13, // 82: rtest.v1.ControlService.AddProjectMember:output_type -> rtest.v1.AddProjectMemberResponse
-	20, // 83: rtest.v1.ControlService.ActivateProjectImage:output_type -> rtest.v1.ActivateProjectImageResponse
-	22, // 84: rtest.v1.ControlService.RollbackProjectImage:output_type -> rtest.v1.RollbackProjectImageResponse
-	24, // 85: rtest.v1.ControlService.SetProjectImagePolicy:output_type -> rtest.v1.SetProjectImagePolicyResponse
-	27, // 86: rtest.v1.ControlService.ListProjectImageHistory:output_type -> rtest.v1.ListProjectImageHistoryResponse
-	32, // 87: rtest.v1.ControlService.PrepareJob:output_type -> rtest.v1.PrepareJobResponse
-	34, // 88: rtest.v1.ControlService.StartJob:output_type -> rtest.v1.StartJobResponse
-	36, // 89: rtest.v1.ControlService.GetJob:output_type -> rtest.v1.GetJobResponse
-	38, // 90: rtest.v1.ControlService.ListJobs:output_type -> rtest.v1.ListJobsResponse
-	40, // 91: rtest.v1.ControlService.CancelJob:output_type -> rtest.v1.CancelJobResponse
-	42, // 92: rtest.v1.ControlService.StreamJobLogs:output_type -> rtest.v1.StreamJobLogsResponse
-	45, // 93: rtest.v1.ControlService.PrepareBuild:output_type -> rtest.v1.PrepareBuildResponse
-	47, // 94: rtest.v1.ControlService.FinishBuild:output_type -> rtest.v1.FinishBuildResponse
-	49, // 95: rtest.v1.ControlService.ExchangeGitHubOIDC:output_type -> rtest.v1.ExchangeGitHubOIDCResponse
-	52, // 96: rtest.v1.ControlService.CreateGitHubTrust:output_type -> rtest.v1.CreateGitHubTrustResponse
-	54, // 97: rtest.v1.ControlService.ListGitHubTrusts:output_type -> rtest.v1.ListGitHubTrustsResponse
-	56, // 98: rtest.v1.ControlService.RevokeGitHubTrust:output_type -> rtest.v1.RevokeGitHubTrustResponse
-	59, // 99: rtest.v1.ControlService.CreateDeviceToken:output_type -> rtest.v1.CreateDeviceTokenResponse
-	61, // 100: rtest.v1.ControlService.ListDeviceTokens:output_type -> rtest.v1.ListDeviceTokensResponse
-	63, // 101: rtest.v1.ControlService.RevokeDeviceToken:output_type -> rtest.v1.RevokeDeviceTokenResponse
-	16, // 102: rtest.v1.ControlService.CreateEnrollmentCode:output_type -> rtest.v1.CreateEnrollmentCodeResponse
-	18, // 103: rtest.v1.ControlService.ExchangeEnrollmentCode:output_type -> rtest.v1.ExchangeEnrollmentCodeResponse
-	78, // [78:104] is the sub-list for method output_type
-	52, // [52:78] is the sub-list for method input_type
-	52, // [52:52] is the sub-list for extension type_name
-	52, // [52:52] is the sub-list for extension extendee
-	0,  // [0:52] is the sub-list for field type_name
+	43, // 52: rtest.v1.GetBuildResponse.build:type_name -> rtest.v1.Build
+	31, // 53: rtest.v1.GetBuildResponse.buildkit:type_name -> rtest.v1.DataPlaneConnection
+	43, // 54: rtest.v1.CancelBuildResponse.build:type_name -> rtest.v1.Build
+	2,  // 55: rtest.v1.ControlService.GetServiceInfo:input_type -> rtest.v1.GetServiceInfoRequest
+	5,  // 56: rtest.v1.ControlService.CreateUser:input_type -> rtest.v1.CreateUserRequest
+	8,  // 57: rtest.v1.ControlService.CreateProject:input_type -> rtest.v1.CreateProjectRequest
+	10, // 58: rtest.v1.ControlService.ListProjects:input_type -> rtest.v1.ListProjectsRequest
+	12, // 59: rtest.v1.ControlService.AddProjectMember:input_type -> rtest.v1.AddProjectMemberRequest
+	19, // 60: rtest.v1.ControlService.ActivateProjectImage:input_type -> rtest.v1.ActivateProjectImageRequest
+	21, // 61: rtest.v1.ControlService.RollbackProjectImage:input_type -> rtest.v1.RollbackProjectImageRequest
+	23, // 62: rtest.v1.ControlService.SetProjectImagePolicy:input_type -> rtest.v1.SetProjectImagePolicyRequest
+	26, // 63: rtest.v1.ControlService.ListProjectImageHistory:input_type -> rtest.v1.ListProjectImageHistoryRequest
+	30, // 64: rtest.v1.ControlService.PrepareJob:input_type -> rtest.v1.PrepareJobRequest
+	33, // 65: rtest.v1.ControlService.StartJob:input_type -> rtest.v1.StartJobRequest
+	35, // 66: rtest.v1.ControlService.GetJob:input_type -> rtest.v1.GetJobRequest
+	37, // 67: rtest.v1.ControlService.ListJobs:input_type -> rtest.v1.ListJobsRequest
+	39, // 68: rtest.v1.ControlService.CancelJob:input_type -> rtest.v1.CancelJobRequest
+	41, // 69: rtest.v1.ControlService.StreamJobLogs:input_type -> rtest.v1.StreamJobLogsRequest
+	44, // 70: rtest.v1.ControlService.PrepareBuild:input_type -> rtest.v1.PrepareBuildRequest
+	64, // 71: rtest.v1.ControlService.GetBuild:input_type -> rtest.v1.GetBuildRequest
+	66, // 72: rtest.v1.ControlService.CancelBuild:input_type -> rtest.v1.CancelBuildRequest
+	46, // 73: rtest.v1.ControlService.FinishBuild:input_type -> rtest.v1.FinishBuildRequest
+	48, // 74: rtest.v1.ControlService.ExchangeGitHubOIDC:input_type -> rtest.v1.ExchangeGitHubOIDCRequest
+	51, // 75: rtest.v1.ControlService.CreateGitHubTrust:input_type -> rtest.v1.CreateGitHubTrustRequest
+	53, // 76: rtest.v1.ControlService.ListGitHubTrusts:input_type -> rtest.v1.ListGitHubTrustsRequest
+	55, // 77: rtest.v1.ControlService.RevokeGitHubTrust:input_type -> rtest.v1.RevokeGitHubTrustRequest
+	58, // 78: rtest.v1.ControlService.CreateDeviceToken:input_type -> rtest.v1.CreateDeviceTokenRequest
+	60, // 79: rtest.v1.ControlService.ListDeviceTokens:input_type -> rtest.v1.ListDeviceTokensRequest
+	62, // 80: rtest.v1.ControlService.RevokeDeviceToken:input_type -> rtest.v1.RevokeDeviceTokenRequest
+	15, // 81: rtest.v1.ControlService.CreateEnrollmentCode:input_type -> rtest.v1.CreateEnrollmentCodeRequest
+	17, // 82: rtest.v1.ControlService.ExchangeEnrollmentCode:input_type -> rtest.v1.ExchangeEnrollmentCodeRequest
+	3,  // 83: rtest.v1.ControlService.GetServiceInfo:output_type -> rtest.v1.GetServiceInfoResponse
+	6,  // 84: rtest.v1.ControlService.CreateUser:output_type -> rtest.v1.CreateUserResponse
+	9,  // 85: rtest.v1.ControlService.CreateProject:output_type -> rtest.v1.CreateProjectResponse
+	11, // 86: rtest.v1.ControlService.ListProjects:output_type -> rtest.v1.ListProjectsResponse
+	13, // 87: rtest.v1.ControlService.AddProjectMember:output_type -> rtest.v1.AddProjectMemberResponse
+	20, // 88: rtest.v1.ControlService.ActivateProjectImage:output_type -> rtest.v1.ActivateProjectImageResponse
+	22, // 89: rtest.v1.ControlService.RollbackProjectImage:output_type -> rtest.v1.RollbackProjectImageResponse
+	24, // 90: rtest.v1.ControlService.SetProjectImagePolicy:output_type -> rtest.v1.SetProjectImagePolicyResponse
+	27, // 91: rtest.v1.ControlService.ListProjectImageHistory:output_type -> rtest.v1.ListProjectImageHistoryResponse
+	32, // 92: rtest.v1.ControlService.PrepareJob:output_type -> rtest.v1.PrepareJobResponse
+	34, // 93: rtest.v1.ControlService.StartJob:output_type -> rtest.v1.StartJobResponse
+	36, // 94: rtest.v1.ControlService.GetJob:output_type -> rtest.v1.GetJobResponse
+	38, // 95: rtest.v1.ControlService.ListJobs:output_type -> rtest.v1.ListJobsResponse
+	40, // 96: rtest.v1.ControlService.CancelJob:output_type -> rtest.v1.CancelJobResponse
+	42, // 97: rtest.v1.ControlService.StreamJobLogs:output_type -> rtest.v1.StreamJobLogsResponse
+	45, // 98: rtest.v1.ControlService.PrepareBuild:output_type -> rtest.v1.PrepareBuildResponse
+	65, // 99: rtest.v1.ControlService.GetBuild:output_type -> rtest.v1.GetBuildResponse
+	67, // 100: rtest.v1.ControlService.CancelBuild:output_type -> rtest.v1.CancelBuildResponse
+	47, // 101: rtest.v1.ControlService.FinishBuild:output_type -> rtest.v1.FinishBuildResponse
+	49, // 102: rtest.v1.ControlService.ExchangeGitHubOIDC:output_type -> rtest.v1.ExchangeGitHubOIDCResponse
+	52, // 103: rtest.v1.ControlService.CreateGitHubTrust:output_type -> rtest.v1.CreateGitHubTrustResponse
+	54, // 104: rtest.v1.ControlService.ListGitHubTrusts:output_type -> rtest.v1.ListGitHubTrustsResponse
+	56, // 105: rtest.v1.ControlService.RevokeGitHubTrust:output_type -> rtest.v1.RevokeGitHubTrustResponse
+	59, // 106: rtest.v1.ControlService.CreateDeviceToken:output_type -> rtest.v1.CreateDeviceTokenResponse
+	61, // 107: rtest.v1.ControlService.ListDeviceTokens:output_type -> rtest.v1.ListDeviceTokensResponse
+	63, // 108: rtest.v1.ControlService.RevokeDeviceToken:output_type -> rtest.v1.RevokeDeviceTokenResponse
+	16, // 109: rtest.v1.ControlService.CreateEnrollmentCode:output_type -> rtest.v1.CreateEnrollmentCodeResponse
+	18, // 110: rtest.v1.ControlService.ExchangeEnrollmentCode:output_type -> rtest.v1.ExchangeEnrollmentCodeResponse
+	83, // [83:111] is the sub-list for method output_type
+	55, // [55:83] is the sub-list for method input_type
+	55, // [55:55] is the sub-list for extension type_name
+	55, // [55:55] is the sub-list for extension extendee
+	0,  // [0:55] is the sub-list for field type_name
 }
 
 func init() { file_rtest_v1_control_proto_init() }
@@ -4246,7 +4464,7 @@ func file_rtest_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rtest_v1_control_proto_rawDesc), len(file_rtest_v1_control_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   64,
+			NumMessages:   68,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

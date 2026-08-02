@@ -17,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/flidai/outback/internal/control"
 	"github.com/flidai/outback/internal/control/controlapi"
+	"github.com/flidai/outback/internal/control/dispatcher"
 	"github.com/flidai/outback/internal/control/pki"
 	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
 	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
@@ -88,6 +89,57 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	}
 	if output.String() != "remote output\n" || terminal == nil || terminal.Status != outbackv1.JobStatus_JOB_STATUS_SUCCEEDED {
 		t.Fatalf("output=%q terminal=%#v", output.String(), terminal)
+	}
+}
+
+func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	ctx := context.Background()
+	prepareJob := func(key string) *outbackv1.Job {
+		t.Helper()
+		prepared, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+			IdempotencyKey: key, Project: fixture.bootstrap.Project.Slug,
+			Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"task", "ci"}, Timeout: durationpb.New(time.Minute),
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		started, err := client.StartJob(ctx, connect.NewRequest(&outbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("a", 64) + "/1"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return started.Msg.Job
+	}
+	first := prepareJob("fifo-first-job")
+	build, err := client.PrepareBuild(ctx, connect.NewRequest(&outbackv1.PrepareBuildRequest{Project: fixture.bootstrap.Project.Slug, IdempotencyKey: "fifo-build-0001"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.Msg.Build.Status != outbackv1.BuildStatus_BUILD_STATUS_QUEUED || build.Msg.Buildkit != nil {
+		t.Fatalf("queued build = %#v", build.Msg)
+	}
+	second := prepareJob("fifo-second-job")
+	if fixture.scheduler.createdCount() != 1 {
+		t.Fatalf("created jobs = %d, want only first", fixture.scheduler.createdCount())
+	}
+
+	fixture.scheduler.complete(first.Id, protocol.StatusSucceeded, 0)
+	if _, err := client.GetJob(ctx, connect.NewRequest(&outbackv1.GetJobRequest{Id: first.Id})); err != nil {
+		t.Fatal(err)
+	}
+	runningBuild, err := client.GetBuild(ctx, connect.NewRequest(&outbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runningBuild.Msg.Build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
+		t.Fatalf("admitted build = %#v", runningBuild.Msg)
+	}
+	if _, err := client.FinishBuild(ctx, connect.NewRequest(&outbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.scheduler.createdCount() != 2 || fixture.scheduler.created[1].ID != second.Id {
+		t.Fatalf("created jobs = %#v, want second after build", fixture.scheduler.created)
 	}
 }
 
@@ -607,8 +659,9 @@ func newFixtureWithVerifier(t *testing.T, verifier controlapi.OIDCVerifier) *fix
 		t.Fatal(err)
 	}
 	scheduler := &fakeScheduler{jobs: map[string]protocol.Job{}}
+	dispatch := dispatcher.New(store, scheduler)
 	handler, err := controlapi.New(controlapi.Config{
-		Store: store, Scheduler: scheduler, Authority: authority,
+		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
 		CASEndpoint: "cas.example:50051", CASInstance: "outback", BuildKitEndpoint: "buildkit.example:1234",
 		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier,
 	})

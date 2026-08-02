@@ -10,8 +10,6 @@ import (
 
 type Service struct {
 	Image        string `json:"image,omitempty"`
-	CPUs         string `json:"cpus,omitempty"`
-	Memory       string `json:"memory,omitempty"`
 	CACertFile   string `json:"ca_cert_file,omitempty"`
 	OIDCAudience string `json:"oidc_audience,omitempty"`
 }
@@ -38,12 +36,6 @@ func Load() (Config, error) {
 	}
 	if config.Service == nil {
 		config.Service = &Service{}
-	}
-	if config.Service.CPUs == "" {
-		config.Service.CPUs = "2"
-	}
-	if config.Service.Memory == "" {
-		config.Service.Memory = "4g"
 	}
 	if config.Service.OIDCAudience == "" {
 		config.Service.OIDCAudience = config.URL

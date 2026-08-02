@@ -373,12 +373,12 @@ func selectAuthorizedProject(projects []*outbackv1.Project, selector string) (*o
 }
 
 type execOptions struct {
-	project, image, cpus, memory, workdir string
-	timeout                               time.Duration
-	detach                                bool
-	environment                           map[string]string
-	command                               []string
-	caches                                []*outbackv1.CacheMount
+	project, image, workdir string
+	timeout                 time.Duration
+	detach                  bool
+	environment             map[string]string
+	command                 []string
+	caches                  []*outbackv1.CacheMount
 }
 
 func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
@@ -409,7 +409,7 @@ func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	}
 	prepared, err := api.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
 		Project: options.project, Image: options.image, Command: options.command, WorkingDirectory: options.workdir,
-		Environment: options.environment, Timeout: durationpb.New(options.timeout), Cpus: options.cpus, Memory: options.memory,
+		Environment: options.environment, Timeout: durationpb.New(options.timeout),
 		IdempotencyKey: idempotencyKey, Caches: options.caches,
 	}))
 	if err != nil {
@@ -442,14 +442,14 @@ func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient,
 
 func parseExec(settings config.Config, project string, args []string) (execOptions, error) {
 	options := execOptions{
-		project: project, image: settings.Service.Image, cpus: settings.Service.CPUs,
-		memory: settings.Service.Memory, timeout: 30 * time.Minute, environment: map[string]string{},
+		project: project, image: settings.Service.Image,
+		timeout: 30 * time.Minute, environment: map[string]string{},
 	}
 	for len(args) > 0 && args[0] != "--" {
 		switch args[0] {
 		case "--detach":
 			options.detach, args = true, args[1:]
-		case "--project", "--image", "--cpus", "--memory", "--workdir", "--timeout", "--env", "--cache":
+		case "--project", "--image", "--workdir", "--timeout", "--env", "--cache":
 			if len(args) < 2 {
 				return execOptions{}, errors.New(args[0] + " requires a value")
 			}
@@ -460,10 +460,6 @@ func parseExec(settings config.Config, project string, args []string) (execOptio
 				options.project = value
 			case "--image":
 				options.image = value
-			case "--cpus":
-				options.cpus = value
-			case "--memory":
-				options.memory = value
 			case "--workdir":
 				options.workdir = value
 			case "--timeout":
@@ -768,9 +764,22 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("prepare remote build: %w", err))
 	}
-	connection := prepared.Msg.Buildkit
+	fmt.Fprintf(streams.Stderr, "Backend: native Buildx via outback mTLS\nBuild: %s\n", prepared.Msg.Build.Id)
+	build, connection, err := waitForServiceBuild(ctx, api, prepared.Msg.Build, prepared.Msg.Buildkit)
+	if err != nil {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_ = cancelServiceBuildRecord(cancelCtx, api, prepared.Msg.Build.Id)
+		cancel()
+		return fail(streams.Stderr, err)
+	}
+	if build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil {
+		return fail(streams.Stderr, errors.New("remote build was admitted without a BuildKit connection"))
+	}
 	credentials, err := credentialfiles.Write(connection.CaPem, connection.CertificatePem, connection.PrivateKeyPem)
 	if err != nil {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_ = cancelServiceBuildRecord(cancelCtx, api, prepared.Msg.Build.Id)
+		cancel()
 		return fail(streams.Stderr, err)
 	}
 	defer credentials.Cleanup()
@@ -779,13 +788,18 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 	if !strings.Contains(address, "://") {
 		address = "tcp://" + address
 	}
-	fmt.Fprintf(streams.Stderr, "Backend: native Buildx via outback mTLS\nBuild: %s\nBuilder: %s\n", prepared.Msg.Build.Id, address)
+	fmt.Fprintf(streams.Stderr, "Builder: %s\n", address)
 	code, runErr := buildkit.RunWithTLS(ctx, os.Getenv("OUTBACK_DOCKER"), address, builderName, streams.Dir, args, buildkit.TLS{
 		CA: credentials.CA, Certificate: credentials.Certificate, Key: credentials.Key, ServerName: connection.ServerName,
 	}, streams.Stdout, streams.Stderr)
 	cancelled := ctx.Err() != nil
 	finishCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	finishErr := finishServiceBuildRecord(finishCtx, api, prepared.Msg.Build.Id, int32(code), cancelled)
+	var finishErr error
+	if cancelled {
+		finishErr = cancelServiceBuildRecord(finishCtx, api, prepared.Msg.Build.Id)
+	} else {
+		finishErr = finishServiceBuildRecord(finishCtx, api, prepared.Msg.Build.Id, int32(code), false)
+	}
 	cancel()
 	if runErr != nil {
 		return fail(streams.Stderr, fmt.Errorf("remote build: %w", runErr))
@@ -796,12 +810,53 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 	return code
 }
 
+func waitForServiceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient, build *outbackv1.Build, connection *outbackv1.DataPlaneConnection) (*outbackv1.Build, *outbackv1.DataPlaneConnection, error) {
+	if build == nil {
+		return nil, nil, errors.New("prepare build returned no build")
+	}
+	for build.Status == outbackv1.BuildStatus_BUILD_STATUS_QUEUED {
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, fmt.Errorf("wait for remote build: %w", ctx.Err())
+		case <-timer.C:
+		}
+		response, err := api.GetBuild(ctx, connect.NewRequest(&outbackv1.GetBuildRequest{Id: build.Id}))
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			renewed, renewErr := renewServiceClient(ctx, api)
+			if renewErr != nil {
+				return nil, nil, renewErr
+			}
+			api = renewed
+			response, err = renewed.GetBuild(ctx, connect.NewRequest(&outbackv1.GetBuildRequest{Id: build.Id}))
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("get remote build: %w", err)
+		}
+		build, connection = response.Msg.Build, response.Msg.Buildkit
+	}
+	if build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING {
+		return build, connection, fmt.Errorf("remote build became %s before admission", build.Status)
+	}
+	return build, connection, nil
+}
+
 func finishServiceBuildRecord(ctx context.Context, api outbackv1connect.ControlServiceClient, id string, exitCode int32, cancelled bool) error {
 	finishAPI, err := renewServiceClient(ctx, api)
 	if err != nil {
 		return fmt.Errorf("renew authorization: %w", err)
 	}
 	_, err = finishAPI.FinishBuild(ctx, connect.NewRequest(&outbackv1.FinishBuildRequest{Id: id, ExitCode: exitCode, Cancelled: cancelled}))
+	return err
+}
+
+func cancelServiceBuildRecord(ctx context.Context, api outbackv1connect.ControlServiceClient, id string) error {
+	cancelAPI, err := renewServiceClient(ctx, api)
+	if err != nil {
+		return fmt.Errorf("renew authorization: %w", err)
+	}
+	_, err = cancelAPI.CancelBuild(ctx, connect.NewRequest(&outbackv1.CancelBuildRequest{Id: id}))
 	return err
 }
 

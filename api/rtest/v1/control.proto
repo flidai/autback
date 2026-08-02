@@ -29,6 +29,8 @@ service ControlService {
   rpc StreamJobLogs(StreamJobLogsRequest) returns (stream StreamJobLogsResponse);
 
   rpc PrepareBuild(PrepareBuildRequest) returns (PrepareBuildResponse);
+  rpc GetBuild(GetBuildRequest) returns (GetBuildResponse);
+  rpc CancelBuild(CancelBuildRequest) returns (CancelBuildResponse);
   rpc FinishBuild(FinishBuildRequest) returns (FinishBuildResponse);
 
   rpc ExchangeGitHubOIDC(ExchangeGitHubOIDCRequest) returns (ExchangeGitHubOIDCResponse);
@@ -194,8 +196,8 @@ message Job {
   string root_digest = 7;
   JobStatus status = 8;
   google.protobuf.Duration timeout = 9;
-  string cpus = 10;
-  string memory = 11;
+  string cpus = 10 [deprecated = true];
+  string memory = 11 [deprecated = true];
   google.protobuf.Timestamp created_at = 12;
   google.protobuf.Timestamp started_at = 13;
   google.protobuf.Timestamp finished_at = 14;
@@ -218,8 +220,8 @@ message PrepareJobRequest {
   string working_directory = 4;
   map<string, string> environment = 5;
   google.protobuf.Duration timeout = 6;
-  string cpus = 7;
-  string memory = 8;
+  string cpus = 7 [deprecated = true];
+  string memory = 8 [deprecated = true];
   string idempotency_key = 9;
   repeated CacheMount caches = 10;
 }
@@ -293,6 +295,7 @@ enum BuildStatus {
   BUILD_STATUS_SUCCEEDED = 2;
   BUILD_STATUS_FAILED = 3;
   BUILD_STATUS_CANCELLED = 4;
+  BUILD_STATUS_QUEUED = 5;
 }
 
 message Build {
@@ -407,3 +410,20 @@ message RevokeDeviceTokenRequest {
 }
 
 message RevokeDeviceTokenResponse {}
+
+message GetBuildRequest {
+  string id = 1;
+}
+
+message GetBuildResponse {
+  Build build = 1;
+  DataPlaneConnection buildkit = 2;
+}
+
+message CancelBuildRequest {
+  string id = 1;
+}
+
+message CancelBuildResponse {
+  Build build = 1;
+}

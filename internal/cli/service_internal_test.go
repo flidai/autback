@@ -22,7 +22,7 @@ import (
 )
 
 func TestParseExecUsesGenericProjectImageAndArbitraryArgv(t *testing.T) {
-	settings := config.Config{Service: &config.Service{Image: "image@sha256:digest", CPUs: "2", Memory: "4g"}}
+	settings := config.Config{Service: &config.Service{Image: "image@sha256:digest"}}
 	got, err := parseExec(settings, "example", []string{"--timeout", "5m", "--workdir", "service", "--env", "CI=true", "--cache", "go-build=/root/.cache/go-build", "--cache", "modules=/go/pkg/mod", "--", "task", "test", "--race"})
 	if err != nil {
 		t.Fatal(err)
@@ -39,14 +39,14 @@ func TestParseExecUsesGenericProjectImageAndArbitraryArgv(t *testing.T) {
 }
 
 func TestParseExecRequiresExplicitCommandBoundary(t *testing.T) {
-	settings := config.Config{Service: &config.Service{Image: "image", CPUs: "2", Memory: "4g"}}
+	settings := config.Config{Service: &config.Service{Image: "image"}}
 	if _, err := parseExec(settings, "example", []string{"go", "test", "./..."}); err == nil {
 		t.Fatal("exec accepted a command without -- boundary")
 	}
 }
 
 func TestParseExecAllowsServerOwnedDefaultImage(t *testing.T) {
-	settings := config.Config{Service: &config.Service{CPUs: "2", Memory: "4g"}}
+	settings := config.Config{Service: &config.Service{}}
 	got, err := parseExec(settings, "example", []string{"--", "go", "version"})
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestServiceExecRejectsUnauthorizedProjectBeforeWorkspaceOrAdmission(t *test
 	client, closeServer := testServiceClient(t, service)
 	defer closeServer()
 	settings := config.Config{Service: &config.Service{
-		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64), CPUs: "1", Memory: "1g",
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64),
 	}}
 	var stdout, stderr bytes.Buffer
 	code := serviceExec(context.Background(), client, settings, "unauthorized", []string{"--", "true"}, IO{
@@ -299,6 +299,21 @@ func TestFinishBuildRecordRenewsGitHubOIDCSession(t *testing.T) {
 	}
 }
 
+func TestWaitForServiceBuildPollsUntilBuildKitIsAdmitted(t *testing.T) {
+	service := &queuedBuildService{}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	build, connection, err := waitForServiceBuild(context.Background(), client, &outbackv1.Build{
+		Id: "bld-queued", Status: outbackv1.BuildStatus_BUILD_STATUS_QUEUED,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.polls != 1 || build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil || connection.Endpoint != "buildkit.example:1234" {
+		t.Fatalf("polls=%d build=%#v connection=%#v", service.polls, build, connection)
+	}
+}
+
 func initGitRepository(t *testing.T, directory string) {
 	t.Helper()
 	command := exec.Command("git", "init", "-q")
@@ -339,6 +354,19 @@ type finishBuildService struct {
 	outbackv1connect.UnimplementedControlServiceHandler
 	reject     bool
 	finishedID string
+}
+
+type queuedBuildService struct {
+	outbackv1connect.UnimplementedControlServiceHandler
+	polls int
+}
+
+func (s *queuedBuildService) GetBuild(_ context.Context, request *connect.Request[outbackv1.GetBuildRequest]) (*connect.Response[outbackv1.GetBuildResponse], error) {
+	s.polls++
+	return connect.NewResponse(&outbackv1.GetBuildResponse{
+		Build:    &outbackv1.Build{Id: request.Msg.Id, Status: outbackv1.BuildStatus_BUILD_STATUS_RUNNING},
+		Buildkit: &outbackv1.DataPlaneConnection{Endpoint: "buildkit.example:1234"},
+	}), nil
 }
 
 func (s *finishBuildService) FinishBuild(_ context.Context, request *connect.Request[outbackv1.FinishBuildRequest]) (*connect.Response[outbackv1.FinishBuildResponse], error) {

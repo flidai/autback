@@ -160,7 +160,7 @@ below remain the useful remote compute baseline.
 
 The final generic service proof on the existing Hetzner CPX32 completed its warm run in
 3.893 seconds with `0 B` uploaded; its preceding sample was 3.807 seconds. Testcontainers,
-timeout, cancellation, capacity-aware queueing, and native BuildKit mTLS all passed. An
+timeout, cancellation, durable FIFO queueing, and native BuildKit mTLS all passed. An
 earlier first deployment sample uploaded only 590 bytes because the prior legacy
 benchmarks had already populated most CAS/image content. The committed proof is
 [`evidence/service/proof.json`](../evidence/service/proof.json).

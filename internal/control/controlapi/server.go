@@ -34,9 +34,15 @@ type OIDCVerifier interface {
 	Verify(context.Context, string) (control.GitHubClaims, error)
 }
 
+type Dispatcher interface {
+	RunOnce(context.Context) error
+	Release(context.Context, control.OperationKind, string) error
+}
+
 type Config struct {
 	Store               *controlsqlite.Store
 	Scheduler           control.Scheduler
+	Dispatcher          Dispatcher
 	Authority           *pki.Authority
 	OIDCVerifier        OIDCVerifier
 	CASEndpoint         string
@@ -51,8 +57,8 @@ type Server struct {
 }
 
 func New(config Config) (http.Handler, error) {
-	if config.Store == nil || config.Scheduler == nil || config.Authority == nil {
-		return nil, errors.New("control store, scheduler, and certificate authority are required")
+	if config.Store == nil || config.Scheduler == nil || config.Dispatcher == nil || config.Authority == nil {
+		return nil, errors.New("control store, scheduler, dispatcher, and certificate authority are required")
 	}
 	if config.CASEndpoint == "" || config.CASInstance == "" || config.BuildKitEndpoint == "" {
 		return nil, errors.New("CAS endpoint, CAS instance, and BuildKit endpoint are required")
@@ -95,7 +101,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) GetServiceInfo(context.Context, *connect.Request[outbackv1.GetServiceInfoRequest]) (*connect.Response[outbackv1.GetServiceInfoResponse], error) {
 	return connect.NewResponse(&outbackv1.GetServiceInfoResponse{Version: Version, Capabilities: []string{
-		"connect", "projects", "project-images", "project-caches", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "single-worker-admission", "buildkit-mtls",
+		"connect", "projects", "project-images", "project-caches", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "durable-fifo-admission", "buildkit-mtls",
 	}}), nil
 }
 
@@ -315,16 +321,24 @@ func (s *Server) StartJob(ctx context.Context, request *connect.Request[outbackv
 	if !rootDigestPattern.MatchString(request.Msg.RootDigest) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("root digest must use REAPI hash/size form"))
 	}
-	job.RootDigest = request.Msg.RootDigest
-	job.Status = protocol.StatusQueued
-	if err := s.config.Scheduler.Create(ctx, job); err != nil {
-		_, _ = s.config.Store.FailJob(ctx, job.ID, err.Error())
-		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("schedule job: %w", err))
+	if job.Status != protocol.StatusPreparing {
+		if job.RootDigest != request.Msg.RootDigest {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("job was already started with a different root digest"))
+		}
+		_ = s.config.Dispatcher.RunOnce(ctx)
+		return connect.NewResponse(&outbackv1.StartJobResponse{Job: jobProto(job)}), nil
 	}
-	job, err = s.config.Store.StartJob(ctx, job.ID, job.RootDigest)
+	job, err = s.config.Store.QueueJob(ctx, job.ID, request.Msg.RootDigest)
 	if err != nil {
-		_ = s.config.Scheduler.Cancel(ctx, job.ID)
 		return nil, connectError(err)
+	}
+	dispatchErr := s.config.Dispatcher.RunOnce(ctx)
+	job, err = s.config.Store.Job(ctx, job.ID)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	if dispatchErr != nil && job.Status == protocol.StatusFailed {
+		return nil, connect.NewError(connect.CodeUnavailable, dispatchErr)
 	}
 	if err := s.config.Store.Audit(ctx, principal, job.ProjectID, "job.start", job.ID, map[string]string{"root_digest": job.RootDigest}); err != nil {
 		return nil, connectError(err)
@@ -391,7 +405,14 @@ func (s *Server) CancelJob(ctx context.Context, request *connect.Request[outback
 	if err != nil {
 		return nil, err
 	}
-	if job.Status != protocol.StatusPreparing {
+	if job.Status.Terminal() {
+		return connect.NewResponse(&outbackv1.CancelJobResponse{Job: jobProto(job)}), nil
+	}
+	state, stateErr := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
+	if stateErr != nil && !errors.Is(stateErr, control.ErrNotFound) {
+		return nil, connectError(stateErr)
+	}
+	if state == control.OperationActive {
 		if err := s.config.Scheduler.Cancel(ctx, job.ID); err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, err)
 		}
@@ -403,6 +424,7 @@ func (s *Server) CancelJob(ctx context.Context, request *connect.Request[outback
 	if job.Status != protocol.StatusCancelled {
 		job, _ = s.refreshJob(ctx, job)
 	}
+	_ = s.config.Dispatcher.RunOnce(ctx)
 	if err := s.config.Store.Audit(ctx, principal, job.ProjectID, "job.cancel", job.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
@@ -446,6 +468,29 @@ func (s *Server) StreamJobLogs(ctx context.Context, request *connect.Request[out
 }
 
 func (s *Server) followJob(ctx context.Context, job control.Job, output io.Writer) (control.Job, error) {
+	for {
+		state, err := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
+		if err == nil && state == control.OperationActive {
+			break
+		}
+		if err != nil && !errors.Is(err, control.ErrNotFound) {
+			return control.Job{}, connectError(err)
+		}
+		job, err = s.refreshJob(ctx, job)
+		if err != nil {
+			return control.Job{}, connectError(err)
+		}
+		if job.Status.Terminal() {
+			return job, nil
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return control.Job{}, connect.NewError(connect.CodeCanceled, ctx.Err())
+		case <-timer.C:
+		}
+	}
 	logsCtx, stopLogs := context.WithCancel(ctx)
 	defer stopLogs()
 	logsDone := make(chan error, 1)
@@ -511,19 +556,71 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[outb
 	if err != nil {
 		return nil, connectError(err)
 	}
-	credential, err := s.config.Authority.Issue(pki.OperationBuild, build.ID, s.config.CredentialTTL)
-	if err != nil {
-		if !replayed {
-			_, _ = s.config.Store.FinishBuild(ctx, build.ID, control.BuildFailed, 1)
-		}
-		return nil, connectError(err)
-	}
 	if !replayed {
 		if err := s.config.Store.Audit(ctx, principal, project.ID, "build.prepare", build.ID, nil); err != nil {
+			_, _ = s.config.Store.FinishBuild(ctx, build.ID, control.BuildFailed, 1)
 			return nil, connectError(err)
 		}
 	}
-	return connect.NewResponse(&outbackv1.PrepareBuildResponse{Build: buildProto(build), Buildkit: connectionProto(s.config.BuildKitEndpoint, "", credential)}), nil
+	_ = s.config.Dispatcher.RunOnce(ctx)
+	build, err = s.config.Store.Build(ctx, build.ID)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	response := &outbackv1.PrepareBuildResponse{Build: buildProto(build)}
+	if build.Status == control.BuildRunning {
+		credential, issueErr := s.config.Authority.Issue(pki.OperationBuild, build.ID, s.config.CredentialTTL)
+		if issueErr != nil {
+			_, _ = s.config.Store.FinishBuild(ctx, build.ID, control.BuildFailed, 1)
+			_ = s.config.Dispatcher.RunOnce(ctx)
+			return nil, connectError(issueErr)
+		}
+		response.Buildkit = connectionProto(s.config.BuildKitEndpoint, "", credential)
+	}
+	return connect.NewResponse(response), nil
+}
+
+func (s *Server) GetBuild(ctx context.Context, request *connect.Request[outbackv1.GetBuildRequest]) (*connect.Response[outbackv1.GetBuildResponse], error) {
+	principal, err := s.authenticate(ctx, request.Header())
+	if err != nil {
+		return nil, err
+	}
+	build, err := s.authorizedBuild(ctx, principal, request.Msg.Id)
+	if err != nil {
+		return nil, err
+	}
+	response := &outbackv1.GetBuildResponse{Build: buildProto(build)}
+	if build.Status == control.BuildRunning {
+		credential, issueErr := s.config.Authority.Issue(pki.OperationBuild, build.ID, s.config.CredentialTTL)
+		if issueErr != nil {
+			return nil, connectError(issueErr)
+		}
+		response.Buildkit = connectionProto(s.config.BuildKitEndpoint, "", credential)
+	}
+	return connect.NewResponse(response), nil
+}
+
+func (s *Server) CancelBuild(ctx context.Context, request *connect.Request[outbackv1.CancelBuildRequest]) (*connect.Response[outbackv1.CancelBuildResponse], error) {
+	principal, err := s.authenticate(ctx, request.Header())
+	if err != nil {
+		return nil, err
+	}
+	build, err := s.authorizedBuild(ctx, principal, request.Msg.Id)
+	if err != nil {
+		return nil, err
+	}
+	if build.Status == control.BuildSucceeded || build.Status == control.BuildFailed || build.Status == control.BuildCancelled {
+		return connect.NewResponse(&outbackv1.CancelBuildResponse{Build: buildProto(build)}), nil
+	}
+	build, err = s.config.Store.FinishBuild(ctx, build.ID, control.BuildCancelled, 130)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	_ = s.config.Dispatcher.RunOnce(ctx)
+	if err := s.config.Store.Audit(ctx, principal, build.ProjectID, "build.cancel", build.ID, nil); err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&outbackv1.CancelBuildResponse{Build: buildProto(build)}), nil
 }
 
 func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[outbackv1.FinishBuildRequest]) (*connect.Response[outbackv1.FinishBuildResponse], error) {
@@ -538,6 +635,9 @@ func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[outba
 	if _, err := s.config.Store.AuthorizeProject(ctx, principal, build.ProjectID); err != nil {
 		return nil, connectError(err)
 	}
+	if build.Status != control.BuildRunning {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("build is not running"))
+	}
 	status := control.BuildSucceeded
 	if request.Msg.Cancelled {
 		status = control.BuildCancelled
@@ -546,6 +646,9 @@ func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[outba
 	}
 	build, err = s.config.Store.FinishBuild(ctx, build.ID, status, int(request.Msg.ExitCode))
 	if err != nil {
+		return nil, connectError(err)
+	}
+	if err := s.config.Dispatcher.RunOnce(ctx); err != nil {
 		return nil, connectError(err)
 	}
 	if err := s.config.Store.Audit(ctx, principal, build.ProjectID, "build.finish", build.ID, map[string]string{"status": string(status)}); err != nil {
@@ -746,15 +849,42 @@ func (s *Server) authorizedJob(ctx context.Context, principal control.Principal,
 	return job, nil
 }
 
+func (s *Server) authorizedBuild(ctx context.Context, principal control.Principal, id string) (control.Build, error) {
+	build, err := s.config.Store.Build(ctx, id)
+	if err != nil {
+		return control.Build{}, connectError(err)
+	}
+	if _, err := s.config.Store.AuthorizeProject(ctx, principal, build.ProjectID); err != nil {
+		return control.Build{}, connectError(err)
+	}
+	return build, nil
+}
+
 func (s *Server) refreshJob(ctx context.Context, job control.Job) (control.Job, error) {
 	if job.Status == protocol.StatusPreparing || job.Status.Terminal() {
+		return job, nil
+	}
+	state, err := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
+	if errors.Is(err, control.ErrNotFound) {
+		return job, nil
+	}
+	if err != nil {
+		return control.Job{}, err
+	}
+	if state == control.OperationQueued {
 		return job, nil
 	}
 	remote, err := s.config.Scheduler.Status(ctx, job.ID)
 	if err != nil {
 		return control.Job{}, err
 	}
-	return s.config.Store.SyncJob(ctx, job.ID, remote)
+	job, err = s.config.Store.SyncJob(ctx, job.ID, remote)
+	if err == nil && job.Status.Terminal() {
+		if releaseErr := s.config.Dispatcher.RunOnce(ctx); releaseErr != nil {
+			return control.Job{}, releaseErr
+		}
+	}
+	return job, err
 }
 
 var (
@@ -807,16 +937,13 @@ func (s *Server) validateJob(projectID string, message *outbackv1.PrepareJobRequ
 	if timeout < time.Second || timeout > time.Hour {
 		return control.PrepareJob{}, errors.New("timeout must be between 1 second and 1 hour")
 	}
-	if strings.TrimSpace(message.Cpus) == "" || strings.TrimSpace(message.Memory) == "" {
-		return control.PrepareJob{}, errors.New("CPU and memory reservations are required")
-	}
 	if !idempotencyKeyPattern.MatchString(message.IdempotencyKey) {
 		return control.PrepareJob{}, errors.New("idempotency key must contain 8 to 128 safe characters")
 	}
 	return control.PrepareJob{
 		ProjectID: projectID, Image: message.Image, Command: append([]string(nil), message.Command...),
 		WorkingDirectory: clean, Environment: cloneMap(message.Environment), Timeout: timeout,
-		CPUs: message.Cpus, Memory: message.Memory, Caches: caches,
+		Caches: caches,
 	}, nil
 }
 
@@ -912,7 +1039,7 @@ func jobProto(job control.Job) *outbackv1.Job {
 	result := &outbackv1.Job{
 		Id: job.ID, ProjectId: job.ProjectID, Image: job.Image, Command: append([]string(nil), job.Command...),
 		WorkingDirectory: job.WorkingDirectory, Environment: cloneMap(job.Environment), RootDigest: job.RootDigest,
-		Status: jobStatusProto(job.Status), Timeout: durationpb.New(job.Timeout), Cpus: job.CPUs, Memory: job.Memory,
+		Status: jobStatusProto(job.Status), Timeout: durationpb.New(job.Timeout),
 		CreatedAt: timestamppb.New(job.CreatedAt), ErrorMessage: job.ErrorMessage, CancelRequested: job.CancelRequested, WorkerId: job.WorkerID,
 	}
 	for _, cache := range job.Caches {
@@ -952,6 +1079,8 @@ func jobStatusProto(status protocol.Status) outbackv1.JobStatus {
 func buildProto(build control.Build) *outbackv1.Build {
 	result := &outbackv1.Build{Id: build.ID, ProjectId: build.ProjectID, CreatedAt: timestamppb.New(build.CreatedAt), FinishedAt: timestamp(build.FinishedAt)}
 	switch build.Status {
+	case control.BuildQueued:
+		result.Status = outbackv1.BuildStatus_BUILD_STATUS_QUEUED
 	case control.BuildRunning:
 		result.Status = outbackv1.BuildStatus_BUILD_STATUS_RUNNING
 	case control.BuildSucceeded:

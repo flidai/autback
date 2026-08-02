@@ -36,6 +36,11 @@ of recreating Depot's proprietary service or introducing a new CI task language.
    project tools remain responsible for task composition.
 9. Docker-backed Testcontainers execution is trusted-code only. Untrusted repositories or
    forks require VM-per-job isolation and are out of scope until separately accepted.
+10. Every build and command enters one durable, strict FIFO queue. A worker admits exactly
+    one operation at a time and gives it the VM's available CPU and memory without per-job
+    reservations or limits. Users request parallelism inside that admitted command through
+    repository-owned Taskfiles, Makefiles, or scripts; the dispatcher has no priorities,
+    weights, resource guesses, or task graph.
 
 Depot is a behavioral reference for local tokens, CI OIDC exchange, operation-scoped
 credentials, BuildKit mTLS, progress, and exit propagation. outback adopts those boundaries
@@ -55,6 +60,9 @@ while retaining standard, independently replaceable execution and storage compon
   second build system.
 - Worker size, worker count, CAS implementation, and scheduler implementation remain
   measurement-driven server choices.
+- Queue order and the active worker lease survive control-plane restarts. Builds can be
+  polled or cancelled by stable ID while waiting, so clients do not hold admission requests
+  open or receive BuildKit credentials before their turn.
 
 ## Rejected alternatives
 

@@ -149,8 +149,6 @@ type Job struct {
 	RootDigest       string
 	Status           protocol.Status
 	Timeout          time.Duration
-	CPUs             string
-	Memory           string
 	CreatedAt        time.Time
 	StartedAt        *time.Time
 	FinishedAt       *time.Time
@@ -173,8 +171,6 @@ type PrepareJob struct {
 	WorkingDirectory string
 	Environment      map[string]string
 	Timeout          time.Duration
-	CPUs             string
-	Memory           string
 	Caches           []CacheMount
 }
 
@@ -191,11 +187,34 @@ type JobPage struct {
 type BuildStatus string
 
 const (
+	BuildQueued    BuildStatus = "queued"
 	BuildRunning   BuildStatus = "running"
 	BuildSucceeded BuildStatus = "succeeded"
 	BuildFailed    BuildStatus = "failed"
 	BuildCancelled BuildStatus = "cancelled"
 )
+
+type OperationKind string
+
+const (
+	OperationJob   OperationKind = "job"
+	OperationBuild OperationKind = "build"
+)
+
+type OperationState string
+
+const (
+	OperationQueued OperationState = "queued"
+	OperationActive OperationState = "active"
+)
+
+type Operation struct {
+	Kind       OperationKind
+	ID         string
+	State      OperationState
+	AcceptedAt time.Time
+	LeasedAt   *time.Time
+}
 
 type Build struct {
 	ID         string

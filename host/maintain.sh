@@ -22,8 +22,16 @@ while IFS= read -r service; do
   fi
 done < <(docker service ls --filter 'label=outback.managed=true' --format '{{.Name}}')
 
-exec 9>/var/lib/outback/jobs/.worker.lock
-if flock --nonblock 9; then
+worker_busy=false
+while IFS= read -r service; do
+  [[ -n "$service" ]] || continue
+  task_state="$(docker service ps --no-trunc --format '{{.CurrentState}}' "$service" | head -1)"
+  case "$task_state" in
+    Running*|Starting*|Preparing*|Assigned*|Accepted*|Ready*|Pending*|New*) worker_busy=true; break ;;
+  esac
+done < <(docker service ls --filter 'label=outback.managed=true' --format '{{.Name}}')
+
+if [[ "$worker_busy" == false ]]; then
   find /var/lib/outback/jobs -mindepth 1 -maxdepth 1 -type d -mmin "+${job_retention_minutes}" -exec rm -rf -- {} +
 
   cache_bytes="$(du --summarize --bytes /var/lib/outback/cache | awk '{print $1}')"

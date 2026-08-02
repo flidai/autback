@@ -128,7 +128,7 @@ func defaults(streams IO) IO {
 func usage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
   outback init [--project <project>]
-  outback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--cpus 2] [--memory 4g] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
+  outback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
   outback [--token <token>] build [--project <project>] [-- <buildx arguments...>]
   outback [--token <token>] image show [--project <project>]
   outback [--token <token>] image activate [--project <project>] --image <digest>

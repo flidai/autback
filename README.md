@@ -91,7 +91,7 @@ pull-request trigger until the protected environment and trusted-change policy a
 
 The E2E proves dirty and untracked bytes, ignored-file exclusion, Redis through
 Testcontainers, same-path sibling bind mounts, zero-byte repeat CAS upload, persisted
-logs, immediate cancellation, server-side timeout, capacity-aware queuing, cleanup, and
+logs, immediate cancellation, server-side timeout, durable FIFO queuing, cleanup, and
 native Buildx/BuildKit.
 Shared-service local evidence is in
 [`evidence/service-local/`](evidence/service-local/); CPX32 evidence is written to

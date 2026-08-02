@@ -12,12 +12,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/flidai/outback/internal/cas"
-	"golang.org/x/sys/unix"
 )
 
 type result struct {
@@ -89,15 +87,6 @@ func run() int {
 			return finish(jobDirectory, "failed", 1)
 		}
 	}
-	releaseWorker, err := acquireWorkerSlot(ctx, required("OUTBACK_WORKER_LOCK"), stderr)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		if ctx.Err() != nil {
-			return finish(jobDirectory, "cancelled", 130)
-		}
-		return finish(jobDirectory, "failed", 1)
-	}
-	defer releaseWorker()
 	command := exec.CommandContext(ctx, os.Args[1], os.Args[2:]...)
 	workingDirectory, err := resolveWorkingDirectory(workspace, os.Getenv("OUTBACK_WORKING_DIRECTORY"))
 	if err != nil {
@@ -186,53 +175,6 @@ func hostIdentityFromEnvironment() (int, int, error) {
 		return 0, 0, errors.New("OUTBACK_HOST_GID must be a non-negative integer")
 	}
 	return uid, gid, nil
-}
-
-func acquireWorkerSlot(ctx context.Context, path string, output io.Writer) (func(), error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if path == "" {
-		return nil, errors.New("OUTBACK_WORKER_LOCK is required")
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("open worker lock: %w", err)
-	}
-	closeWithError := func(err error) (func(), error) {
-		_ = file.Close()
-		return nil, err
-	}
-
-	waitingLogged := false
-	for {
-		err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
-		if err == nil {
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
-					_ = file.Close()
-				})
-			}, nil
-		}
-		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EINTR) {
-			return closeWithError(fmt.Errorf("acquire worker lock: %w", err))
-		}
-		if !waitingLogged {
-			fmt.Fprintln(output, "Waiting for exclusive worker slot")
-			waitingLogged = true
-		}
-		timer := time.NewTimer(50 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return closeWithError(ctx.Err())
-		case <-timer.C:
-		}
-	}
 }
 
 func resolveWorkingDirectory(workspace, relative string) (string, error) {

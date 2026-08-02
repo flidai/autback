@@ -21,15 +21,13 @@ ancestor. Project selection precedence is `--project`, `OUTBACK_PROJECT`, then t
 repository link. Missing, malformed, conflicting, and unauthorized selection fails before
 source upload or job admission.
 
-The private client configuration selects only the service and temporary local execution
-defaults:
+The private client configuration selects only the service and its trust settings:
 
 ```json
 {
   "url": "https://outback.example.com",
   "service": {
-    "cpus": "2",
-    "memory": "4g"
+    "ca_cert_file": "/path/to/outback-ca.pem"
   }
 }
 ```
@@ -90,8 +88,8 @@ ephemeral process files. This supports Chromium and other subprocesses that drop
 privileges without opening the private host-backed job directory. Source, results, and
 logs remain under the private durable job path; temporary browser profiles do not.
 
-`--project`, `--cpus`, and `--memory` can override repository or local defaults. `--image`
-is an explicit per-run override and can be disabled per project. Every image
+`--project` overrides repository selection. `--image` is an explicit per-run override and
+can be disabled per project. Every image
 scheduled by the service must be pinned by SHA-256 digest. Commands are transmitted as
 argument vectors without shell interpretation unless the caller explicitly invokes a shell.
 

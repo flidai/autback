@@ -19,6 +19,7 @@ import (
 
 	"github.com/flidai/outback/internal/control"
 	"github.com/flidai/outback/internal/control/controlapi"
+	"github.com/flidai/outback/internal/control/dispatcher"
 	"github.com/flidai/outback/internal/control/githuboidc"
 	"github.com/flidai/outback/internal/control/mtlsproxy"
 	"github.com/flidai/outback/internal/control/pki"
@@ -82,11 +83,17 @@ func serve() {
 		CacheRoot:          env("OUTBACK_CACHE_ROOT", "/var/lib/outback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
+	dispatch := dispatcher.New(store, scheduler)
+	if err := dispatch.RunOnce(ctx); err != nil {
+		log.Printf("initial dispatch: %v", err)
+	}
 	reconcile := reconciler.New(reconciler.Config{
-		Store: store, Scheduler: scheduler,
-		ServiceRetention: durationEnv("OUTBACK_SERVICE_RETENTION", time.Hour),
+		Store: store, Scheduler: scheduler, Dispatcher: dispatch,
+		ServiceRetention:  durationEnv("OUTBACK_SERVICE_RETENTION", time.Hour),
+		AdmissionGrace:    durationEnv("OUTBACK_ADMISSION_GRACE", 15*time.Second),
+		BuildLeaseTimeout: durationEnv("OUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Hour),
 	})
-	go runReconciler(ctx, reconcile, durationEnv("OUTBACK_RECONCILE_INTERVAL", 30*time.Second))
+	go runReconciler(ctx, reconcile, durationEnv("OUTBACK_RECONCILE_INTERVAL", time.Second))
 	var verifier controlapi.OIDCVerifier
 	if audience := os.Getenv("OUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
 		verifier, err = githuboidc.New(ctx, env("OUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
@@ -95,7 +102,7 @@ func serve() {
 		}
 	}
 	handler, err := controlapi.New(controlapi.Config{
-		Store: store, Scheduler: scheduler, Authority: authority, OIDCVerifier: verifier,
+		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority, OIDCVerifier: verifier,
 		CASEndpoint: env("OUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
 		BuildKitEndpoint:    env("OUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
 		CredentialTTL:       durationEnv("OUTBACK_CREDENTIAL_TTL", 15*time.Minute),
@@ -145,7 +152,7 @@ func runReconciler(ctx context.Context, runner reconciliationRunner, interval ti
 		log.Printf("initial reconciliation: %v", err)
 	}
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = time.Second
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

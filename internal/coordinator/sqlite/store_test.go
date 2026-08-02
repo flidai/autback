@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/coordinator/sqlite"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/coordinator/sqlite"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestStoreClaimsAndCompletesJobsAtomically(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(filepath.Join(t.TempDir(), "rtest.db"))
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "outback.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestStoreClaimsAndCompletesJobsAtomically(t *testing.T) {
 
 func TestStoreCancellationIsVisibleToWorker(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(filepath.Join(t.TempDir(), "rtest.db"))
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "outback.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestStoreCancellationIsVisibleToWorker(t *testing.T) {
 
 func TestStoreCancellingQueuedJobMakesItTerminal(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(filepath.Join(t.TempDir(), "rtest.db"))
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "outback.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestStoreCancellingQueuedJobMakesItTerminal(t *testing.T) {
 
 func TestStoreListsNewestJobsAndFiltersRepository(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(filepath.Join(t.TempDir(), "rtest.db"))
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "outback.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestStoreListsNewestJobsAndFiltersRepository(t *testing.T) {
 
 func TestStoreMarksExpiredRunningJobsLost(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(filepath.Join(t.TempDir(), "rtest.db"))
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "outback.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

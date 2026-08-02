@@ -90,11 +90,11 @@ tasks:
       - ./scripts/e2e-service.zsh
 
   benchmark:
-    desc: Prime and measure a real project command through rtest
+    desc: Prime and measure a real project command through outback
     cmds:
       - ./scripts/benchmark.zsh {{.CLI_ARGS}}
 
   benchmark:compare:
     desc: Run a controlled multi-candidate command benchmark from a JSON specification
     cmds:
-      - go run ./cmd/rtest-benchmark {{.CLI_ARGS}}
+      - go run ./cmd/outback-benchmark {{.CLI_ARGS}}

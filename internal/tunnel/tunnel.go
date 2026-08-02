@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/config"
+	"github.com/flidai/outback/internal/config"
 )
 
 type Tunnel struct {

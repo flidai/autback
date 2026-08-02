@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/control"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/control"
+	"github.com/flidai/outback/internal/protocol"
 	_ "modernc.org/sqlite"
 )
 
@@ -656,7 +656,7 @@ func (s *Store) CreateEnrollmentCode(ctx context.Context, principal control.Prin
 
 func (s *Store) ExchangeEnrollmentCode(ctx context.Context, code string) (control.IssuedDeviceToken, control.EnrollmentCode, error) {
 	parts := strings.SplitN(code, "_", 4)
-	if len(parts) != 4 || parts[0] != "rtest" || parts[1] != "enr" || parts[2] == "" || parts[3] == "" {
+	if len(parts) != 4 || parts[0] != "outback" || parts[1] != "enr" || parts[2] == "" || parts[3] == "" {
 		return control.IssuedDeviceToken{}, control.EnrollmentCode{}, control.ErrUnauthenticated
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1275,7 +1275,7 @@ func (s *Store) newToken(kind string) (string, string, string, error) {
 	if _, err := rand.Read(secretBytes); err != nil {
 		return "", "", "", err
 	}
-	secret := "rtest_" + kind + "_" + id + "_" + base64.RawURLEncoding.EncodeToString(secretBytes)
+	secret := "outback_" + kind + "_" + id + "_" + base64.RawURLEncoding.EncodeToString(secretBytes)
 	return id, secret, s.digest(secret), nil
 }
 
@@ -1287,7 +1287,7 @@ func (s *Store) digest(token string) string {
 
 func parseToken(token string) (control.PrincipalKind, string, bool) {
 	parts := strings.SplitN(token, "_", 4)
-	if len(parts) != 4 || parts[0] != "rtest" || parts[2] == "" || parts[3] == "" {
+	if len(parts) != 4 || parts[0] != "outback" || parts[2] == "" || parts[3] == "" {
 		return "", "", false
 	}
 	switch parts[1] {

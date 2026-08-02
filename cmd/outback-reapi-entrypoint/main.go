@@ -11,17 +11,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/ocirunner"
+	"github.com/flidai/outback/internal/ocirunner"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "rtest-reapi-entrypoint: command is required")
+		fmt.Fprintln(os.Stderr, "outback-reapi-entrypoint: command is required")
 		os.Exit(2)
 	}
-	actionDirectory := os.Getenv("RTEST_ACTION_DIRECTORY")
+	actionDirectory := os.Getenv("OUTBACK_ACTION_DIRECTORY")
 	if actionDirectory == "" {
-		fmt.Fprintln(os.Stderr, "rtest-reapi-entrypoint: RTEST_ACTION_DIRECTORY is required")
+		fmt.Fprintln(os.Stderr, "outback-reapi-entrypoint: OUTBACK_ACTION_DIRECTORY is required")
 		os.Exit(2)
 	}
 	for _, directory := range []string{filepath.Join(actionDirectory, "tmp"), filepath.Join(actionDirectory, "data")} {
@@ -42,13 +42,13 @@ func main() {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	name := "rtest-reapi-" + strconv.Itoa(os.Getpid())
-	exitCode, runErr := ocirunner.Run(ctx, os.Getenv("RTEST_DOCKER"), ocirunner.Spec{
-		Name: name, Image: os.Getenv("RTEST_RUNNER_IMAGE"), CPUs: os.Getenv("RTEST_JOB_CPUS"), Memory: os.Getenv("RTEST_JOB_MEMORY"),
+	name := "outback-reapi-" + strconv.Itoa(os.Getpid())
+	exitCode, runErr := ocirunner.Run(ctx, os.Getenv("OUTBACK_DOCKER"), ocirunner.Spec{
+		Name: name, Image: os.Getenv("OUTBACK_RUNNER_IMAGE"), CPUs: os.Getenv("OUTBACK_JOB_CPUS"), Memory: os.Getenv("OUTBACK_JOB_MEMORY"),
 		ActionDirectory: actionDirectory, WorkingDirectory: workingDirectory, Command: os.Args[1:],
 	}, os.Stdout, os.Stderr)
 	if ctx.Err() == context.DeadlineExceeded {
-		markTimeout(os.Getenv("RTEST_SIDE_CHANNEL_FILE"))
+		markTimeout(os.Getenv("OUTBACK_SIDE_CHANNEL_FILE"))
 		fmt.Fprintln(os.Stderr, "remote action timed out")
 		os.Exit(124)
 	}
@@ -59,7 +59,7 @@ func main() {
 }
 
 func timeoutFromEnvironment() time.Duration {
-	millis, err := strconv.ParseInt(os.Getenv("RTEST_TIMEOUT_MILLIS"), 10, 64)
+	millis, err := strconv.ParseInt(os.Getenv("OUTBACK_TIMEOUT_MILLIS"), 10, 64)
 	if err != nil || millis <= 0 {
 		return 0
 	}

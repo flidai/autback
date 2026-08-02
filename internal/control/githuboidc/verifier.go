@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/flidai/leapview/rtest/internal/control"
+	"github.com/flidai/outback/internal/control"
 )
 
 const Issuer = "https://token.actions.githubusercontent.com"

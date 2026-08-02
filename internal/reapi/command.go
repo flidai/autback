@@ -15,7 +15,7 @@ type Request struct {
 	Runner     string
 }
 
-// Action converts the rtest project contract to the standard REAPI command
+// Action converts the outback project contract to the standard REAPI command
 // model. Tests deliberately bypass the action cache because Testcontainers and
 // other external services make their results non-hermetic; CAS uploads are
 // still content-addressed and incremental.
@@ -30,11 +30,11 @@ func Action(request Request) (*command.Command, *command.ExecutionOptions) {
 		Timeout: request.Timeout,
 		Platform: map[string]string{
 			"OSFamily":         "linux",
-			"rtest.repository": request.Repository,
-			"rtest.runner":     request.Runner,
+			"outback.repository": request.Repository,
+			"outback.runner":     request.Runner,
 		},
 		Identifiers: &command.Identifiers{
-			ToolName:    "rtest",
+			ToolName:    "outback",
 			ToolVersion: "0.2.0-poc",
 		},
 	}

@@ -10,29 +10,29 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/client"
-	"github.com/flidai/leapview/rtest/internal/protocol"
-	"github.com/flidai/leapview/rtest/internal/worker"
+	"github.com/flidai/outback/internal/client"
+	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/outback/internal/worker"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	api, err := client.New(env("RTEST_URL", "http://127.0.0.1:8080"), os.Getenv("RTEST_TOKEN"))
+	api, err := client.New(env("OUTBACK_URL", "http://127.0.0.1:8080"), os.Getenv("OUTBACK_TOKEN"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	hostname, _ := os.Hostname()
-	workerID := env("RTEST_WORKER_ID", hostname)
+	workerID := env("OUTBACK_WORKER_ID", hostname)
 	runner := worker.Runner{
-		Docker: env("RTEST_DOCKER", "docker"), WorkRoot: env("RTEST_WORK_ROOT", "/var/lib/rtest/jobs"),
-		CacheRoot: env("RTEST_CACHE_ROOT", "/var/lib/rtest/cache"),
-		Image:     env("RTEST_RUNNER_IMAGE", "rtest-runner-standard:local"), CPUs: env("RTEST_JOB_CPUS", "1.5"), Memory: env("RTEST_JOB_MEMORY", "2500m"),
+		Docker: env("OUTBACK_DOCKER", "docker"), WorkRoot: env("OUTBACK_WORK_ROOT", "/var/lib/outback/jobs"),
+		CacheRoot: env("OUTBACK_CACHE_ROOT", "/var/lib/outback/cache"),
+		Image:     env("OUTBACK_RUNNER_IMAGE", "outback-runner-standard:local"), CPUs: env("OUTBACK_JOB_CPUS", "1.5"), Memory: env("OUTBACK_JOB_MEMORY", "2500m"),
 	}
 	if err := os.MkdirAll(runner.WorkRoot, 0o700); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("rtest worker %s ready", workerID)
+	log.Printf("outback worker %s ready", workerID)
 	for ctx.Err() == nil {
 		job, ok, err := api.Claim(ctx, workerID)
 		if err != nil {
@@ -58,7 +58,7 @@ func runJob(parent context.Context, api *client.Client, runner worker.Runner, wo
 	}
 	defer source.Close()
 	logs := &remoteLogWriter{ctx: ctx, api: api, jobID: job.ID}
-	_, _ = fmt.Fprintf(logs, "rtest: worker=%s runner=%s command=%q\n", workerID, job.Runner, job.Command)
+	_, _ = fmt.Fprintf(logs, "outback: worker=%s runner=%s command=%q\n", workerID, job.Runner, job.Command)
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()

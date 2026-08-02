@@ -1,0 +1,17 @@
+[Unit]
+Description=outback REAPI content-addressable store
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/outback/swarm.env
+ExecStartPre=-/usr/bin/docker rm -f outback-cas
+ExecStart=/usr/bin/docker run --rm --name outback-cas --network host --memory 768m --pids-limit 512 -v /var/lib/outback/cas:/data ${OUTBACK_CAS_IMAGE} --dir /data --max_size 40 --grpc_address 127.0.0.1:50051 --http_address 127.0.0.1:50050 --access_log_level none
+ExecStop=/usr/bin/docker stop -t 20 outback-cas
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

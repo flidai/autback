@@ -11,7 +11,7 @@ import (
 )
 
 func TestSetupActionHasSecureProjectAwareContract(t *testing.T) {
-	data := read(t, filepath.Join("..", "..", "action", "setup-rtest", "action.yml"))
+	data := read(t, filepath.Join("..", "..", "action", "setup-outback", "action.yml"))
 	for _, want := range []string{
 		"using: composite",
 		"version:",
@@ -27,15 +27,15 @@ func TestSetupActionHasSecureProjectAwareContract(t *testing.T) {
 		"actions/cache/save@",
 		"install-release.sh",
 		"chmod 0600",
-		"RTEST_CONFIG",
+		"OUTBACK_CONFIG",
 		"GITHUB_PATH",
 	} {
 		if !strings.Contains(data, want) {
 			t.Fatalf("action.yml missing %q", want)
 		}
 	}
-	if strings.Contains(data, "go build -trimpath -o \"${bin_dir}/rtest\"") {
-		t.Fatal("action.yml must not unconditionally compile rtest")
+	if strings.Contains(data, "go build -trimpath -o \"${bin_dir}/outback\"") {
+		t.Fatal("action.yml must not unconditionally compile outback")
 	}
 }
 
@@ -46,16 +46,16 @@ func TestReleaseInstallerDownloadsAndVerifiesPinnedArchive(t *testing.T) {
 	releaseRoot := t.TempDir()
 	installRoot := t.TempDir()
 	version := "9.8.7"
-	asset := "rtest_" + version + "_" + installerOS(runtime.GOOS) + "_" + installerArch(runtime.GOARCH) + ".tar.gz"
-	assetDir := filepath.Join(releaseRoot, "rtest-v"+version)
+	asset := "outback_" + version + "_" + installerOS(runtime.GOOS) + "_" + installerArch(runtime.GOARCH) + ".tar.gz"
+	assetDir := filepath.Join(releaseRoot, "v"+version)
 	if err := os.MkdirAll(filepath.Join(assetDir, "payload"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(assetDir, "payload", "rtest")
+	binary := filepath.Join(assetDir, "payload", "outback")
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' '"+version+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run(t, assetDir, "tar", "-czf", asset, "-C", "payload", "rtest")
+	run(t, assetDir, "tar", "-czf", asset, "-C", "payload", "outback")
 	archive, err := os.ReadFile(filepath.Join(assetDir, asset))
 	if err != nil {
 		t.Fatal(err)
@@ -67,23 +67,23 @@ func TestReleaseInstallerDownloadsAndVerifiesPinnedArchive(t *testing.T) {
 	}
 
 	result := runInstaller(t, map[string]string{
-		"RTEST_VERSION":          version,
-		"RTEST_REPOSITORY":       "example/rtest",
-		"RTEST_RELEASE_BASE_URL": "file://" + releaseRoot,
-		"RTEST_INSTALL_ROOT":     installRoot,
+		"OUTBACK_VERSION":          version,
+		"OUTBACK_REPOSITORY":       "example/outback",
+		"OUTBACK_RELEASE_BASE_URL": "file://" + releaseRoot,
+		"OUTBACK_INSTALL_ROOT":     installRoot,
 	})
 	if !strings.Contains(result, "source=release") {
 		t.Fatalf("installer output = %q, want release source", result)
 	}
-	got := run(t, t.TempDir(), filepath.Join(installRoot, "bin", "rtest"), "version")
+	got := run(t, t.TempDir(), filepath.Join(installRoot, "bin", "outback"), "version")
 	if strings.TrimSpace(got) != version {
 		t.Fatalf("installed version = %q, want %q", strings.TrimSpace(got), version)
 	}
 	cached := runInstaller(t, map[string]string{
-		"RTEST_VERSION":          version,
-		"RTEST_REPOSITORY":       "example/rtest",
-		"RTEST_RELEASE_BASE_URL": "file://" + t.TempDir(),
-		"RTEST_INSTALL_ROOT":     installRoot,
+		"OUTBACK_VERSION":          version,
+		"OUTBACK_REPOSITORY":       "example/outback",
+		"OUTBACK_RELEASE_BASE_URL": "file://" + t.TempDir(),
+		"OUTBACK_INSTALL_ROOT":     installRoot,
 	})
 	if !strings.Contains(cached, "source=cache") {
 		t.Fatalf("second installer output = %q, want cache source", cached)
@@ -96,8 +96,8 @@ func TestReleaseInstallerRejectsChecksumMismatch(t *testing.T) {
 	}
 	releaseRoot := t.TempDir()
 	version := "9.8.7"
-	asset := "rtest_" + version + "_" + installerOS(runtime.GOOS) + "_" + installerArch(runtime.GOARCH) + ".tar.gz"
-	assetDir := filepath.Join(releaseRoot, "rtest-v"+version)
+	asset := "outback_" + version + "_" + installerOS(runtime.GOOS) + "_" + installerArch(runtime.GOARCH) + ".tar.gz"
+	assetDir := filepath.Join(releaseRoot, "v"+version)
 	if err := os.MkdirAll(assetDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -109,10 +109,10 @@ func TestReleaseInstallerRejectsChecksumMismatch(t *testing.T) {
 	}
 
 	output, err := installerCommand(map[string]string{
-		"RTEST_VERSION":          version,
-		"RTEST_REPOSITORY":       "example/rtest",
-		"RTEST_RELEASE_BASE_URL": "file://" + releaseRoot,
-		"RTEST_INSTALL_ROOT":     t.TempDir(),
+		"OUTBACK_VERSION":          version,
+		"OUTBACK_REPOSITORY":       "example/outback",
+		"OUTBACK_RELEASE_BASE_URL": "file://" + releaseRoot,
+		"OUTBACK_INSTALL_ROOT":     t.TempDir(),
 	}).CombinedOutput()
 	if err == nil {
 		t.Fatalf("installer unexpectedly accepted mismatched checksum: %s", output)
@@ -127,23 +127,23 @@ func TestReleaseInstallerUsesExplicitSourceFallbackWithoutRelease(t *testing.T) 
 		t.Skip("release installer targets POSIX GitHub runners")
 	}
 	source := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(source, "cmd", "rtest"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(source, "cmd", "outback"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.test/rtest\n\ngo 1.25\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.test/outback\n\ngo 1.25\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	program := "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"9.8.7\") }\n"
-	if err := os.WriteFile(filepath.Join(source, "cmd", "rtest", "main.go"), []byte(program), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "cmd", "outback", "main.go"), []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	result := runInstaller(t, map[string]string{
-		"RTEST_VERSION":               "9.8.7",
-		"RTEST_REPOSITORY":            "example/rtest",
-		"RTEST_RELEASE_BASE_URL":      "file://" + t.TempDir(),
-		"RTEST_INSTALL_ROOT":          t.TempDir(),
-		"RTEST_ACTION_ROOT":           source,
-		"RTEST_ALLOW_SOURCE_FALLBACK": "true",
+		"OUTBACK_VERSION":               "9.8.7",
+		"OUTBACK_REPOSITORY":            "example/outback",
+		"OUTBACK_RELEASE_BASE_URL":      "file://" + t.TempDir(),
+		"OUTBACK_INSTALL_ROOT":          t.TempDir(),
+		"OUTBACK_ACTION_ROOT":           source,
+		"OUTBACK_ALLOW_SOURCE_FALLBACK": "true",
 	})
 	if !strings.Contains(result, "source=source") {
 		t.Fatalf("installer output = %q, want source fallback", result)
@@ -156,15 +156,15 @@ func TestReleaseInstallerSelectsGitHubRunnerPlatform(t *testing.T) {
 	}
 	releaseRoot := t.TempDir()
 	version := "9.8.7"
-	asset := "rtest_" + version + "_linux_arm64.tar.gz"
-	assetDir := filepath.Join(releaseRoot, "rtest-v"+version)
+	asset := "outback_" + version + "_linux_arm64.tar.gz"
+	assetDir := filepath.Join(releaseRoot, "v"+version)
 	if err := os.MkdirAll(filepath.Join(assetDir, "payload"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(assetDir, "payload", "rtest"), []byte("#!/bin/sh\necho "+version+"\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(assetDir, "payload", "outback"), []byte("#!/bin/sh\necho "+version+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run(t, assetDir, "tar", "-czf", asset, "-C", "payload", "rtest")
+	run(t, assetDir, "tar", "-czf", asset, "-C", "payload", "outback")
 	archive, err := os.ReadFile(filepath.Join(assetDir, asset))
 	if err != nil {
 		t.Fatal(err)
@@ -176,10 +176,10 @@ func TestReleaseInstallerSelectsGitHubRunnerPlatform(t *testing.T) {
 	result := runInstaller(t, map[string]string{
 		"RUNNER_OS":              "Linux",
 		"RUNNER_ARCH":            "ARM64",
-		"RTEST_VERSION":          version,
-		"RTEST_REPOSITORY":       "example/rtest",
-		"RTEST_RELEASE_BASE_URL": "file://" + releaseRoot,
-		"RTEST_INSTALL_ROOT":     t.TempDir(),
+		"OUTBACK_VERSION":          version,
+		"OUTBACK_REPOSITORY":       "example/outback",
+		"OUTBACK_RELEASE_BASE_URL": "file://" + releaseRoot,
+		"OUTBACK_INSTALL_ROOT":     t.TempDir(),
 	})
 	if !strings.Contains(result, "source=release") {
 		t.Fatalf("installer output = %q, want linux/arm64 release", result)
@@ -187,9 +187,9 @@ func TestReleaseInstallerSelectsGitHubRunnerPlatform(t *testing.T) {
 }
 
 func TestReleaseWorkflowPackagesPortableChecksummedAssets(t *testing.T) {
-	data := read(t, filepath.Join("..", "..", "..", ".github", "workflows", "rtest-release.yml"))
+	data := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
 	for _, want := range []string{
-		"rtest-v*",
+		"v*",
 		"linux amd64",
 		"linux arm64",
 		"darwin amd64",
@@ -198,57 +198,35 @@ func TestReleaseWorkflowPackagesPortableChecksummedAssets(t *testing.T) {
 		"gh release create",
 	} {
 		if !strings.Contains(data, want) {
-			t.Fatalf("rtest-release.yml missing %q", want)
+			t.Fatalf("outback-release.yml missing %q", want)
 		}
 	}
 }
 
 func TestPOCWorkflowIsManualOIDCAndRepositoryScoped(t *testing.T) {
-	data := read(t, filepath.Join("..", "..", "..", ".github", "workflows", "rtest-poc.yml"))
+	data := read(t, filepath.Join("..", "..", ".github", "workflows", "poc.yml"))
 	for _, want := range []string{
 		"workflow_dispatch:",
 		"id-token: write",
-		"github.repository == 'flidai/leapview'",
-		"environment: rtest-poc",
-		"uses: ./rtest/action/setup-rtest",
-		"service-url: ${{ vars.RTEST_SERVICE_URL }}",
+		"github.repository == 'flidai/outback'",
+		"environment: outback-poc",
+		"uses: ./action/setup-outback",
+		"service-url: ${{ vars.OUTBACK_SERVICE_URL }}",
 		"project: poc",
-		"rtest doctor",
-		"rtest exec -- go test -count=1 -v ./...",
+		"outback doctor",
+		"outback exec -- go test -count=1 -v ./...",
 	} {
 		if !strings.Contains(data, want) {
-			t.Fatalf("rtest-poc.yml missing %q", want)
+			t.Fatalf("outback-poc.yml missing %q", want)
 		}
 	}
 	if strings.Contains(data, "pull_request:") {
 		t.Fatal("POC workflow must not run automatically for pull requests")
 	}
-	for _, forbidden := range []string{"tailscale/github-action", "ssh-private-key", "RTEST_TOKEN"} {
+	for _, forbidden := range []string{"tailscale/github-action", "ssh-private-key", "OUTBACK_TOKEN"} {
 		if strings.Contains(data, forbidden) {
 			t.Fatalf("POC workflow still contains legacy authentication %q", forbidden)
 		}
-	}
-}
-
-func TestMainCIUsesOIDCForTrustedProjectBuilds(t *testing.T) {
-	data := read(t, filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
-	for _, want := range []string{
-		"site-image:",
-		"production-image:",
-		"github.event.pull_request.head.repo.full_name == github.repository",
-		"github.actor != 'dependabot[bot]'",
-		"environment: rtest-poc",
-		"id-token: write",
-		"uses: ./rtest/action/setup-rtest",
-		"project: leapview",
-		"rtest build --",
-	} {
-		if !strings.Contains(data, want) {
-			t.Fatalf("ci.yml missing trusted rtest build gate %q", want)
-		}
-	}
-	if strings.Contains(data, "rtest-oidc-e2e:") {
-		t.Fatal("main CI must not retain the redundant POC-only OIDC job")
 	}
 }
 

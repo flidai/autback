@@ -1,6 +1,6 @@
-# rtest
+# outback
 
-`rtest` moves CPU- and memory-heavy trusted-project work off developer laptops and
+`outback` moves CPU- and memory-heavy trusted-project work off developer laptops and
 GitHub-hosted runners without defining a proprietary execution protocol:
 
 - source transfer uses Remote Execution API v2 CAS/ByteStream;
@@ -10,10 +10,10 @@ GitHub-hosted runners without defining a proprietary execution protocol:
 - Testcontainers owns integration-test dependencies.
 
 ```console
-rtest exec --cache go-build=/root/.cache/go-build --cache go-mod=/go/pkg/mod -- go test -count=1 -race ./...
-rtest exec -- task test
-rtest build -- --push -t ghcr.io/example/service:sha .
-rtest image build --tag ghcr.io/example/ci:rtest --file Dockerfile.rtest
+outback exec --cache go-build=/root/.cache/go-build --cache go-mod=/go/pkg/mod -- go test -count=1 -race ./...
+outback exec -- task test
+outback build -- --push -t ghcr.io/example/service:sha .
+outback image build --tag ghcr.io/example/ci:outback --file Dockerfile.outback
 ```
 
 Git selects tracked and untracked non-ignored files from the exact worktree. The REAPI CAS
@@ -25,26 +25,26 @@ each writable directory to the immutable project ID; cache names never imply a l
 or tool. Docker/BuildKit layers remain persistent on the worker.
 
 The target service does not supply a language runner. Each project selects a
-digest-pinned OCI image, while rtest injects only its static CAS/materialization
+digest-pinned OCI image, while outback injects only its static CAS/materialization
 entrypoint and mounts the Docker socket for sibling Testcontainers. This is a
 trusted-code design: Docker access is host control, not a security sandbox.
 
 ## Target project contract
 
-rtest executes arbitrary argument vectors; repositories keep task composition in their
+outback executes arbitrary argument vectors; repositories keep task composition in their
 existing Taskfile, scripts, Makefile, or CI configuration:
 
 ```console
-rtest init --project example
-rtest image activate --project example --image ghcr.io/example/ci@sha256:...
-rtest exec --project example -- task test
-rtest exec --project example -- go test -race ./...
+outback init --project example
+outback image activate --project example --image ghcr.io/example/ci@sha256:...
+outback exec --project example -- task test
+outback exec --project example -- go test -race ./...
 ```
 
-The committed `rtest.json` contains only the rtest project identifier. It is discovered
+The committed `outback.json` contains only the outback project identifier. It is discovered
 from the nearest directory up to the Git root and is safe to commit; flags and
-`RTEST_PROJECT` can override it. The current POC still accepts named suites from the
-legacy `.rtest.json` during migration. That profile format and the `standard` Go runner are not part of the accepted long-term
+`OUTBACK_PROJECT` can override it. The current POC still accepts named suites from the
+legacy `.outback.json` during migration. That profile format and the `standard` Go runner are not part of the accepted long-term
 contract. See [the architecture](docs/architecture.md) and
 [ADR 0001](docs/decisions/0001-shared-service-architecture.md). The versioned service
 contract is documented in [Control API v1](docs/control-api.md).
@@ -55,12 +55,12 @@ The current proof runs on the existing CPX32 `leapview-development`. Deployment 
 an explicit existing host and never provisions a replacement:
 
 ```console
-cd rtest
+cd outback
 task test
-RTEST_SERVER_IP=62.238.54.70 RTEST_SSH_USER=developer \
-RTEST_SSH_KEY=~/.ssh/id_ed25519 task deploy:swarm
-RTEST_SERVER_IP=62.238.54.70 RTEST_SSH_USER=developer \
-RTEST_SSH_KEY=~/.ssh/id_ed25519 RTEST_PROJECT=leapview task e2e:service
+OUTBACK_SERVER_IP=62.238.54.70 OUTBACK_SSH_USER=developer \
+OUTBACK_SSH_KEY=~/.ssh/id_ed25519 task deploy:swarm
+OUTBACK_SERVER_IP=62.238.54.70 OUTBACK_SSH_USER=developer \
+OUTBACK_SSH_KEY=~/.ssh/id_ed25519 OUTBACK_PROJECT=leapview task e2e:service
 ```
 
 The control plane serves Connect over HTTPS on 443. Protocol-transparent mTLS gateways on
@@ -74,15 +74,15 @@ An administrator creates the user, grants project membership, and generates a te
 single-use code:
 
 ```console
-rtest admin user create --name coworker
-rtest admin member add --project example --user usr...
-rtest admin enrollment create --user usr... --device coworker-laptop --expires 10m
+outback admin user create --name coworker
+outback admin member add --project example --user usr...
+outback admin enrollment create --user usr... --device coworker-laptop --expires 10m
 ```
 
-The coworker runs `rtest login` and enters that code at the hidden prompt. rtest exchanges
+The coworker runs `outback login` and enters that code at the hidden prompt. outback exchanges
 it once and stores the resulting named device token in macOS Keychain, Linux Secret
-Service, or Windows Credential Manager through the operating-system keyring. `rtest logout`
-removes the local entry; `rtest token revoke <id>` independently revokes one laptop.
+Service, or Windows Credential Manager through the operating-system keyring. `outback logout`
+removes the local entry; `outback token revoke <id>` independently revokes one laptop.
 
 The manual GitHub Actions POC exchanges GitHub OIDC directly for a short-lived project
 credential; see [GitHub Actions](docs/github-actions.md). It deliberately has no
@@ -108,23 +108,23 @@ if any measured source transfer is non-zero.
 The current CPX32 warm-cache baseline and methodology are documented in
 [benchmarks](docs/benchmarks.md).
 For controlled provider comparisons, `task benchmark:compare -- --spec ... --output ...`
-runs the same checked-in argv contract serially across available local, rtest, and Depot
+runs the same checked-in argv contract serially across available local, outback, and Depot
 candidates while preserving raw logs and an exact source fingerprint.
 
 ## Layout
 
-- `cmd/rtest`: project-aware CLI.
-- `api/rtest/v1`: protobuf source for the Connect control API.
+- `cmd/outback`: project-aware CLI.
+- `api/rtest/v1`: the compatibility-preserving v1 protobuf source for the Connect control API.
 - `internal/control`: projects, credentials, OIDC, authorization, audit, PKI, and scheduling.
 - `internal/cas`, `internal/workspace`: standard CAS transfer and exact Git input selection.
 - `internal/swarm`: server-private Docker job specifications and lifecycle operations.
 - `internal/buildkit`: thin native Buildx remote-builder wrapper.
-- `cmd/rtest-job-entrypoint`: CAS materialization, timeout, process-group, and result boundary.
+- `cmd/outback-job-entrypoint`: CAS materialization, timeout, process-group, and result boundary.
 - `host`: idempotent existing-host installation and systemd units.
-- `action/setup-rtest`: GitHub composite action that installs and configures the CLI.
-- `cmd/rtest-benchmark`: generic controlled command-comparison harness.
+- `action/setup-outback`: GitHub composite action that installs and configures the CLI.
+- `cmd/outback-benchmark`: generic controlled command-comparison harness.
 - `scripts`: deployment and reproducible E2E proof.
 - `infra`: vendor-specific Terraform for an optional dedicated Hetzner worker.
 
-The module is independent of LeapView. Moving `rtest/` into `Yacobolo/toolbelt` only
-requires changing its Go module path and deployment ownership.
+Outback is an independent service. LeapView remains its first production consumer and its
+checked-in benchmark evidence demonstrates the migration from Depot and laptop-bound Docker.

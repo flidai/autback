@@ -1,24 +1,24 @@
-name: Set up rtest
-description: Install a verified rtest release and configure GitHub OIDC access to a shared service.
+name: Set up outback
+description: Install a verified outback release and configure GitHub OIDC access to a shared service.
 
 inputs:
   version:
-    description: Exact rtest release version to install.
+    description: Exact outback release version to install.
     required: false
-    default: "0.7.0"
+    default: "0.1.0"
   repository:
-    description: GitHub repository that owns rtest-v* release assets.
+    description: GitHub repository that owns v* release assets.
     required: false
-    default: flidai/leapview
+    default: flidai/outback
   allow-source-fallback:
-    description: Build the checked-out rtest source only when the pinned release is not published yet.
+    description: Build the checked-out outback source only when the pinned release is not published yet.
     required: false
     default: "false"
   service-url:
-    description: HTTPS URL of the rtest control plane.
+    description: HTTPS URL of the outback control plane.
     required: true
   project:
-    description: rtest project slug or ID authorized for this workflow.
+    description: outback project slug or ID authorized for this workflow.
     required: true
   image:
     description: Optional digest-pinned OCI image override; the project default is used when omitted.
@@ -46,32 +46,32 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Restore pinned rtest CLI
+    - name: Restore pinned outback CLI
       id: cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/rtest/bin
-        key: rtest-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+        path: ${{ runner.temp }}/outback/bin
+        key: outback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
 
-    - name: Install pinned rtest CLI
+    - name: Install pinned outback CLI
       id: install
       shell: bash
       env:
-        RTEST_VERSION: ${{ inputs.version }}
-        RTEST_REPOSITORY: ${{ inputs.repository }}
-        RTEST_ALLOW_SOURCE_FALLBACK: ${{ inputs.allow-source-fallback }}
-        RTEST_INSTALL_ROOT: ${{ runner.temp }}/rtest
-        RTEST_ACTION_ROOT: ${{ github.action_path }}/../..
+        OUTBACK_VERSION: ${{ inputs.version }}
+        OUTBACK_REPOSITORY: ${{ inputs.repository }}
+        OUTBACK_ALLOW_SOURCE_FALLBACK: ${{ inputs.allow-source-fallback }}
+        OUTBACK_INSTALL_ROOT: ${{ runner.temp }}/outback
+        OUTBACK_ACTION_ROOT: ${{ github.action_path }}/../..
       run: "${GITHUB_ACTION_PATH}/install-release.sh"
 
-    - name: Cache verified rtest release
+    - name: Cache verified outback release
       if: steps.cache.outputs.cache-hit != 'true' && steps.install.outputs.source == 'release'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/rtest/bin
-        key: rtest-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+        path: ${{ runner.temp }}/outback/bin
+        key: outback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
 
-    - name: Configure rtest
+    - name: Configure outback
       shell: bash
       env:
         INPUT_SERVICE_URL: ${{ inputs.service-url }}
@@ -83,7 +83,7 @@ runs:
         INPUT_JOB_MEMORY: ${{ inputs.job-memory }}
       run: |
         set -euo pipefail
-        install_root="${RUNNER_TEMP}/rtest"
+        install_root="${RUNNER_TEMP}/outback"
         bin_dir="${install_root}/bin"
         config_file="${install_root}/config.json"
         ca_file=""
@@ -114,5 +114,5 @@ runs:
         chmod 0600 "${config_file}"
 
         printf '%s\n' "${bin_dir}" >> "${GITHUB_PATH}"
-        printf 'RTEST_CONFIG=%s\n' "${config_file}" >> "${GITHUB_ENV}"
-        printf 'RTEST_PROJECT=%s\n' "${INPUT_PROJECT}" >> "${GITHUB_ENV}"
+        printf 'OUTBACK_CONFIG=%s\n' "${config_file}" >> "${GITHUB_ENV}"
+        printf 'OUTBACK_PROJECT=%s\n' "${INPUT_PROJECT}" >> "${GITHUB_ENV}"

@@ -3,16 +3,16 @@
     {
       name: "CAS_MAIN_STORE",
       filesystem: {
-        content_path: "/var/lib/rtest/reapi/cas/content",
-        temp_path: "/var/lib/rtest/reapi/cas/tmp",
+        content_path: "/var/lib/outback/reapi/cas/content",
+        temp_path: "/var/lib/outback/reapi/cas/tmp",
         eviction_policy: { max_bytes: 20000000000 },
       },
     },
     {
       name: "AC_MAIN_STORE",
       filesystem: {
-        content_path: "/var/lib/rtest/reapi/ac/content",
-        temp_path: "/var/lib/rtest/reapi/ac/tmp",
+        content_path: "/var/lib/outback/reapi/ac/content",
+        temp_path: "/var/lib/outback/reapi/ac/tmp",
         eviction_policy: { max_bytes: 1000000000 },
       },
     },
@@ -21,8 +21,8 @@
       fast_slow: {
         fast: {
           filesystem: {
-            content_path: "/var/lib/rtest/reapi/worker/content",
-            temp_path: "/var/lib/rtest/reapi/worker/tmp",
+            content_path: "/var/lib/outback/reapi/worker/content",
+            temp_path: "/var/lib/outback/reapi/worker/tmp",
             eviction_policy: { max_bytes: 10000000000 },
           },
         },
@@ -36,8 +36,8 @@
       simple: {
         supported_platform_properties: {
           OSFamily: "priority",
-          "rtest.repository": "priority",
-          "rtest.runner": "priority",
+          "outback.repository": "priority",
+          "outback.runner": "priority",
         },
       },
     },
@@ -45,31 +45,31 @@
   workers: [
     {
       local: {
-        name: "rtest-standard-",
+        name: "outback-standard-",
         worker_api_endpoint: { uri: "grpc://127.0.0.1:50061" },
         cas_fast_slow_store: "WORKER_FAST_SLOW_STORE",
         upload_action_result: {
           ac_store: "AC_MAIN_STORE",
           upload_ac_results_strategy: "never",
         },
-        work_directory: "/var/lib/rtest/reapi/work",
+        work_directory: "/var/lib/outback/reapi/work",
         max_action_timeout: 3700,
         max_inflight_tasks: 1,
         timeout_handled_externally: true,
-        entrypoint: "/usr/local/bin/rtest-reapi-entrypoint",
+        entrypoint: "/usr/local/bin/outback-reapi-entrypoint",
         additional_environment: {
           PATH: { value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
-          RTEST_ACTION_DIRECTORY: "action_directory",
-          RTEST_TIMEOUT_MILLIS: "timeout_millis",
-          RTEST_SIDE_CHANNEL_FILE: "side_channel_file",
-          RTEST_RUNNER_IMAGE: "from_environment",
-          RTEST_JOB_CPUS: "from_environment",
-          RTEST_JOB_MEMORY: "from_environment",
+          OUTBACK_ACTION_DIRECTORY: "action_directory",
+          OUTBACK_TIMEOUT_MILLIS: "timeout_millis",
+          OUTBACK_SIDE_CHANNEL_FILE: "side_channel_file",
+          OUTBACK_RUNNER_IMAGE: "from_environment",
+          OUTBACK_JOB_CPUS: "from_environment",
+          OUTBACK_JOB_MEMORY: "from_environment",
         },
         platform_properties: {
           OSFamily: { values: [""] },
-          "rtest.repository": { values: [""] },
-          "rtest.runner": { values: [""] },
+          "outback.repository": { values: [""] },
+          "outback.runner": { values: [""] },
         },
       },
     },
@@ -79,11 +79,11 @@
       name: "reapi",
       listener: { http: { socket_address: "127.0.0.1:50051" } },
       services: {
-        cas: [{ instance_name: "rtest", cas_store: "CAS_MAIN_STORE" }],
-        ac: [{ instance_name: "rtest", ac_store: "AC_MAIN_STORE" }],
-        bytestream: [{ instance_name: "rtest", cas_store: "CAS_MAIN_STORE" }],
-        execution: [{ instance_name: "rtest", cas_store: "CAS_MAIN_STORE", scheduler: "MAIN_SCHEDULER" }],
-        capabilities: [{ instance_name: "rtest", remote_execution: { scheduler: "MAIN_SCHEDULER" } }],
+        cas: [{ instance_name: "outback", cas_store: "CAS_MAIN_STORE" }],
+        ac: [{ instance_name: "outback", ac_store: "AC_MAIN_STORE" }],
+        bytestream: [{ instance_name: "outback", cas_store: "CAS_MAIN_STORE" }],
+        execution: [{ instance_name: "outback", cas_store: "CAS_MAIN_STORE", scheduler: "MAIN_SCHEDULER" }],
+        capabilities: [{ instance_name: "outback", remote_execution: { scheduler: "MAIN_SCHEDULER" } }],
       },
     },
     {

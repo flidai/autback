@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/control"
+	"github.com/flidai/outback/internal/control"
 )
 
 func TestProjectCachesUseIndependentPrivateDirectories(t *testing.T) {

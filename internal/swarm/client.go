@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 type commander interface {
@@ -93,12 +93,12 @@ func (c *Client) Status(ctx context.Context, id string) (protocol.Job, error) {
 	service := services[0]
 	labels := service.Spec.Labels
 	job := protocol.Job{
-		ID: id, Repository: decodeLabel(labels["rtest.repository"]), Suite: decodeLabel(labels["rtest.suite"]),
-		Runner: decodeLabel(labels["rtest.runner"]), SourceDigest: labels["rtest.root_digest"],
+		ID: id, Repository: decodeLabel(labels["outback.repository"]), Suite: decodeLabel(labels["outback.suite"]),
+		Runner: decodeLabel(labels["outback.runner"]), SourceDigest: labels["outback.root_digest"],
 		Command: append([]string(nil), service.Spec.TaskTemplate.ContainerSpec.Args...), CreatedAt: service.CreatedAt,
 		Status: protocol.StatusQueued, CancelRequested: labels[cancelledLabel] == "true",
 	}
-	job.TimeoutSeconds, _ = strconv.Atoi(labels["rtest.timeout_seconds"])
+	job.TimeoutSeconds, _ = strconv.Atoi(labels["outback.timeout_seconds"])
 	if job.CancelRequested {
 		job.Status = protocol.StatusCancelled
 		finished := service.UpdatedAt

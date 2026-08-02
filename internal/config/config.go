@@ -80,10 +80,10 @@ func Load() (Config, error) {
 	if fileErr != nil && !errors.Is(fileErr, os.ErrNotExist) {
 		return Config{}, fileErr
 	}
-	if value := os.Getenv("RTEST_URL"); value != "" {
+	if value := os.Getenv("OUTBACK_URL"); value != "" {
 		config.URL = value
 	}
-	if value := os.Getenv("RTEST_TOKEN"); value != "" {
+	if value := os.Getenv("OUTBACK_TOKEN"); value != "" {
 		config.Token = value
 	}
 	if config.Backend == "" {
@@ -106,7 +106,7 @@ func Load() (Config, error) {
 	}
 	if config.Backend == BackendLegacy {
 		if config.Token == "" {
-			return Config{}, fmt.Errorf("RTEST_TOKEN is required; configure %s or set the environment variable", path)
+			return Config{}, fmt.Errorf("OUTBACK_TOKEN is required; configure %s or set the environment variable", path)
 		}
 		if config.URL == "" && (config.SSH == nil || config.SSH.Host == "") {
 			return Config{}, fmt.Errorf("either url or ssh.host is required in %s", path)
@@ -121,7 +121,7 @@ func Load() (Config, error) {
 			config.Service = &Service{}
 		}
 		if config.Service.Project != "" {
-			return Config{}, fmt.Errorf("service.project is no longer a global default; remove it and run rtest init to create rtest.json")
+			return Config{}, fmt.Errorf("service.project is no longer a global default; remove it and run outback init to create outback.json")
 		}
 		if config.Service.CPUs == "" {
 			config.Service.CPUs = "2"
@@ -142,7 +142,7 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("swarm configuration is required in %s", path)
 		}
 		if config.CAS.Instance == "" {
-			config.CAS.Instance = "rtest"
+			config.CAS.Instance = "outback"
 		}
 		if config.CAS.RemoteAddress == "" {
 			config.CAS.RemoteAddress = "127.0.0.1:50051"
@@ -157,10 +157,10 @@ func Load() (Config, error) {
 			config.Swarm.DockerHost = "unix:///var/run/docker.sock"
 		}
 		if config.Swarm.JobsRoot == "" {
-			config.Swarm.JobsRoot = "/var/lib/rtest/jobs"
+			config.Swarm.JobsRoot = "/var/lib/outback/jobs"
 		}
 		if config.Swarm.Image == "" {
-			config.Swarm.Image = "rtest-runner-standard:local"
+			config.Swarm.Image = "outback-runner-standard:local"
 		}
 		if config.Swarm.CPUs == "" {
 			config.Swarm.CPUs = "1.5"
@@ -177,7 +177,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("reapi configuration is required in %s", path)
 	}
 	if config.REAPI.Instance == "" {
-		config.REAPI.Instance = "rtest"
+		config.REAPI.Instance = "outback"
 	}
 	if config.REAPI.RemoteAddress == "" {
 		config.REAPI.RemoteAddress = "127.0.0.1:50051"
@@ -192,7 +192,7 @@ func Load() (Config, error) {
 }
 
 func Path() (string, error) {
-	if value := os.Getenv("RTEST_CONFIG"); value != "" {
+	if value := os.Getenv("OUTBACK_CONFIG"); value != "" {
 		return value, nil
 	}
 	root := os.Getenv("XDG_CONFIG_HOME")
@@ -203,7 +203,7 @@ func Path() (string, error) {
 		}
 		root = filepath.Join(home, ".config")
 	}
-	return filepath.Join(root, "rtest", "config.json"), nil
+	return filepath.Join(root, "outback", "config.json"), nil
 }
 
 func read(path string) (Config, error) {

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/flidai/leapview/rtest/internal/cli"
+	"github.com/flidai/outback/internal/cli"
 )
 
 func main() {

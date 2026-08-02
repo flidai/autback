@@ -1,6 +1,6 @@
 # Repository configuration
 
-rtest has no task language. A small, committed repository link selects the shared-service
+outback has no task language. A small, committed repository link selects the shared-service
 project:
 
 ```json
@@ -12,12 +12,12 @@ project:
 Create it in the current Git directory after authenticating:
 
 ```console
-rtest init --project example
+outback init --project example
 ```
 
-The file is named `rtest.json`; it contains no credentials, commands, hooks, or environment
-values and is safe to commit. In a monorepo, a nearer nested `rtest.json` overrides an
-ancestor. Project selection precedence is `--project`, `RTEST_PROJECT`, then the nearest
+The file is named `outback.json`; it contains no credentials, commands, hooks, or environment
+values and is safe to commit. In a monorepo, a nearer nested `outback.json` overrides an
+ancestor. Project selection precedence is `--project`, `OUTBACK_PROJECT`, then the nearest
 repository link. Missing, malformed, conflicting, and unauthorized selection fails before
 source upload or job admission.
 
@@ -27,7 +27,7 @@ defaults:
 ```json
 {
   "backend": "service",
-  "url": "https://rtest.example.com",
+  "url": "https://outback.example.com",
   "service": {
     "cpus": "2",
     "memory": "4g"
@@ -38,20 +38,20 @@ defaults:
 Repositories keep orchestration in existing Taskfiles, scripts, Makefiles, or CI steps:
 
 ```console
-rtest exec -- task test
-rtest exec --cache go-build=/root/.cache/go-build --cache go-mod=/go/pkg/mod -- go test -count=1 -race ./...
-rtest exec --workdir services/api --env CI=true -- npm test
-rtest build -- --push -t ghcr.io/example/service:sha .
+outback exec -- task test
+outback exec --cache go-build=/root/.cache/go-build --cache go-mod=/go/pkg/mod -- go test -count=1 -race ./...
+outback exec --workdir services/api --env CI=true -- npm test
+outback build -- --push -t ghcr.io/example/service:sha .
 ```
 
-`rtest exec` preserves the caller's directory relative to the Git worktree, so invoking it
+`outback exec` preserves the caller's directory relative to the Git worktree, so invoking it
 from a nested module runs there remotely. `--workdir` remains available when a command
 should deliberately run somewhere else in the uploaded worktree.
 
 Persistent dependency and compiler caches are explicit OCI bind mounts:
 
 ```console
-rtest exec \
+outback exec \
   --cache go-build=/root/.cache/go-build \
   --cache go-mod=/go/pkg/mod \
   -- task test
@@ -59,26 +59,26 @@ rtest exec \
 
 `NAME` is a safe project-local identifier and the target is an absolute path inside the
 runner container. The control plane validates and persists the declaration, while the
-worker resolves it beneath `/var/lib/rtest/cache/<immutable-project-id>/`. Projects cannot
-name host paths or mount another project's writable cache. rtest does not prescribe Go,
+worker resolves it beneath `/var/lib/outback/cache/<immutable-project-id>/`. Projects cannot
+name host paths or mount another project's writable cache. outback does not prescribe Go,
 npm, Cargo, or another cache convention.
 
 The server-side project owns its default runner image. An administrator can activate an
 existing digest, build and activate from a normal Dockerfile, inspect history, or roll back:
 
 ```console
-rtest image activate --image ghcr.io/example/ci@sha256:...
-rtest image build --tag ghcr.io/example/ci:rtest --file Dockerfile.rtest
-rtest image history
-rtest image rollback
-rtest image overrides deny
+outback image activate --image ghcr.io/example/ci@sha256:...
+outback image build --tag ghcr.io/example/ci:outback --file Dockerfile.outback
+outback image history
+outback image rollback
+outback image overrides deny
 ```
 
 Activation pulls and inspects the digest on the worker before changing project state. A
 failed validation leaves the active image unchanged. `image build` is a convenience around
 the existing native Buildx/BuildKit path: it pushes the tag, reads Buildx's standard
 `containerimage.digest` metadata, and activates the immutable `repository@sha256:...`
-reference. No rtest-specific image or installation format is involved.
+reference. No outback-specific image or installation format is involved.
 
 The worker starts the injected entrypoint as root even when the selected OCI image declares
 a different default user. Root is required for the trusted Docker-socket boundary and lets
@@ -98,12 +98,12 @@ argument vectors without shell interpretation unless the caller explicitly invok
 
 Git ignore rules are the source-transfer boundary. Tracked files and non-ignored
 untracked files are uploaded; ignored local databases, secrets, caches, and build output
-are excluded. When the runner image provides Git, rtest initializes the materialized
+are excluded. When the runner image provides Git, outback initializes the materialized
 snapshot as a clean, ephemeral repository before the command starts. Snapshot files are
 force-added so checks such as `git status`, including checks for regenerated files that
 are ignored in the source worktree, compare against the exact uploaded input. If a command
 requires generated input, the repository should run its normal generation command locally
-or remotely as an explicit project step. rtest does not infer language-specific pre-hooks.
+or remotely as an explicit project step. outback does not infer language-specific pre-hooks.
 
-The legacy `.rtest.json` suite file and `standard` runner remain available only through the legacy migration
+The legacy `.outback.json` suite file and `standard` runner remain available only through the legacy migration
 backends and are not part of the service contract.

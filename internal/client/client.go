@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 type Client struct {
@@ -28,10 +28,10 @@ type Client struct {
 func New(baseURL, token string) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("RTEST_URL must be an absolute HTTP URL")
+		return nil, errors.New("OUTBACK_URL must be an absolute HTTP URL")
 	}
 	if token == "" {
-		return nil, errors.New("RTEST_TOKEN is required")
+		return nil, errors.New("OUTBACK_TOKEN is required")
 	}
 	return &Client{baseURL: parsed.String(), token: token, http: &http.Client{Timeout: 30 * time.Second}}, nil
 }

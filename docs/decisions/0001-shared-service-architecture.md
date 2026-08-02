@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-01
-- Owners: rtest project
+- Owners: outback project
 
 ## Context
 
@@ -11,7 +11,7 @@ Docker Swarm jobs, Testcontainers, cancellation, timeouts, and native remote Bui
 the existing Hetzner worker. Its SSH transport is appropriate for an owner-operated POC,
 but not for a service shared by multiple laptops, coworkers, and GitHub Actions.
 
-rtest must remain generic. LeapView is a consumer and migration target, not the source of
+outback must remain generic. LeapView is a consumer and migration target, not the source of
 runner types or lifecycle hooks. The product should compose established protocols instead
 of recreating Depot's proprietary service or introducing a new CI task language.
 
@@ -31,14 +31,14 @@ of recreating Depot's proprietary service or introducing a new CI task language.
    the initial worker identity; only the control plane can access its manager API.
 7. The execution unit is an arbitrary argument vector inside a project-selected,
    digest-pinned OCI image. Git defines input selection; CAS provides incremental transfer.
-8. rtest does not require `.rtest.json` suites, a `go-web` or other language profile,
+8. outback does not require `.outback.json` suites, a `go-web` or other language profile,
    generated asset hooks, Dev Containers, or GitHub Actions YAML interpretation. Existing
    project tools remain responsible for task composition.
 9. Docker-backed Testcontainers execution is trusted-code only. Untrusted repositories or
    forks require VM-per-job isolation and are out of scope until separately accepted.
 
 Depot is a behavioral reference for local tokens, CI OIDC exchange, operation-scoped
-credentials, BuildKit mTLS, progress, and exit propagation. rtest adopts those boundaries
+credentials, BuildKit mTLS, progress, and exit propagation. outback adopts those boundaries
 while retaining standard, independently replaceable execution and storage components.
 
 ## Consequences
@@ -51,7 +51,7 @@ while retaining standard, independently replaceable execution and storage compon
   relationships, OIDC exchange, operation-scoped credentials, TLS ingress, audit, and a
   server-owned scheduler adapter.
 - A repository can express its environment with a Dockerfile/OCI image and its commands in
-  an existing Taskfile, script, or CI step. rtest stays an execution tool rather than a
+  an existing Taskfile, script, or CI step. outback stays an execution tool rather than a
   second build system.
 - Worker size, worker count, CAS implementation, and scheduler implementation remain
   measurement-driven server choices.

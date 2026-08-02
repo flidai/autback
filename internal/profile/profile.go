@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const FileName = ".rtest.json"
+const FileName = ".outback.json"
 
 type Suite struct {
 	Command        []string `json:"command"`

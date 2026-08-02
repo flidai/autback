@@ -13,21 +13,21 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/authclient"
-	"github.com/flidai/leapview/rtest/internal/buildkit"
-	"github.com/flidai/leapview/rtest/internal/cas"
-	"github.com/flidai/leapview/rtest/internal/client"
-	"github.com/flidai/leapview/rtest/internal/config"
-	"github.com/flidai/leapview/rtest/internal/profile"
-	"github.com/flidai/leapview/rtest/internal/protocol"
-	"github.com/flidai/leapview/rtest/internal/reapi"
-	"github.com/flidai/leapview/rtest/internal/snapshot"
-	"github.com/flidai/leapview/rtest/internal/swarm"
-	"github.com/flidai/leapview/rtest/internal/tunnel"
-	"github.com/flidai/leapview/rtest/internal/workspace"
+	"github.com/flidai/outback/internal/authclient"
+	"github.com/flidai/outback/internal/buildkit"
+	"github.com/flidai/outback/internal/cas"
+	"github.com/flidai/outback/internal/client"
+	"github.com/flidai/outback/internal/config"
+	"github.com/flidai/outback/internal/profile"
+	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/outback/internal/reapi"
+	"github.com/flidai/outback/internal/snapshot"
+	"github.com/flidai/outback/internal/swarm"
+	"github.com/flidai/outback/internal/tunnel"
+	"github.com/flidai/outback/internal/workspace"
 )
 
-const version = "0.7.0"
+const version = "0.1.0"
 
 type IO struct {
 	Stdin   io.Reader
@@ -96,7 +96,7 @@ func Run(ctx context.Context, args []string, streams IO) int {
 	case "doctor":
 		return doctor(ctx, api, settings, streams)
 	default:
-		fmt.Fprintf(streams.Stderr, "rtest: unknown command %q\n", args[0])
+		fmt.Fprintf(streams.Stderr, "outback: unknown command %q\n", args[0])
 		usage(streams.Stderr)
 		return 2
 	}
@@ -119,7 +119,7 @@ func runSwarm(ctx context.Context, settings config.Config, args []string, stream
 		dockerHost = "ssh://" + settings.SSH.User + "@" + settings.SSH.Host
 		identity = settings.SSH.IdentityFile
 	}
-	docker := swarm.New(swarm.Config{Binary: os.Getenv("RTEST_DOCKER"), Host: dockerHost, SSHIdentity: identity})
+	docker := swarm.New(swarm.Config{Binary: os.Getenv("OUTBACK_DOCKER"), Host: dockerHost, SSHIdentity: identity})
 	switch args[0] {
 	case "run":
 		return runSwarmJob(ctx, docker, casService, settings, args[1:], streams)
@@ -134,7 +134,7 @@ func runSwarm(ctx context.Context, settings config.Config, args []string, stream
 		if settings.SSH != nil && settings.Swarm.DockerHost == "" {
 			transport = "Docker SSH and CAS tunnel to " + settings.SSH.Host
 		}
-		fmt.Fprintf(streams.Stdout, "rtest %s\nconnection: ok (%s)\ninstance: %s\n", version, transport, settings.CAS.Instance)
+		fmt.Fprintf(streams.Stdout, "outback %s\nconnection: ok (%s)\ninstance: %s\n", version, transport, settings.CAS.Instance)
 		return 0
 	case "status":
 		jsonOutput, id, err := jobArgs(args[1:])
@@ -179,7 +179,7 @@ func runSwarm(ctx context.Context, settings config.Config, args []string, stream
 	case "list":
 		return listSwarm(ctx, docker, args[1:], streams)
 	default:
-		fmt.Fprintf(streams.Stderr, "rtest: unknown command %q\n", args[0])
+		fmt.Fprintf(streams.Stderr, "outback: unknown command %q\n", args[0])
 		usage(streams.Stderr)
 		return 2
 	}
@@ -274,7 +274,7 @@ func jobID() (string, error) {
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("rtest-%x", value), nil
+	return fmt.Sprintf("outback-%x", value), nil
 }
 
 func listSwarm(ctx context.Context, docker *swarm.Client, args []string, streams IO) int {
@@ -320,7 +320,7 @@ func listSwarm(ctx context.Context, docker *swarm.Client, args []string, streams
 
 func runBuild(ctx context.Context, settings config.Config, args []string, streams IO) int {
 	if settings.BuildKit == nil {
-		return fail(streams.Stderr, errors.New("buildkit configuration is required for rtest build"))
+		return fail(streams.Stderr, errors.New("buildkit configuration is required for outback build"))
 	}
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
@@ -349,9 +349,9 @@ func runBuild(ctx context.Context, settings config.Config, args []string, stream
 	if _, err := rand.Read(random); err != nil {
 		return fail(streams.Stderr, err)
 	}
-	name := fmt.Sprintf("rtest-%x", random)
+	name := fmt.Sprintf("outback-%x", random)
 	fmt.Fprintf(streams.Stderr, "Backend: BuildKit via native Docker Buildx\nBuilder: %s\n", address)
-	code, err := buildkit.Run(ctx, os.Getenv("RTEST_DOCKER"), address, name, root, args, streams.Stdout, streams.Stderr)
+	code, err := buildkit.Run(ctx, os.Getenv("OUTBACK_DOCKER"), address, name, root, args, streams.Stdout, streams.Stderr)
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("remote build: %w", err))
 	}
@@ -380,12 +380,12 @@ func runREAPI(ctx context.Context, settings config.Config, args []string, stream
 		if sshTunnel != nil {
 			transport = "REAPI over SSH to " + settings.SSH.Host
 		}
-		fmt.Fprintf(streams.Stdout, "rtest %s\nconnection: ok (%s)\ninstance: %s\n", version, transport, settings.REAPI.Instance)
+		fmt.Fprintf(streams.Stdout, "outback %s\nconnection: ok (%s)\ninstance: %s\n", version, transport, settings.REAPI.Instance)
 		return 0
 	case "status", "logs", "cancel", "list":
 		return fail(streams.Stderr, fmt.Errorf("%s is only available with the legacy detached-job backend; REAPI run cancellation follows the client context", args[0]))
 	default:
-		fmt.Fprintf(streams.Stderr, "rtest: unknown command %q\n", args[0])
+		fmt.Fprintf(streams.Stderr, "outback: unknown command %q\n", args[0])
 		usage(streams.Stderr)
 		return 2
 	}
@@ -502,7 +502,7 @@ func runJob(ctx context.Context, api *client.Client, args []string, streams IO) 
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	temporary, err := os.CreateTemp("", "rtest-source-*.tar.zst")
+	temporary, err := os.CreateTemp("", "outback-source-*.tar.zst")
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
@@ -536,7 +536,7 @@ func runJob(ctx context.Context, api *client.Client, args []string, streams IO) 
 	}
 	finished, err := api.Stream(ctx, job.ID, streams.Stdout)
 	if err != nil {
-		return fail(streams.Stderr, fmt.Errorf("logs: %w (reconnect with: rtest logs %s)", err, job.ID))
+		return fail(streams.Stderr, fmt.Errorf("logs: %w (reconnect with: outback logs %s)", err, job.ID))
 	}
 	printCompletion(streams.Stderr, finished)
 	return client.ExitCode(finished)
@@ -632,7 +632,7 @@ func doctor(ctx context.Context, api *client.Client, settings config.Config, str
 	if settings.URL == "" {
 		transport = "SSH tunnel to " + settings.SSH.Host
 	}
-	fmt.Fprintf(streams.Stdout, "rtest %s\nconnection: ok (%s)\n", version, transport)
+	fmt.Fprintf(streams.Stdout, "outback %s\nconnection: ok (%s)\n", version, transport)
 	return 0
 }
 
@@ -707,35 +707,35 @@ func defaults(streams IO) IO {
 
 func usage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
-  rtest init [--project <project>]
-  rtest [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--cpus 2] [--memory 4g] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
-  rtest [--token <token>] build [--project <project>] [-- <buildx arguments...>]
-  rtest [--token <token>] image show [--project <project>]
-  rtest [--token <token>] image activate [--project <project>] --image <digest>
-  rtest [--token <token>] image rollback [--project <project>]
-  rtest [--token <token>] image history [--project <project>]
-  rtest [--token <token>] image overrides [--project <project>] <allow|deny>
-  rtest [--token <token>] image build [--project <project>] --tag <registry/repository:tag> [--file Dockerfile] [-- <buildx arguments...>]
-  rtest login
-  rtest logout
-  rtest token create --name <device> [--user <id>] [--expires 720h]
-  rtest token list
-  rtest token revoke <token-id>
-  rtest trust github create --project <project> --owner-id <id> --repository-id <id> --workflow-ref <glob> --ref <glob> --event <event> [--environment <name>]
-  rtest trust github list --project <project>
-  rtest trust github revoke <trust-id>
-  rtest admin user create --name <name> [--admin]
-  rtest admin project create --slug <slug> --name <name>
-  rtest admin member add --project <project> --user <user-id>
-  rtest admin enrollment create --user <user-id> --device <name> [--expires 10m]
-  rtest run [--detach] [--timeout 15m] <suite> [-- <arguments...>]
-  rtest run [--detach] [--timeout 15m] -- <command> [arguments...]
-  rtest status [--json] <job-id>
-  rtest logs <job-id>
-  rtest cancel <job-id>
-  rtest list [--repository <name>] [--limit 20] [--json]
-  rtest doctor
-  rtest version`)
+  outback init [--project <project>]
+  outback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--cpus 2] [--memory 4g] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
+  outback [--token <token>] build [--project <project>] [-- <buildx arguments...>]
+  outback [--token <token>] image show [--project <project>]
+  outback [--token <token>] image activate [--project <project>] --image <digest>
+  outback [--token <token>] image rollback [--project <project>]
+  outback [--token <token>] image history [--project <project>]
+  outback [--token <token>] image overrides [--project <project>] <allow|deny>
+  outback [--token <token>] image build [--project <project>] --tag <registry/repository:tag> [--file Dockerfile] [-- <buildx arguments...>]
+  outback login
+  outback logout
+  outback token create --name <device> [--user <id>] [--expires 720h]
+  outback token list
+  outback token revoke <token-id>
+  outback trust github create --project <project> --owner-id <id> --repository-id <id> --workflow-ref <glob> --ref <glob> --event <event> [--environment <name>]
+  outback trust github list --project <project>
+  outback trust github revoke <trust-id>
+  outback admin user create --name <name> [--admin]
+  outback admin project create --slug <slug> --name <name>
+  outback admin member add --project <project> --user <user-id>
+  outback admin enrollment create --user <user-id> --device <name> [--expires 10m]
+  outback run [--detach] [--timeout 15m] <suite> [-- <arguments...>]
+  outback run [--detach] [--timeout 15m] -- <command> [arguments...]
+  outback status [--json] <job-id>
+  outback logs <job-id>
+  outback cancel <job-id>
+  outback list [--repository <name>] [--limit 20] [--json]
+  outback doctor
+  outback version`)
 }
 
 func globalArgs(args []string) (string, []string, error) {
@@ -750,12 +750,12 @@ func globalArgs(args []string) (string, []string, error) {
 }
 
 func fail(output io.Writer, err error) int {
-	fmt.Fprintln(output, "rtest:", err)
+	fmt.Fprintln(output, "outback:", err)
 	return 1
 }
 
 func failUsage(output io.Writer, message string) int {
-	fmt.Fprintln(output, "rtest:", message)
+	fmt.Fprintln(output, "outback:", message)
 	return 2
 }
 

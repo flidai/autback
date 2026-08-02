@@ -1,15 +1,15 @@
 [Unit]
-Description=rtest shared control plane and scoped data-plane gateways
-After=network-online.target docker.service rtest-cas.service rtest-buildkit.service
+Description=outback shared control plane and scoped data-plane gateways
+After=network-online.target docker.service outback-cas.service outback-buildkit.service
 Wants=network-online.target
-Requires=docker.service rtest-cas.service rtest-buildkit.service
+Requires=docker.service outback-cas.service outback-buildkit.service
 
 [Service]
-User=rtest
-Group=rtest
+User=outback
+Group=outback
 SupplementaryGroups=docker
-EnvironmentFile=/etc/rtest/service.env
-ExecStart=/usr/local/bin/rtest-server
+EnvironmentFile=/etc/outback/service.env
+ExecStart=/usr/local/bin/outback-server
 Restart=always
 RestartSec=2
 TimeoutStopSec=30
@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/rtest
+ReadWritePaths=/var/lib/outback
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
 MemoryDenyWriteExecute=true

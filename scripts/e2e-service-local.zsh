@@ -3,15 +3,15 @@
 source "${0:A:h}/lib.zsh"
 zmodload zsh/datetime
 
-proof_dir="${RTEST_DIR}/evidence/service-local"
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/rtest-service-local-fixture.XXXXXX")"
-data_dir="$(mktemp -d "${TMPDIR:-/tmp}/rtest-service-local-data.XXXXXX")"
+proof_dir="${OUTBACK_DIR}/evidence/service-local"
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/outback-service-local-fixture.XXXXXX")"
+data_dir="$(mktemp -d "${TMPDIR:-/tmp}/outback-service-local-data.XXXXXX")"
 server_pid=""
 keychain_enrolled=false
 
 cleanup() {
-  if [[ "${keychain_enrolled}" == "true" && -x "${build_dir:-}/rtest" && -n "${config_file:-}" ]]; then
-    env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" "${build_dir}/rtest" logout >/dev/null 2>&1 || true
+  if [[ "${keychain_enrolled}" == "true" && -x "${build_dir:-}/outback" && -n "${config_file:-}" ]]; then
+    env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" logout >/dev/null 2>&1 || true
   fi
   if [[ -n "${server_pid}" ]]; then
     kill "${server_pid}" >/dev/null 2>&1 || true
@@ -40,21 +40,21 @@ ensure_container() {
   fi
 }
 
-ensure_container rtest-cas-service-local --network host --volume rtest-cas-service-local:/data \
+ensure_container outback-cas-service-local --network host --volume outback-cas-service-local:/data \
   "${cas_image}" --dir /data --max_size 5 --grpc_address 127.0.0.1:50051 \
   --http_address 127.0.0.1:50050 --access_log_level none
-ensure_container rtest-registry-service-local --network host --volume rtest-registry-service-local:/var/lib/registry \
+ensure_container outback-registry-service-local --network host --volume outback-registry-service-local:/var/lib/registry \
   --env REGISTRY_HTTP_ADDR=0.0.0.0:15000 "${registry_image}"
-buildkit_config="${RTEST_TMP_DIR}/service-local-buildkitd.toml"
+buildkit_config="${OUTBACK_TMP_DIR}/service-local-buildkitd.toml"
 print '[registry."127.0.0.1:15000"]\n  http = true' > "${buildkit_config}"
-ensure_container rtest-buildkit-service-local-image-lifecycle --privileged --network host \
-  --volume rtest-buildkit-service-local-image-lifecycle:/var/lib/buildkit \
+ensure_container outback-buildkit-service-local-image-lifecycle --privileged --network host \
+  --volume outback-buildkit-service-local-image-lifecycle:/var/lib/buildkit \
   --volume "${buildkit_config}:/etc/buildkit/buildkitd.toml:ro" \
   "${buildkit_image}" --config /etc/buildkit/buildkitd.toml --addr tcp://127.0.0.1:1236
 
 for attempt in {1..80}; do
   if curl --silent --fail http://127.0.0.1:15000/v2/ >/dev/null && \
-    docker exec rtest-buildkit-service-local-image-lifecycle \
+    docker exec outback-buildkit-service-local-image-lifecycle \
       buildctl --addr tcp://127.0.0.1:1236 debug workers >/dev/null 2>&1; then
     break
   fi
@@ -72,22 +72,22 @@ case "${architecture}" in
   *) print -u2 "unsupported Docker architecture ${architecture}"; exit 1 ;;
 esac
 
-build_dir="${RTEST_TMP_DIR}/service-local-build"
+build_dir="${OUTBACK_TMP_DIR}/service-local-build"
 mkdir -p "${build_dir}" "${proof_dir}"
-go -C "${RTEST_DIR}" build -trimpath -o "${build_dir}/rtest" ./cmd/rtest
-go -C "${RTEST_DIR}" build -trimpath -o "${build_dir}/rtest-server" ./cmd/rtest-server
-env CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" go -C "${RTEST_DIR}" build -trimpath \
-  -o "${build_dir}/rtest-job-entrypoint" ./cmd/rtest-job-entrypoint
+go -C "${OUTBACK_DIR}" build -trimpath -o "${build_dir}/outback" ./cmd/outback
+go -C "${OUTBACK_DIR}" build -trimpath -o "${build_dir}/outback-server" ./cmd/outback-server
+env CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" go -C "${OUTBACK_DIR}" build -trimpath \
+  -o "${build_dir}/outback-job-entrypoint" ./cmd/outback-job-entrypoint
 
 # Docker Swarm bind mounts are resolved by the daemon. Install the static helper
-# into a daemon-host path so the project image does not need any rtest content.
+# into a daemon-host path so the project image does not need any outback content.
 docker run --rm \
-  --volume "${build_dir}/rtest-job-entrypoint:/source/rtest-job-entrypoint:ro" \
-  --volume /var/lib/rtest:/target \
+  --volume "${build_dir}/outback-job-entrypoint:/source/outback-job-entrypoint:ro" \
+  --volume /var/lib/outback:/target \
   alpine:3.22.1 sh -eu -c \
-  'mkdir -p /target/bin /target/jobs; cp /source/rtest-job-entrypoint /target/bin/rtest-job-entrypoint; chmod 0755 /target/bin/rtest-job-entrypoint'
+  'mkdir -p /target/bin /target/jobs; cp /source/outback-job-entrypoint /target/bin/outback-job-entrypoint; chmod 0755 /target/bin/outback-job-entrypoint'
 
-bootstrap_output="$("${build_dir}/rtest-server" bootstrap \
+bootstrap_output="$("${build_dir}/outback-server" bootstrap \
   --data-dir "${data_dir}" --user owner --project example --project-name 'Service E2E' --token-name local-e2e)"
 device_token="$(print -r -- "${bootstrap_output}" | sed -n 's/^Token: //p')"
 if [[ -z "${device_token}" ]]; then
@@ -95,17 +95,17 @@ if [[ -z "${device_token}" ]]; then
   exit 1
 fi
 
-RTEST_DATA_DIR="${data_dir}" \
-RTEST_SERVER_NAMES='localhost,127.0.0.1' \
-RTEST_LISTEN='127.0.0.1:18443' \
-RTEST_CAS_LISTEN='127.0.0.1:15052' \
-RTEST_CAS_ENDPOINT='localhost:15052' \
-RTEST_CAS_INTERNAL='127.0.0.1:50051' \
-RTEST_BUILDKIT_LISTEN='127.0.0.1:11235' \
-RTEST_BUILDKIT_ENDPOINT='localhost:11235' \
-RTEST_BUILDKIT_INTERNAL='127.0.0.1:1236' \
-RTEST_JOB_ENTRYPOINT='/var/lib/rtest/bin/rtest-job-entrypoint' \
-"${build_dir}/rtest-server" > "${proof_dir}/server.log" 2>&1 &
+OUTBACK_DATA_DIR="${data_dir}" \
+OUTBACK_SERVER_NAMES='localhost,127.0.0.1' \
+OUTBACK_LISTEN='127.0.0.1:18443' \
+OUTBACK_CAS_LISTEN='127.0.0.1:15052' \
+OUTBACK_CAS_ENDPOINT='localhost:15052' \
+OUTBACK_CAS_INTERNAL='127.0.0.1:50051' \
+OUTBACK_BUILDKIT_LISTEN='127.0.0.1:11235' \
+OUTBACK_BUILDKIT_ENDPOINT='localhost:11235' \
+OUTBACK_BUILDKIT_INTERNAL='127.0.0.1:1236' \
+OUTBACK_JOB_ENTRYPOINT='/var/lib/outback/bin/outback-job-entrypoint' \
+"${build_dir}/outback-server" > "${proof_dir}/server.log" 2>&1 &
 server_pid=$!
 
 for attempt in {1..80}; do
@@ -113,22 +113,22 @@ for attempt in {1..80}; do
     break
   fi
   if ! kill -0 "${server_pid}" >/dev/null 2>&1; then
-    print -u2 'rtest-server stopped during startup'
+    print -u2 'outback-server stopped during startup'
     tail -100 "${proof_dir}/server.log" >&2
     exit 1
   fi
   if [[ ${attempt} -eq 80 ]]; then
-    print -u2 'rtest-server did not become healthy'
+    print -u2 'outback-server did not become healthy'
     exit 1
   fi
   sleep 0.25
 done
 
-cp -R "${RTEST_DIR}/examples/go-redis/." "${fixture}/"
+cp -R "${OUTBACK_DIR}/examples/go-redis/." "${fixture}/"
 git -C "${fixture}" init -q
-git -C "${fixture}" config user.name 'rtest proof'
-git -C "${fixture}" config user.email 'rtest@example.invalid'
-jq -n --arg project "example" '{project:$project}' > "${fixture}/rtest.json"
+git -C "${fixture}" config user.name 'outback proof'
+git -C "${fixture}" config user.email 'outback@example.invalid'
+jq -n --arg project "example" '{project:$project}' > "${fixture}/outback.json"
 git -C "${fixture}" add .
 git -C "${fixture}" commit -qm 'committed baseline'
 print 'dirty worktree reached remote worker' > "${fixture}/proof.txt"
@@ -144,49 +144,49 @@ jq -n \
   '{backend:"service",url:"https://localhost:18443",service:{cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:"https://localhost:18443"}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
-export RTEST_CONFIG="${config_file}"
-export RTEST_TOKEN="${device_token}"
+export OUTBACK_CONFIG="${config_file}"
+export OUTBACK_TOKEN="${device_token}"
 
-"${build_dir}/rtest" doctor | tee "${proof_dir}/doctor.log"
-"${build_dir}/rtest" admin project create --slug second --name 'Second E2E Project' > "${proof_dir}/second-project.json"
-coworker_json="$("${build_dir}/rtest" admin user create --name coworker)"
+"${build_dir}/outback" doctor | tee "${proof_dir}/doctor.log"
+"${build_dir}/outback" admin project create --slug second --name 'Second E2E Project' > "${proof_dir}/second-project.json"
+coworker_json="$("${build_dir}/outback" admin user create --name coworker)"
 print -r -- "${coworker_json}" > "${proof_dir}/coworker.json"
 coworker_id="$(print -r -- "${coworker_json}" | jq -r '.id')"
-"${build_dir}/rtest" admin member add --project example --user "${coworker_id}" > "${proof_dir}/coworker-member.log"
-enrollment_code="$("${build_dir}/rtest" admin enrollment create --user "${coworker_id}" --device coworker-laptop --expires 10m 2> "${proof_dir}/enrollment-create.log")"
-print -r -- "${enrollment_code}" | env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" \
-  "${build_dir}/rtest" login > "${proof_dir}/enrollment-login.log" 2>&1
+"${build_dir}/outback" admin member add --project example --user "${coworker_id}" > "${proof_dir}/coworker-member.log"
+enrollment_code="$("${build_dir}/outback" admin enrollment create --user "${coworker_id}" --device coworker-laptop --expires 10m 2> "${proof_dir}/enrollment-create.log")"
+print -r -- "${enrollment_code}" | env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" \
+  "${build_dir}/outback" login > "${proof_dir}/enrollment-login.log" 2>&1
 keychain_enrolled=true
-env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" "${build_dir}/rtest" doctor > "${proof_dir}/coworker-doctor.log"
+env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" doctor > "${proof_dir}/coworker-doctor.log"
 set +e
-print -r -- "${enrollment_code}" | env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" \
-  "${build_dir}/rtest" login > "${proof_dir}/enrollment-reuse.log" 2>&1
+print -r -- "${enrollment_code}" | env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" \
+  "${build_dir}/outback" login > "${proof_dir}/enrollment-reuse.log" 2>&1
 enrollment_reuse_exit=$?
 set -e
 [[ ${enrollment_reuse_exit} -ne 0 ]] || { print -u2 'single-use enrollment code was accepted twice'; exit 1; }
-env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" "${build_dir}/rtest" token list > "${proof_dir}/coworker-tokens.json"
+env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" token list > "${proof_dir}/coworker-tokens.json"
 coworker_token_id="$(jq -r '.[] | select(.name == "coworker-laptop") | .id' "${proof_dir}/coworker-tokens.json")"
 [[ -n "${coworker_token_id}" ]] || { print -u2 'enrolled device token was not listed'; exit 1; }
-env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" "${build_dir}/rtest" token revoke "${coworker_token_id}" > "${proof_dir}/coworker-revoke.log"
+env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" token revoke "${coworker_token_id}" > "${proof_dir}/coworker-revoke.log"
 set +e
-env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" "${build_dir}/rtest" token list > "${proof_dir}/coworker-revoked-token-list.log" 2>&1
+env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" token list > "${proof_dir}/coworker-revoked-token-list.log" 2>&1
 revoked_exit=$?
 set -e
 [[ ${revoked_exit} -ne 0 ]] || { print -u2 'revoked enrolled device remained authenticated'; exit 1; }
-env -u RTEST_TOKEN RTEST_CONFIG="${config_file}" "${build_dir}/rtest" logout > "${proof_dir}/coworker-logout.log"
+env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" logout > "${proof_dir}/coworker-logout.log"
 keychain_enrolled=false
-"${build_dir}/rtest" image activate --project example --image "${project_image}" | tee "${proof_dir}/image-activate.log"
-"${build_dir}/rtest" image activate --project second --image "${project_image}" > "${proof_dir}/second-image-activate.log"
-"${build_dir}/rtest" image activate --project example --image "${cas_image}" | tee "${proof_dir}/image-second-activate.log"
-"${build_dir}/rtest" image rollback --project example | tee "${proof_dir}/image-rollback.log"
-"${build_dir}/rtest" image history --project example > "${proof_dir}/image-history.json"
+"${build_dir}/outback" image activate --project example --image "${project_image}" | tee "${proof_dir}/image-activate.log"
+"${build_dir}/outback" image activate --project second --image "${project_image}" > "${proof_dir}/second-image-activate.log"
+"${build_dir}/outback" image activate --project example --image "${cas_image}" | tee "${proof_dir}/image-second-activate.log"
+"${build_dir}/outback" image rollback --project example | tee "${proof_dir}/image-rollback.log"
+"${build_dir}/outback" image history --project example > "${proof_dir}/image-history.json"
 jq -e --arg image "${project_image}" 'length == 3 and .[0].action == "rollback" and .[0].image == $image' "${proof_dir}/image-history.json" >/dev/null
-"${build_dir}/rtest" image overrides --project example deny | tee "${proof_dir}/image-policy.log"
+"${build_dir}/outback" image overrides --project example deny | tee "${proof_dir}/image-policy.log"
 
 set +e
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec --image "${cas_image}" -- true
+  "${build_dir}/outback" exec --image "${cas_image}" -- true
 ) > "${proof_dir}/image-override-denied.log" 2>&1
 override_exit=$?
 set -e
@@ -195,14 +195,14 @@ grep -q 'project image overrides are disabled' "${proof_dir}/image-override-deni
 
 runner_fixture="${fixture}/runner-image"
 mkdir -p "${runner_fixture}"
-print "FROM ${project_image}\nLABEL org.opencontainers.image.source=rtest-e2e" > "${runner_fixture}/Dockerfile"
+print "FROM ${project_image}\nLABEL org.opencontainers.image.source=outback-e2e" > "${runner_fixture}/Dockerfile"
 (
   cd "${runner_fixture}"
-  "${build_dir}/rtest" image build --tag 127.0.0.1:15000/rtest/e2e:latest -- --progress plain
+  "${build_dir}/outback" image build --tag 127.0.0.1:15000/outback/e2e:latest -- --progress plain
 ) 2>&1 | tee "${proof_dir}/image-build.log"
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec -- go version
+  "${build_dir}/outback" exec -- go version
 ) 2>&1 | tee "${proof_dir}/image-build-exec.log"
 grep -q '^go version ' "${proof_dir}/image-build-exec.log"
 
@@ -211,62 +211,62 @@ run_remote_test() {
   local start_time="${EPOCHREALTIME}"
   (
     cd "${fixture}"
-    "${build_dir}/rtest" exec -- go test -count=1 -v ./...
+    "${build_dir}/outback" exec -- go test -count=1 -v ./...
   ) 2>&1 | tee "${log_file}" >&2
   local end_time="${EPOCHREALTIME}"
   printf '%.3f' "$((end_time - start_time))"
 }
 
 first_seconds="$(run_remote_test "${proof_dir}/first-run.log")"
-first_job="$(grep -E '^Job: (job|rtest-)' "${proof_dir}/first-run.log" | tail -1 | awk '{print $2}')"
+first_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/first-run.log" | tail -1 | awk '{print $2}')"
 cached_seconds="$(run_remote_test "${proof_dir}/cached-run.log")"
-cached_job="$(grep -E '^Job: (job|rtest-)' "${proof_dir}/cached-run.log" | tail -1 | awk '{print $2}')"
+cached_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/cached-run.log" | tail -1 | awk '{print $2}')"
 grep -q 'Transfer: 0 B uploaded' "${proof_dir}/cached-run.log"
 grep -q 'REMOTE_E2E_PROOF' "${proof_dir}/cached-run.log"
 
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec --project second -- go version
+  "${build_dir}/outback" exec --project second -- go version
 ) 2>&1 | tee "${proof_dir}/second-project-cas.log"
 grep -q 'Transfer: 0 B uploaded' "${proof_dir}/second-project-cas.log"
 
 set +e
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec --timeout 1s -- sh -c 'echo REMOTE_TIMEOUT_PROOF_STARTED; sleep 60'
+  "${build_dir}/outback" exec --timeout 1s -- sh -c 'echo REMOTE_TIMEOUT_PROOF_STARTED; sleep 60'
 ) > "${proof_dir}/timeout.log" 2>&1
 timeout_exit=$?
 set -e
-timeout_job="$(grep -E '^Job: (job|rtest-)' "${proof_dir}/timeout.log" | tail -1 | awk '{print $2}')"
+timeout_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/timeout.log" | tail -1 | awk '{print $2}')"
 [[ ${timeout_exit} -ne 0 ]] || { print -u2 'timeout proof unexpectedly succeeded'; exit 1; }
-"${build_dir}/rtest" status --json "${timeout_job}" > "${proof_dir}/timeout-job.json"
+"${build_dir}/outback" status --json "${timeout_job}" > "${proof_dir}/timeout-job.json"
 jq -e '.status == "timed_out"' "${proof_dir}/timeout-job.json" >/dev/null
 
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec --detach --timeout 1m -- sh -c 'echo REMOTE_CANCEL_PROOF_STARTED; sleep 60'
+  "${build_dir}/outback" exec --detach --timeout 1m -- sh -c 'echo REMOTE_CANCEL_PROOF_STARTED; sleep 60'
 ) > "${proof_dir}/cancel-submit.log" 2>&1
-cancel_job="$(grep -E '^Job: (job|rtest-)' "${proof_dir}/cancel-submit.log" | tail -1 | awk '{print $2}')"
-wait_for_job_status "${config_file}" "${build_dir}/rtest" "${cancel_job}" running "${proof_dir}/cancel-running.json"
-"${build_dir}/rtest" cancel "${cancel_job}" | tee "${proof_dir}/cancel.log"
-wait_for_job_status "${config_file}" "${build_dir}/rtest" "${cancel_job}" cancelled "${proof_dir}/cancel-job.json"
+cancel_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/cancel-submit.log" | tail -1 | awk '{print $2}')"
+wait_for_job_status "${config_file}" "${build_dir}/outback" "${cancel_job}" running "${proof_dir}/cancel-running.json"
+"${build_dir}/outback" cancel "${cancel_job}" | tee "${proof_dir}/cancel.log"
+wait_for_job_status "${config_file}" "${build_dir}/outback" "${cancel_job}" cancelled "${proof_dir}/cancel-job.json"
 
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_ONE_STARTED; sleep 60'
+  "${build_dir}/outback" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_ONE_STARTED; sleep 60'
 ) > "${proof_dir}/queue-first-submit.log" 2>&1
-queue_first_job="$(grep -E '^Job: (job|rtest-)' "${proof_dir}/queue-first-submit.log" | tail -1 | awk '{print $2}')"
-wait_for_job_status "${config_file}" "${build_dir}/rtest" "${queue_first_job}" running "${proof_dir}/queue-first.json"
+queue_first_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/queue-first-submit.log" | tail -1 | awk '{print $2}')"
+wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_first_job}" running "${proof_dir}/queue-first.json"
 (
   cd "${fixture}"
-  "${build_dir}/rtest" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_TWO_STARTED; sleep 60'
+  "${build_dir}/outback" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_TWO_STARTED; sleep 60'
 ) > "${proof_dir}/queue-second-submit.log" 2>&1
-queue_second_job="$(grep -E '^Job: (job|rtest-)' "${proof_dir}/queue-second-submit.log" | tail -1 | awk '{print $2}')"
-wait_for_job_status "${config_file}" "${build_dir}/rtest" "${queue_second_job}" queued "${proof_dir}/queue-second.json"
-"${build_dir}/rtest" cancel "${queue_second_job}" >/dev/null
-"${build_dir}/rtest" cancel "${queue_first_job}" >/dev/null
-wait_for_job_status "${config_file}" "${build_dir}/rtest" "${queue_second_job}" cancelled "${proof_dir}/queue-second-cancelled.json"
-wait_for_job_status "${config_file}" "${build_dir}/rtest" "${queue_first_job}" cancelled "${proof_dir}/queue-first-cancelled.json"
+queue_second_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/queue-second-submit.log" | tail -1 | awk '{print $2}')"
+wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_second_job}" queued "${proof_dir}/queue-second.json"
+"${build_dir}/outback" cancel "${queue_second_job}" >/dev/null
+"${build_dir}/outback" cancel "${queue_first_job}" >/dev/null
+wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_second_job}" cancelled "${proof_dir}/queue-second-cancelled.json"
+wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_first_job}" cancelled "${proof_dir}/queue-first-cancelled.json"
 
 build_fixture="${fixture}/build-proof"
 build_output="${fixture}/build-output"
@@ -275,14 +275,14 @@ print 'remote BuildKit reached through build-scoped mTLS' > "${build_fixture}/pr
 print 'FROM scratch\nCOPY proof.txt /proof.txt' > "${build_fixture}/Dockerfile"
 (
   cd "${build_fixture}"
-  "${build_dir}/rtest" build -- --progress plain --output "type=local,dest=${build_output}" .
+  "${build_dir}/outback" build -- --progress plain --output "type=local,dest=${build_output}" .
 ) 2>&1 | tee "${proof_dir}/build.log"
 cmp "${build_fixture}/proof.txt" "${build_output}/proof.txt"
 second_build_output="${fixture}/second-build-output"
 mkdir -p "${second_build_output}"
 (
   cd "${build_fixture}"
-  "${build_dir}/rtest" build --project second -- --progress plain --output "type=local,dest=${second_build_output}" .
+  "${build_dir}/outback" build --project second -- --progress plain --output "type=local,dest=${second_build_output}" .
 ) 2>&1 | tee "${proof_dir}/second-project-build.log"
 cmp "${build_fixture}/proof.txt" "${second_build_output}/proof.txt"
 grep -q 'CACHED' "${proof_dir}/second-project-build.log"
@@ -292,7 +292,7 @@ mkdir -p "${cancel_build_fixture}"
 print 'FROM alpine:3.22.1\nRUN echo BUILD_CANCEL_PROOF_STARTED; sleep 60' > "${cancel_build_fixture}/Dockerfile"
 (
   cd "${cancel_build_fixture}"
-  exec "${build_dir}/rtest" build -- --progress plain .
+  exec "${build_dir}/outback" build -- --progress plain .
 ) > "${proof_dir}/cancel-build.log" 2>&1 &
 cancel_build_pid=$!
 for attempt in {1..120}; do
@@ -330,7 +330,7 @@ for attempt in {1..40}; do
   sleep 0.25
 done
 
-"${build_dir}/rtest" list --project example --json > "${proof_dir}/list.json"
+"${build_dir}/outback" list --project example --json > "${proof_dir}/list.json"
 for attempt in {1..80}; do
   docker ps --format '{{.Names}} {{.Labels}}' > "${proof_dir}/docker-containers.txt"
   if ! grep -Eq 'reaper_|org.testcontainers=true' "${proof_dir}/docker-containers.txt"; then

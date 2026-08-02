@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 type fakeCommander struct {
@@ -29,15 +29,15 @@ func (f *fakeCommander) Run(_ context.Context, stdout, _ io.Writer, args ...stri
 
 func TestStatusReadsServiceAndTaskState(t *testing.T) {
 	commands := &fakeCommander{outputs: map[string]string{
-		"service inspect rtest-job-1": `[{
+		"service inspect outback-job-1": `[{
           "CreatedAt":"2026-08-01T10:00:00Z",
-          "Spec":{"Name":"rtest-job-1","Labels":{
-            "rtest.managed":"true","rtest.repository":"ZXhhbXBsZS9zZXJ2aWNl",
-            "rtest.suite":"aW50ZWdyYXRpb24","rtest.runner":"c3RhbmRhcmQ",
-            "rtest.timeout_seconds":"900","rtest.root_digest":"abc/123"
+          "Spec":{"Name":"outback-job-1","Labels":{
+            "outback.managed":"true","outback.repository":"ZXhhbXBsZS9zZXJ2aWNl",
+            "outback.suite":"aW50ZWdyYXRpb24","outback.runner":"c3RhbmRhcmQ",
+            "outback.timeout_seconds":"900","outback.root_digest":"abc/123"
           },"TaskTemplate":{"ContainerSpec":{"Args":["go","test","./..."]}}}
         }]`,
-		"service ps -q --no-trunc rtest-job-1": "task-1\n",
+		"service ps -q --no-trunc outback-job-1": "task-1\n",
 		"inspect task-1": `[{
           "Status":{"State":"complete","Timestamp":"2026-08-01T10:01:00Z",
             "ContainerStatus":{"ExitCode":0}},
@@ -45,7 +45,7 @@ func TestStatusReadsServiceAndTaskState(t *testing.T) {
         }]`,
 	}}
 	client := newClient(commands)
-	job, err := client.Status(context.Background(), "rtest-job-1")
+	job, err := client.Status(context.Background(), "outback-job-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,12 +60,12 @@ func TestStatusReadsServiceAndTaskState(t *testing.T) {
 func TestCancelMarksThenScalesJobToZero(t *testing.T) {
 	commands := &fakeCommander{outputs: map[string]string{}}
 	client := newClient(commands)
-	if err := client.Cancel(context.Background(), "rtest-job-1"); err != nil {
+	if err := client.Cancel(context.Background(), "outback-job-1"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
-		{"service", "update", "--detach", "--label-add", "rtest.cancelled=true", "rtest-job-1"},
-		{"service", "scale", "--detach", "rtest-job-1=0"},
+		{"service", "update", "--detach", "--label-add", "outback.cancelled=true", "outback-job-1"},
+		{"service", "scale", "--detach", "outback-job-1=0"},
 	}
 	if len(commands.runs) != len(want) {
 		t.Fatalf("runs = %#v", commands.runs)
@@ -92,14 +92,14 @@ func TestValidateImagePullsAndInspectsThePinnedReference(t *testing.T) {
 
 func TestStatusReportsScaledToZeroJobAsCancelled(t *testing.T) {
 	commands := &fakeCommander{outputs: map[string]string{
-		"service inspect rtest-job-1": `[{
+		"service inspect outback-job-1": `[{
           "CreatedAt":"2026-08-01T10:00:00Z","UpdatedAt":"2026-08-01T10:01:00Z",
-          "Spec":{"Name":"rtest-job-1","Labels":{"rtest.managed":"true","rtest.cancelled":"true"},
+          "Spec":{"Name":"outback-job-1","Labels":{"outback.managed":"true","outback.cancelled":"true"},
           "TaskTemplate":{"ContainerSpec":{"Args":["sleep","60"]}}}
         }]`,
-		"service ps -q --no-trunc rtest-job-1": "",
+		"service ps -q --no-trunc outback-job-1": "",
 	}}
-	job, err := newClient(commands).Status(context.Background(), "rtest-job-1")
+	job, err := newClient(commands).Status(context.Background(), "outback-job-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +110,11 @@ func TestStatusReportsScaledToZeroJobAsCancelled(t *testing.T) {
 
 func TestLogsUseDockerServiceLogDriver(t *testing.T) {
 	commands := &fakeCommander{outputs: map[string]string{
-		"service logs --raw rtest-job-1": "first\nsecond\n",
+		"service logs --raw outback-job-1": "first\nsecond\n",
 	}}
 	client := newClient(commands)
 	var output bytes.Buffer
-	if err := client.Logs(context.Background(), "rtest-job-1", false, &output); err != nil {
+	if err := client.Logs(context.Background(), "outback-job-1", false, &output); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != "first\nsecond\n" {

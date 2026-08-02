@@ -13,6 +13,10 @@ This directory commits only compact, reviewed, machine-readable evidence:
   rtest, and Depot comparison, including explicit absence of a valid local image-cache
   sample.
 
+Evidence captured before the repository extraction retains the original `rtest` product,
+job, path, user, and field names. Outback is that implementation's renamed successor; the
+historical records are intentionally not rewritten after collection.
+
 The E2E and benchmark scripts also produce raw logs, job responses, Docker
 status, and intermediate measurements. Those files are intentionally ignored:
 they are noisy, environment-specific operational output and can contain host

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/coordinator/httpapi"
-	"github.com/flidai/leapview/rtest/internal/coordinator/sqlite"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/coordinator/httpapi"
+	"github.com/flidai/outback/internal/coordinator/sqlite"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestAuthenticatedJobLifecycleThroughAPI(t *testing.T) {
@@ -169,7 +169,7 @@ func TestJobsCanBeListedByRepository(t *testing.T) {
 func newServer(t *testing.T) (*httptest.Server, *sqlite.Store) {
 	t.Helper()
 	root := t.TempDir()
-	store, err := sqlite.Open(filepath.Join(root, "state", "rtest.db"))
+	store, err := sqlite.Open(filepath.Join(root, "state", "outback.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

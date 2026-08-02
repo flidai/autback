@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/flidai/leapview/rtest/internal/config"
-	rtestv1 "github.com/flidai/leapview/rtest/internal/gen/rtest/v1"
-	"github.com/flidai/leapview/rtest/internal/gen/rtest/v1/rtestv1connect"
+	"github.com/flidai/outback/internal/config"
+	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
+	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -94,7 +94,7 @@ func TestDefaultExecWorkingDirectoryCanonicalizesSymlinkedInvocationPath(t *test
 }
 
 func TestImageActivateUsesRepositoryProjectAndPinnedImage(t *testing.T) {
-	service := &projectListService{projects: []*rtestv1.Project{{Id: "prj1", Slug: "example", Name: "Example"}}}
+	service := &projectListService{projects: []*outbackv1.Project{{Id: "prj1", Slug: "example", Name: "Example"}}}
 	client, closeServer := testServiceClient(t, service)
 	defer closeServer()
 	image := "ghcr.io/example/runner@sha256:" + strings.Repeat("a", 64)
@@ -145,10 +145,10 @@ func TestImageHelpersPreserveBuildxArgumentsAndNormalizeTags(t *testing.T) {
 }
 
 func TestServiceLoginExchangesEnrollmentFromStdinWithoutEchoingSecrets(t *testing.T) {
-	code := "rtest_enr_tok123_" + strings.Repeat("a", 43)
-	token := "rtest_dt_tok456_" + strings.Repeat("b", 43)
+	code := "outback_enr_tok123_" + strings.Repeat("a", 43)
+	token := "outback_dt_tok456_" + strings.Repeat("b", 43)
 	service := &enrollmentService{wantCode: code, token: token}
-	path, handler := rtestv1connect.NewControlServiceHandler(service)
+	path, handler := outbackv1connect.NewControlServiceHandler(service)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	server := httptest.NewServer(mux)
@@ -174,7 +174,7 @@ func TestServiceLoginExchangesEnrollmentFromStdinWithoutEchoingSecrets(t *testin
 }
 
 func TestServiceInitWritesOnlyAnAuthorizedProjectLink(t *testing.T) {
-	service := &projectListService{projects: []*rtestv1.Project{
+	service := &projectListService{projects: []*outbackv1.Project{
 		{Id: "prj1", Slug: "one", Name: "One"}, {Id: "prj2", Slug: "two", Name: "Two"},
 	}}
 	client, closeServer := testServiceClient(t, service)
@@ -186,7 +186,7 @@ func TestServiceInitWritesOnlyAnAuthorizedProjectLink(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
-	data, err := os.ReadFile(filepath.Join(directory, "rtest.json"))
+	data, err := os.ReadFile(filepath.Join(directory, "outback.json"))
 	if err != nil || string(data) != "{\n  \"project\": \"two\"\n}\n" {
 		t.Fatalf("link=%q err=%v", data, err)
 	}
@@ -199,13 +199,13 @@ func TestServiceInitWritesOnlyAnAuthorizedProjectLink(t *testing.T) {
 	if code == 0 || !strings.Contains(stderr.String(), "not authorized") {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(other, "rtest.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(other, "outback.json")); !os.IsNotExist(err) {
 		t.Fatalf("unauthorized init wrote a link: %v", err)
 	}
 }
 
 func TestServiceExecRejectsUnauthorizedProjectBeforeWorkspaceOrAdmission(t *testing.T) {
-	service := &projectListService{projects: []*rtestv1.Project{{Id: "prj1", Slug: "authorized", Name: "Authorized"}}}
+	service := &projectListService{projects: []*outbackv1.Project{{Id: "prj1", Slug: "authorized", Name: "Authorized"}}}
 	client, closeServer := testServiceClient(t, service)
 	defer closeServer()
 	settings := config.Config{Service: &config.Service{
@@ -228,7 +228,7 @@ func TestServiceExecRejectsUnauthorizedProjectBeforeWorkspaceOrAdmission(t *test
 
 func TestServiceDoctorUsesEnvironmentProjectForGitHubOIDC(t *testing.T) {
 	oidc := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("audience") != "https://rtest.example" || request.Header.Get("Authorization") != "Bearer request-token" {
+		if request.URL.Query().Get("audience") != "https://outback.example" || request.Header.Get("Authorization") != "Bearer request-token" {
 			t.Errorf("OIDC request audience=%q authorization=%q", request.URL.Query().Get("audience"), request.Header.Get("Authorization"))
 		}
 		_, _ = response.Write([]byte(`{"value":"github-id-token"}`))
@@ -236,18 +236,18 @@ func TestServiceDoctorUsesEnvironmentProjectForGitHubOIDC(t *testing.T) {
 	defer oidc.Close()
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token")
-	t.Setenv("RTEST_PROJECT", "poc")
-	t.Setenv("RTEST_TOKEN", "")
+	t.Setenv("OUTBACK_PROJECT", "poc")
+	t.Setenv("OUTBACK_TOKEN", "")
 
 	service := &oidcDoctorService{}
-	path, handler := rtestv1connect.NewControlServiceHandler(service)
+	path, handler := outbackv1connect.NewControlServiceHandler(service)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	code := runService(context.Background(), config.Config{
-		URL: server.URL, Service: &config.Service{OIDCAudience: "https://rtest.example"},
+		URL: server.URL, Service: &config.Service{OIDCAudience: "https://outback.example"},
 	}, "", []string{"doctor"}, IO{Stdout: &stdout, Stderr: &stderr, Keyring: &memoryKeyring{}})
 	if code != 0 || service.project != "poc" {
 		t.Fatalf("code=%d project=%q stdout=%q stderr=%q", code, service.project, stdout.String(), stderr.String())
@@ -264,7 +264,7 @@ func TestFinishBuildRecordRenewsGitHubOIDCSession(t *testing.T) {
 	renewals := 0
 	client := &renewableControlClient{
 		ControlServiceClient: staleClient,
-		renew: func(context.Context) (rtestv1connect.ControlServiceClient, error) {
+		renew: func(context.Context) (outbackv1connect.ControlServiceClient, error) {
 			renewals++
 			return freshClient, nil
 		},
@@ -289,12 +289,12 @@ func initGitRepository(t *testing.T, directory string) {
 
 func TestWaitServiceJobReconnectsWithoutDuplicatingLogBytes(t *testing.T) {
 	service := &interruptedLogService{}
-	path, handler := rtestv1connect.NewControlServiceHandler(service)
+	path, handler := outbackv1connect.NewControlServiceHandler(service)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	client := rtestv1connect.NewControlServiceClient(server.Client(), server.URL)
+	client := outbackv1connect.NewControlServiceClient(server.Client(), server.URL)
 	var stdout, stderr bytes.Buffer
 	code := waitServiceJob(context.Background(), client, "job-1", IO{Stdout: &stdout, Stderr: &stderr})
 	if code != 0 || stdout.String() != "abcdef" {
@@ -309,44 +309,44 @@ func TestWaitServiceJobReconnectsWithoutDuplicatingLogBytes(t *testing.T) {
 }
 
 type interruptedLogService struct {
-	rtestv1connect.UnimplementedControlServiceHandler
+	outbackv1connect.UnimplementedControlServiceHandler
 	mu      sync.Mutex
 	offsets []int64
 }
 
 type finishBuildService struct {
-	rtestv1connect.UnimplementedControlServiceHandler
+	outbackv1connect.UnimplementedControlServiceHandler
 	reject     bool
 	finishedID string
 }
 
-func (s *finishBuildService) FinishBuild(_ context.Context, request *connect.Request[rtestv1.FinishBuildRequest]) (*connect.Response[rtestv1.FinishBuildResponse], error) {
+func (s *finishBuildService) FinishBuild(_ context.Context, request *connect.Request[outbackv1.FinishBuildRequest]) (*connect.Response[outbackv1.FinishBuildResponse], error) {
 	if s.reject {
 		return nil, connect.NewError(connect.CodeUnauthenticated, context.Canceled)
 	}
 	s.finishedID = request.Msg.Id
-	return connect.NewResponse(&rtestv1.FinishBuildResponse{Build: &rtestv1.Build{Id: request.Msg.Id}}), nil
+	return connect.NewResponse(&outbackv1.FinishBuildResponse{Build: &outbackv1.Build{Id: request.Msg.Id}}), nil
 }
 
 type enrollmentService struct {
-	rtestv1connect.UnimplementedControlServiceHandler
+	outbackv1connect.UnimplementedControlServiceHandler
 	wantCode string
 	gotCode  string
 	token    string
 }
 
-func (s *enrollmentService) ExchangeEnrollmentCode(_ context.Context, request *connect.Request[rtestv1.ExchangeEnrollmentCodeRequest]) (*connect.Response[rtestv1.ExchangeEnrollmentCodeResponse], error) {
+func (s *enrollmentService) ExchangeEnrollmentCode(_ context.Context, request *connect.Request[outbackv1.ExchangeEnrollmentCodeRequest]) (*connect.Response[outbackv1.ExchangeEnrollmentCodeResponse], error) {
 	s.gotCode = request.Msg.Code
 	if request.Msg.Code != s.wantCode {
 		return nil, connect.NewError(connect.CodeUnauthenticated, context.Canceled)
 	}
-	return connect.NewResponse(&rtestv1.ExchangeEnrollmentCodeResponse{
-		Token: s.token, DeviceToken: &rtestv1.DeviceToken{Id: "tok456", UserId: "usr1", Name: "laptop"},
+	return connect.NewResponse(&outbackv1.ExchangeEnrollmentCodeResponse{
+		Token: s.token, DeviceToken: &outbackv1.DeviceToken{Id: "tok456", UserId: "usr1", Name: "laptop"},
 	}), nil
 }
 
-func (s *enrollmentService) ListDeviceTokens(context.Context, *connect.Request[rtestv1.ListDeviceTokensRequest]) (*connect.Response[rtestv1.ListDeviceTokensResponse], error) {
-	return connect.NewResponse(&rtestv1.ListDeviceTokensResponse{}), nil
+func (s *enrollmentService) ListDeviceTokens(context.Context, *connect.Request[outbackv1.ListDeviceTokensRequest]) (*connect.Response[outbackv1.ListDeviceTokensResponse], error) {
+	return connect.NewResponse(&outbackv1.ListDeviceTokensResponse{}), nil
 }
 
 type memoryKeyring struct{ token string }
@@ -356,69 +356,69 @@ func (m *memoryKeyring) Set(_, _, token string) error       { m.token = token; r
 func (m *memoryKeyring) Delete(string, string) error        { m.token = ""; return nil }
 
 type projectListService struct {
-	rtestv1connect.UnimplementedControlServiceHandler
+	outbackv1connect.UnimplementedControlServiceHandler
 	mu               sync.Mutex
-	projects         []*rtestv1.Project
+	projects         []*outbackv1.Project
 	prepareCount     int
 	activatedProject string
 	activatedImage   string
 }
 
 type oidcDoctorService struct {
-	rtestv1connect.UnimplementedControlServiceHandler
+	outbackv1connect.UnimplementedControlServiceHandler
 	project string
 }
 
-func (s *oidcDoctorService) ExchangeGitHubOIDC(_ context.Context, request *connect.Request[rtestv1.ExchangeGitHubOIDCRequest]) (*connect.Response[rtestv1.ExchangeGitHubOIDCResponse], error) {
+func (s *oidcDoctorService) ExchangeGitHubOIDC(_ context.Context, request *connect.Request[outbackv1.ExchangeGitHubOIDCRequest]) (*connect.Response[outbackv1.ExchangeGitHubOIDCResponse], error) {
 	s.project = request.Msg.Project
-	return connect.NewResponse(&rtestv1.ExchangeGitHubOIDCResponse{Token: "project-session"}), nil
+	return connect.NewResponse(&outbackv1.ExchangeGitHubOIDCResponse{Token: "project-session"}), nil
 }
 
-func (s *oidcDoctorService) GetServiceInfo(context.Context, *connect.Request[rtestv1.GetServiceInfoRequest]) (*connect.Response[rtestv1.GetServiceInfoResponse], error) {
-	return connect.NewResponse(&rtestv1.GetServiceInfoResponse{Version: "test"}), nil
+func (s *oidcDoctorService) GetServiceInfo(context.Context, *connect.Request[outbackv1.GetServiceInfoRequest]) (*connect.Response[outbackv1.GetServiceInfoResponse], error) {
+	return connect.NewResponse(&outbackv1.GetServiceInfoResponse{Version: "test"}), nil
 }
 
-func (s *projectListService) ActivateProjectImage(_ context.Context, request *connect.Request[rtestv1.ActivateProjectImageRequest]) (*connect.Response[rtestv1.ActivateProjectImageResponse], error) {
+func (s *projectListService) ActivateProjectImage(_ context.Context, request *connect.Request[outbackv1.ActivateProjectImageRequest]) (*connect.Response[outbackv1.ActivateProjectImageResponse], error) {
 	s.mu.Lock()
 	s.activatedProject, s.activatedImage = request.Msg.Project, request.Msg.Image
 	s.mu.Unlock()
-	return connect.NewResponse(&rtestv1.ActivateProjectImageResponse{Project: &rtestv1.Project{Slug: request.Msg.Project, ActiveImage: request.Msg.Image}}), nil
+	return connect.NewResponse(&outbackv1.ActivateProjectImageResponse{Project: &outbackv1.Project{Slug: request.Msg.Project, ActiveImage: request.Msg.Image}}), nil
 }
 
-func (s *projectListService) ListProjects(context.Context, *connect.Request[rtestv1.ListProjectsRequest]) (*connect.Response[rtestv1.ListProjectsResponse], error) {
-	return connect.NewResponse(&rtestv1.ListProjectsResponse{Projects: s.projects}), nil
+func (s *projectListService) ListProjects(context.Context, *connect.Request[outbackv1.ListProjectsRequest]) (*connect.Response[outbackv1.ListProjectsResponse], error) {
+	return connect.NewResponse(&outbackv1.ListProjectsResponse{Projects: s.projects}), nil
 }
 
-func (s *projectListService) PrepareJob(context.Context, *connect.Request[rtestv1.PrepareJobRequest]) (*connect.Response[rtestv1.PrepareJobResponse], error) {
+func (s *projectListService) PrepareJob(context.Context, *connect.Request[outbackv1.PrepareJobRequest]) (*connect.Response[outbackv1.PrepareJobResponse], error) {
 	s.mu.Lock()
 	s.prepareCount++
 	s.mu.Unlock()
 	return nil, connect.NewError(connect.CodeInternal, context.Canceled)
 }
 
-func testServiceClient(t *testing.T, service rtestv1connect.ControlServiceHandler) (rtestv1connect.ControlServiceClient, func()) {
+func testServiceClient(t *testing.T, service outbackv1connect.ControlServiceHandler) (outbackv1connect.ControlServiceClient, func()) {
 	t.Helper()
-	path, handler := rtestv1connect.NewControlServiceHandler(service)
+	path, handler := outbackv1connect.NewControlServiceHandler(service)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	server := httptest.NewServer(mux)
-	return rtestv1connect.NewControlServiceClient(server.Client(), server.URL), server.Close
+	return outbackv1connect.NewControlServiceClient(server.Client(), server.URL), server.Close
 }
 
-func (s *interruptedLogService) StreamJobLogs(_ context.Context, request *connect.Request[rtestv1.StreamJobLogsRequest], stream *connect.ServerStream[rtestv1.StreamJobLogsResponse]) error {
+func (s *interruptedLogService) StreamJobLogs(_ context.Context, request *connect.Request[outbackv1.StreamJobLogsRequest], stream *connect.ServerStream[outbackv1.StreamJobLogsResponse]) error {
 	s.mu.Lock()
 	s.offsets = append(s.offsets, request.Msg.Offset)
 	call := len(s.offsets)
 	s.mu.Unlock()
 	if call == 1 {
-		if err := stream.Send(&rtestv1.StreamJobLogsResponse{Data: []byte("abc"), NextOffset: 3}); err != nil {
+		if err := stream.Send(&outbackv1.StreamJobLogsResponse{Data: []byte("abc"), NextOffset: 3}); err != nil {
 			return err
 		}
 		return connect.NewError(connect.CodeUnavailable, context.DeadlineExceeded)
 	}
 	exitCode := int32(0)
-	return stream.Send(&rtestv1.StreamJobLogsResponse{
+	return stream.Send(&outbackv1.StreamJobLogsResponse{
 		Data: []byte("def"), NextOffset: 6,
-		TerminalJob: &rtestv1.Job{Id: "job-1", Status: rtestv1.JobStatus_JOB_STATUS_SUCCEEDED, ExitCode: &exitCode, CreatedAt: timestamppb.Now()},
+		TerminalJob: &outbackv1.Job{Id: "job-1", Status: outbackv1.JobStatus_JOB_STATUS_SUCCEEDED, ExitCode: &exitCode, CreatedAt: timestamppb.Now()},
 	})
 }

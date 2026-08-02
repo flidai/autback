@@ -1,4 +1,4 @@
-// Package projectlink resolves the non-secret rtest project selected by a Git repository.
+// Package projectlink resolves the non-secret outback project selected by a Git repository.
 package projectlink
 
 import (
@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const FileName = "rtest.json"
+const FileName = "outback.json"
 
 type File struct {
 	Project string `json:"project"`
@@ -65,7 +65,7 @@ func Resolve(ctx context.Context, directory, explicit, environment string) (stri
 		}
 		current = parent
 	}
-	return "", fmt.Errorf("project is required: pass --project, set RTEST_PROJECT, or run rtest init to create %s", FileName)
+	return "", fmt.Errorf("project is required: pass --project, set OUTBACK_PROJECT, or run outback init to create %s", FileName)
 }
 
 func canonicalPath(path string) (string, error) {
@@ -104,7 +104,7 @@ func Write(directory, project string) (string, error) {
 		return "", err
 	}
 	payload = append(payload, '\n')
-	temporary, err := os.CreateTemp(directory, ".rtest-link-*")
+	temporary, err := os.CreateTemp(directory, ".outback-link-*")
 	if err != nil {
 		return "", err
 	}

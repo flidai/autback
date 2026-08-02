@@ -2,40 +2,40 @@
 
 set -euo pipefail
 
-job_cpus="${RTEST_JOB_CPUS:-1.5}"
-job_memory="${RTEST_JOB_MEMORY:-2500m}"
+job_cpus="${OUTBACK_JOB_CPUS:-1.5}"
+job_memory="${OUTBACK_JOB_MEMORY:-2500m}"
 
-if ! getent group rtest >/dev/null; then
-  groupadd --system rtest
+if ! getent group outback >/dev/null; then
+  groupadd --system outback
 fi
-if ! id rtest >/dev/null 2>&1; then
-  useradd --system --gid rtest --groups docker --home-dir /var/lib/rtest \
-    --shell /usr/sbin/nologin rtest
+if ! id outback >/dev/null 2>&1; then
+  useradd --system --gid outback --groups docker --home-dir /var/lib/outback \
+    --shell /usr/sbin/nologin outback
 else
-  usermod --append --groups docker rtest
+  usermod --append --groups docker outback
 fi
 
-install -d -o root -g rtest -m 0750 /etc/rtest
-install -d -o rtest -g rtest -m 0700 /var/lib/rtest /var/lib/rtest/jobs /var/lib/rtest/cache
+install -d -o root -g outback -m 0750 /etc/outback
+install -d -o outback -g outback -m 0700 /var/lib/outback /var/lib/outback/jobs /var/lib/outback/cache
 
-if [[ ! -s /etc/rtest/rtest.env ]]; then
+if [[ ! -s /etc/outback/outback.env ]]; then
   umask 077
-  printf 'RTEST_TOKEN=%s\n' "$(openssl rand -hex 32)" >/etc/rtest/rtest.env
+  printf 'OUTBACK_TOKEN=%s\n' "$(openssl rand -hex 32)" >/etc/outback/outback.env
 fi
 
-sed -i '/^RTEST_JOB_CPUS=/d; /^RTEST_JOB_MEMORY=/d' /etc/rtest/rtest.env
-printf 'RTEST_JOB_CPUS=%s\nRTEST_JOB_MEMORY=%s\n' \
-  "$job_cpus" "$job_memory" >>/etc/rtest/rtest.env
-chown root:rtest /etc/rtest/rtest.env
-chmod 0640 /etc/rtest/rtest.env
+sed -i '/^OUTBACK_JOB_CPUS=/d; /^OUTBACK_JOB_MEMORY=/d' /etc/outback/outback.env
+printf 'OUTBACK_JOB_CPUS=%s\nOUTBACK_JOB_MEMORY=%s\n' \
+  "$job_cpus" "$job_memory" >>/etc/outback/outback.env
+chown root:outback /etc/outback/outback.env
+chmod 0640 /etc/outback/outback.env
 
-install -o root -g root -m 0755 /tmp/rtest-server /usr/local/bin/rtest-server
-install -o root -g root -m 0755 /tmp/rtest-worker /usr/local/bin/rtest-worker
-install -o root -g root -m 0644 /tmp/rtest-server.service /etc/systemd/system/rtest-server.service
-install -o root -g root -m 0644 /tmp/rtest-worker.service /etc/systemd/system/rtest-worker.service
-install -o root -g root -m 0755 /tmp/maintain.sh /usr/local/sbin/rtest-maintain
-install -o root -g root -m 0644 /tmp/rtest-maintenance.service /etc/systemd/system/rtest-maintenance.service
-install -o root -g root -m 0644 /tmp/rtest-maintenance.timer /etc/systemd/system/rtest-maintenance.timer
+install -o root -g root -m 0755 /tmp/outback-server /usr/local/bin/outback-server
+install -o root -g root -m 0755 /tmp/outback-worker /usr/local/bin/outback-worker
+install -o root -g root -m 0644 /tmp/outback-server.service /etc/systemd/system/outback-server.service
+install -o root -g root -m 0644 /tmp/outback-worker.service /etc/systemd/system/outback-worker.service
+install -o root -g root -m 0755 /tmp/maintain.sh /usr/local/sbin/outback-maintain
+install -o root -g root -m 0644 /tmp/outback-maintenance.service /etc/systemd/system/outback-maintenance.service
+install -o root -g root -m 0644 /tmp/outback-maintenance.timer /etc/systemd/system/outback-maintenance.timer
 
 systemctl daemon-reload
-systemctl enable rtest-server rtest-worker rtest-maintenance.timer
+systemctl enable outback-server outback-worker outback-maintenance.timer

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/control"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/control"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestRunOnceConvergesTerminalOrphanAndMissingJobs(t *testing.T) {

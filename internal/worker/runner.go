@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -59,11 +59,11 @@ func (r Runner) Run(parent context.Context, job protocol.Job, source io.Reader, 
 	if docker == "" {
 		docker = "docker"
 	}
-	containerName := "rtest-" + job.ID
+	containerName := "outback-" + job.ID
 	defer removeContainer(docker, containerName)
 	args := []string{
 		"run", "--rm", "--init", "--name", containerName,
-		"--label", "rtest.job=" + job.ID,
+		"--label", "outback.job=" + job.ID,
 		"--network", "host",
 		"--cpus", fallback(r.CPUs, "1.5"), "--memory", fallback(r.Memory, "2500m"),
 		"--pids-limit", "2048", "--stop-timeout", "10",
@@ -76,8 +76,8 @@ func (r Runner) Run(parent context.Context, job protocol.Job, source io.Reader, 
 		"-e", "TESTCONTAINERS_HOST_OVERRIDE=localhost",
 		"-e", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock",
 		"-e", "RYUK_RECONNECTION_TIMEOUT=5s",
-		"-e", "RTEST_JOB_ID=" + job.ID,
-		"-e", "RTEST_JOB_ROOT=" + jobRoot,
+		"-e", "OUTBACK_JOB_ID=" + job.ID,
+		"-e", "OUTBACK_JOB_ROOT=" + jobRoot,
 		"-e", "TMPDIR=" + tmpDir,
 		"-e", "TEST_DATA_DIR=" + dataDir,
 		"-w", workspace, r.Image,

@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/profile"
+	"github.com/flidai/outback/internal/profile"
 )
 
 func TestLoadResolvesNamedSuiteFromRepositoryRoot(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, ".rtest.json"), `{
+	write(t, filepath.Join(root, ".outback.json"), `{
   "repository": "example/service",
   "runner": "standard",
   "suites": {
@@ -40,7 +40,7 @@ func TestLoadResolvesNamedSuiteFromRepositoryRoot(t *testing.T) {
 
 func TestLoadRejectsUnknownSuite(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, ".rtest.json"), `{
+	write(t, filepath.Join(root, ".outback.json"), `{
   "repository": "example/service",
   "suites": {"test": {"command": ["go", "test", "./..."]}}
 }`)

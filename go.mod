@@ -1,4 +1,4 @@
-module github.com/flidai/leapview/rtest
+module github.com/flidai/outback
 
 go 1.25.12
 

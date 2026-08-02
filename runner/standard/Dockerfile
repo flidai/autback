@@ -9,5 +9,5 @@ RUN apt-get update \
 
 ENV CGO_ENABLED=1
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-COPY rtest-job-entrypoint /usr/local/bin/rtest-job-entrypoint
+COPY outback-job-entrypoint /usr/local/bin/outback-job-entrypoint
 WORKDIR /workspace

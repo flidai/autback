@@ -21,24 +21,24 @@ func DockerArgs(spec Spec) []string {
 	data := spec.ActionDirectory + "/data"
 	args := []string{
 		"run", "--rm", "--init", "--name", spec.Name,
-		"--label", "rtest.action=" + spec.Name,
+		"--label", "outback.action=" + spec.Name,
 		"--network", "host",
 		"--cpus", fallback(spec.CPUs, "1.5"), "--memory", fallback(spec.Memory, "2500m"),
 		"--shm-size", "1g",
 		"--pids-limit", "2048", "--stop-timeout", "10",
 		"-v", spec.ActionDirectory + ":" + spec.ActionDirectory,
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
-		"-v", "rtest-go-build-cache:/root/.cache/go-build",
-		"-v", "rtest-go-mod-cache:/go/pkg/mod",
+		"-v", "outback-go-build-cache:/root/.cache/go-build",
+		"-v", "outback-go-mod-cache:/go/pkg/mod",
 		"-e", "TESTCONTAINERS_HOST_OVERRIDE=localhost",
 		"-e", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock",
 		"-e", "RYUK_RECONNECTION_TIMEOUT=5s",
-		"-e", "RTEST_JOB_ID=" + spec.Name,
-		"-e", "RTEST_JOB_ROOT=" + spec.ActionDirectory,
+		"-e", "OUTBACK_JOB_ID=" + spec.Name,
+		"-e", "OUTBACK_JOB_ROOT=" + spec.ActionDirectory,
 		"-e", "TMPDIR=/tmp",
 		"-e", "TEST_DATA_DIR=" + data,
 		"-w", spec.WorkingDirectory,
-		fallback(spec.Image, "rtest-runner-standard:local"),
+		fallback(spec.Image, "outback-runner-standard:local"),
 	}
 	return append(args, spec.Command...)
 }

@@ -2,11 +2,11 @@
 
 ## Controlled comparison harness
 
-`rtest-benchmark` measures multiple argv-based candidates against one exact worktree.
-The checked-in LeapView specifications live under `.rtest/benchmarks/` and compare:
+`outback-benchmark` measures multiple argv-based candidates against one exact worktree.
+The checked-in LeapView specifications live under `.outback/benchmarks/` and compare:
 
-- native Docker Buildx, rtest Buildx, and Depot for `Dockerfile` and `Dockerfile.site`;
-- local Go and generic `rtest exec` for the two focused Testcontainers workloads.
+- native Docker Buildx, outback Buildx, and Depot for `Dockerfile` and `Dockerfile.site`;
+- local Go and generic `outback exec` for the two focused Testcontainers workloads.
 
 Every specification uses one excluded warmup followed by five serial measured runs. It
 passes identical trailing build/test arguments to every candidate and requires a clean
@@ -19,15 +19,15 @@ median plus nearest-rank p95 to `summary.json`. An unavailable optional
 candidate is labeled `unavailable`; it is never replaced with an estimate or an older
 cross-commit measurement.
 
-Run a specification from the `rtest` module, choosing an untracked output directory:
+Run a specification from the `outback` module, choosing an untracked output directory:
 
 ```console
 task benchmark:compare -- \
-  --spec ../.rtest/benchmarks/testcontainers-lifecycle.json \
+  --spec ../.outback/benchmarks/testcontainers-lifecycle.json \
   --output .tmp/benchmarks/testcontainers-lifecycle
 
 DEPOT_PROJECT_ID=<project-id> task benchmark:compare -- \
-  --spec ../.rtest/benchmarks/production-image.json \
+  --spec ../.outback/benchmarks/production-image.json \
   --output .tmp/benchmarks/production-image
 ```
 
@@ -39,7 +39,7 @@ providers expose the same boundary.
 
 The focused test specifications call repository-owned Taskfile workloads. Those tasks
 force normal source generation before `go test` on both local and remote candidates.
-rtest itself has no LeapView preparation hook and ignored generated files are never added
+outback itself has no LeapView preparation hook and ignored generated files are never added
 to its generic source-transfer contract.
 
 ## Controlled provider result
@@ -51,21 +51,21 @@ Dockerfile arguments, platform, tag, and `--load` output contract.
 | Workload | Candidate | Median | p95 | Measured values |
 | --- | --- | ---: | ---: | --- |
 | Generated Testcontainers lifecycle | local | 43.88 s | 44.46 s | 43.46, 44.19, 43.88, 44.46, 42.87 s |
-| Generated Testcontainers lifecycle | rtest | 72.90 s | 75.53 s | 71.13, 74.78, 72.90, 75.53, 72.51 s |
-| Public site image | rtest | 15.13 s | 16.90 s | 16.90, 15.13, 14.93, 14.62, 15.34 s |
+| Generated Testcontainers lifecycle | outback | 72.90 s | 75.53 s | 71.13, 74.78, 72.90, 75.53, 72.51 s |
+| Public site image | outback | 15.13 s | 16.90 s | 16.90, 15.13, 14.93, 14.62, 15.34 s |
 | Public site image | Depot | 13.17 s | 199.45 s | 130.70, 199.45, 13.17, 7.88, 7.26 s |
-| Production image | rtest | 29.19 s | 30.34 s | 30.34, 29.19, 29.23, 28.82, 28.72 s |
+| Production image | outback | 29.19 s | 30.34 s | 30.34, 29.19, 29.23, 28.82, 28.72 s |
 | Production image | Depot | 31.00 s | 138.68 s | 138.68, 34.00, 31.00, 7.40, 7.80 s |
 
-Every measured rtest test run transferred `0 B` of source. The CPX32 was approximately
+Every measured outback test run transferred `0 B` of source. The CPX32 was approximately
 1.66 times slower than the laptop for the generated Testcontainers command, reflecting
 the worker's 3.5-vCPU job reservation plus the remote boundary. The result still moves
 the sustained CPU load off the laptop, which is the product objective.
 
-rtest's BuildKit cache was immediately stable after its excluded warmup. Depot produced
+outback's BuildKit cache was immediately stable after its excluded warmup. Depot produced
 the fastest eventual hot image loads—about 7 to 8 seconds—but its first measured runs
 continued rebuilding while cache state settled, creating high p95 values in this sample.
-The production/site difference in rtest (29 versus 15 seconds) indicates that native
+The production/site difference in outback (29 versus 15 seconds) indicates that native
 remote Buildx `--load` remains sensitive to output image size. Depot's optimized load
 path largely removes that cost once fully hot.
 
@@ -114,13 +114,13 @@ Measured on 2026-08-01 at LeapView merge commit
 - `go test -count=1` forced the tests to execute while retaining dependency/build caches;
 - pinned Docker and Testcontainers images were already present for measured runs.
 
-| Workload | End-to-end median | End-to-end p95 | Remote median | rtest boundary median |
+| Workload | End-to-end median | End-to-end p95 | Remote median | outback boundary median |
 | --- | ---: | ---: | ---: | ---: |
 | MinIO Parquet refresh contract | 29.04 s | 29.70 s | 24.53 s | 4.51 s |
 | Testcontainers qualification lifecycle | 21.91 s | 22.41 s | 17.42 s | 4.52 s |
 
 “End-to-end” starts before source selection/CAS negotiation and stops after the CLI has
-reported the terminal result. “Remote” is the Swarm task lifetime. “rtest boundary” is
+reported the terminal result. “Remote” is the Swarm task lifetime. “outback boundary” is
 their difference and includes local input hashing, zero-byte CAS negotiation, SSH setup,
 Swarm submission/status, and final result retrieval.
 
@@ -150,7 +150,7 @@ The standard runner now copies the official digest-pinned Docker 29.1.3 CLI. Aft
 upgrade, the complete merged qualification lifecycle passed both its `docker-cli` and
 `testcontainers` implementations remotely in one job.
 
-The immediate performance target is the roughly 4.5-second rtest boundary. It is stable
+The immediate performance target is the roughly 4.5-second outback boundary. It is stable
 across both workloads and therefore worth profiling before buying a larger worker. More
 CPU should reduce Go compilation and test execution, but it will not remove fixed SSH,
 CAS negotiation, or Swarm lifecycle latency.

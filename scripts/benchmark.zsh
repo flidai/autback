@@ -3,33 +3,33 @@
 source "${0:A:h}/lib.zsh"
 zmodload zsh/datetime
 
-: "${RTEST_CONFIG:?set RTEST_CONFIG to the benchmark client configuration}"
-: "${RTEST_BENCH_PROJECT:?set RTEST_BENCH_PROJECT to the Git worktree under test}"
+: "${OUTBACK_CONFIG:?set OUTBACK_CONFIG to the benchmark client configuration}"
+: "${OUTBACK_BENCH_PROJECT:?set OUTBACK_BENCH_PROJECT to the Git worktree under test}"
 
-benchmark_name="${RTEST_BENCH_NAME:-remote-command}"
-warmup_runs="${RTEST_BENCH_WARMUPS:-1}"
-measured_runs="${RTEST_BENCH_RUNS:-5}"
-timeout="${RTEST_BENCH_TIMEOUT:-20m}"
-binary="${RTEST_CLI:-${RTEST_TMP_DIR}/rtest}"
-output_dir="${RTEST_BENCH_OUTPUT:-${RTEST_DIR}/evidence/benchmarks/${benchmark_name}}"
+benchmark_name="${OUTBACK_BENCH_NAME:-remote-command}"
+warmup_runs="${OUTBACK_BENCH_WARMUPS:-1}"
+measured_runs="${OUTBACK_BENCH_RUNS:-5}"
+timeout="${OUTBACK_BENCH_TIMEOUT:-20m}"
+binary="${OUTBACK_CLI:-${OUTBACK_TMP_DIR}/outback}"
+output_dir="${OUTBACK_BENCH_OUTPUT:-${OUTBACK_DIR}/evidence/benchmarks/${benchmark_name}}"
 
 if (( $# == 0 )); then
-  print -u2 'usage: RTEST_CONFIG=... RTEST_BENCH_PROJECT=... benchmark.zsh <command> [args...]'
+  print -u2 'usage: OUTBACK_CONFIG=... OUTBACK_BENCH_PROJECT=... benchmark.zsh <command> [args...]'
   exit 2
 fi
 if [[ ! -x "${binary}" ]]; then
-  print -u2 "rtest binary is not executable: ${binary}"
+  print -u2 "outback binary is not executable: ${binary}"
   exit 1
 fi
 if ! [[ "${warmup_runs}" == <-> && "${measured_runs}" == <-> && ${measured_runs} -gt 0 ]]; then
-  print -u2 'RTEST_BENCH_WARMUPS and RTEST_BENCH_RUNS must be non-negative integers, with at least one measured run'
+  print -u2 'OUTBACK_BENCH_WARMUPS and OUTBACK_BENCH_RUNS must be non-negative integers, with at least one measured run'
   exit 2
 fi
 
 mkdir -p "${output_dir}"
 rm -f -- "${output_dir}"/warmup-*.json(N) "${output_dir}"/warmup-*.log(N) \
   "${output_dir}"/measured-*.json(N) "${output_dir}"/measured-*.log(N)
-commit="$(git -C "${RTEST_BENCH_PROJECT}" rev-parse HEAD)"
+commit="$(git -C "${OUTBACK_BENCH_PROJECT}" rev-parse HEAD)"
 print -r -- "$@" > "${output_dir}/command.txt"
 
 run_once() {
@@ -43,8 +43,8 @@ run_once() {
 
   set +e
   (
-    cd "${RTEST_BENCH_PROJECT}"
-    RTEST_CONFIG="${RTEST_CONFIG}" "${binary}" run --timeout "${timeout}" -- "$@"
+    cd "${OUTBACK_BENCH_PROJECT}"
+    OUTBACK_CONFIG="${OUTBACK_CONFIG}" "${binary}" run --timeout "${timeout}" -- "$@"
   ) > "${log_file}" 2>&1
   exit_code=$?
   set -e

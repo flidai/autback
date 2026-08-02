@@ -1,10 +1,10 @@
 resource "hcloud_ssh_key" "operator" {
-  name       = "leapview-rtest-poc"
+  name       = "leapview-outback-poc"
   public_key = file(var.ssh_public_key_path)
 }
 
 resource "hcloud_firewall" "runner" {
-  name = "leapview-rtest-poc"
+  name = "leapview-outback-poc"
 
   rule {
     direction  = "in"
@@ -36,7 +36,7 @@ resource "hcloud_firewall" "runner" {
 }
 
 resource "hcloud_server" "runner" {
-  name         = "leapview-rtest-poc"
+  name         = "leapview-outback-poc"
   image        = "ubuntu-24.04"
   server_type  = var.server_type
   location     = var.location
@@ -50,7 +50,7 @@ resource "hcloud_server" "runner" {
   }
 
   labels = {
-    project     = "rtest"
+    project     = "outback"
     environment = "poc"
     managed_by  = "terraform"
   }

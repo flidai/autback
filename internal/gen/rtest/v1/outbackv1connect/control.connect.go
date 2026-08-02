@@ -2,13 +2,15 @@
 //
 // Source: rtest/v1/control.proto
 
-package rtestv1connect
+// The v1 wire package intentionally retains its original route so deployed rtest clients
+// and the renamed Outback client can share one control plane during migration.
+package outbackv1connect
 
 import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	v1 "github.com/flidai/leapview/rtest/internal/gen/rtest/v1"
+	v1 "github.com/flidai/outback/internal/gen/rtest/v1"
 	http "net/http"
 	strings "strings"
 )

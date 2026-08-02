@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -64,7 +64,7 @@ func TestRunnerUsesIsolatedDockerContract(t *testing.T) {
 	jobRoot := filepath.Join(root, "work", "job-1")
 	for _, required := range []string{
 		"run\n", "--rm\n", "--network\nhost\n", "/var/run/docker.sock:/var/run/docker.sock\n",
-		"rtest.job=job-1\n", jobRoot + "/workspace:" + jobRoot + "/workspace\n",
+		"outback.job=job-1\n", jobRoot + "/workspace:" + jobRoot + "/workspace\n",
 		jobRoot + "/tmp:" + jobRoot + "/tmp\n", jobRoot + "/data:" + jobRoot + "/data\n",
 		"TMPDIR=" + jobRoot + "/tmp\n", "TEST_DATA_DIR=" + jobRoot + "/data\n",
 		"runner@sha256:abc\n", "go\ntest\n./...\n",
@@ -100,7 +100,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "rm\n-f\nrtest-cancel-me\n") {
+	if !strings.Contains(string(got), "rm\n-f\noutback-cancel-me\n") {
 		t.Fatalf("cleanup arguments missing:\n%s", got)
 	}
 }
@@ -128,7 +128,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "rm\n-f\nrtest-time-out\n") {
+	if !strings.Contains(string(got), "rm\n-f\noutback-time-out\n") {
 		t.Fatalf("cleanup arguments missing:\n%s", got)
 	}
 }

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/client"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/client"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestStreamReconnectsFromLastEventID(t *testing.T) {

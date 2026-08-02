@@ -11,23 +11,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/control/githuboidc"
+	"github.com/flidai/outback/internal/control/githuboidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 func TestVerifierChecksOIDCAndExtractsImmutableGitHubClaims(t *testing.T) {
 	issuer, sign := testIssuer(t)
-	verifier, err := githuboidc.New(context.Background(), issuer, "https://rtest.example")
+	verifier, err := githuboidc.New(context.Background(), issuer, "https://outback.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	token := sign(t, map[string]any{
-		"iss": issuer, "aud": "https://rtest.example", "sub": "repo:flidai/leapview:environment:rtest",
+		"iss": issuer, "aud": "https://outback.example", "sub": "repo:flidai/leapview:environment:outback",
 		"iat": time.Now().Add(-time.Minute).Unix(), "nbf": time.Now().Add(-time.Minute).Unix(), "exp": time.Now().Add(5 * time.Minute).Unix(),
 		"repository_owner_id": "100", "repository_id": "200", "repository": "flidai/leapview",
 		"workflow_ref": "flidai/leapview/.github/workflows/ci.yml@refs/heads/main", "ref": "refs/heads/main",
-		"environment": "rtest", "event_name": "workflow_dispatch",
+		"environment": "outback", "event_name": "workflow_dispatch",
 	})
 	claims, err := verifier.Verify(context.Background(), token)
 	if err != nil {
@@ -40,13 +40,13 @@ func TestVerifierChecksOIDCAndExtractsImmutableGitHubClaims(t *testing.T) {
 
 func TestVerifierRejectsInvalidStandardClaimsAndSignatures(t *testing.T) {
 	issuer, sign := testIssuer(t)
-	verifier, err := githuboidc.New(context.Background(), issuer, "https://rtest.example")
+	verifier, err := githuboidc.New(context.Background(), issuer, "https://outback.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	valid := map[string]any{
-		"iss": issuer, "aud": "https://rtest.example", "sub": "repo:flidai/leapview:ref:refs/heads/main",
+		"iss": issuer, "aud": "https://outback.example", "sub": "repo:flidai/leapview:ref:refs/heads/main",
 		"iat": now.Add(-time.Minute).Unix(), "nbf": now.Add(-time.Minute).Unix(), "exp": now.Add(5 * time.Minute).Unix(),
 		"repository_owner_id": "100", "repository_id": "200", "workflow_ref": "workflow", "ref": "refs/heads/main", "event_name": "push",
 	}
@@ -79,13 +79,13 @@ func TestVerifierRejectsInvalidStandardClaimsAndSignatures(t *testing.T) {
 
 func TestVerifierRejectsMissingIdentityAndPolicyClaims(t *testing.T) {
 	issuer, sign := testIssuer(t)
-	verifier, err := githuboidc.New(context.Background(), issuer, "https://rtest.example")
+	verifier, err := githuboidc.New(context.Background(), issuer, "https://outback.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	valid := map[string]any{
-		"iss": issuer, "aud": "https://rtest.example", "sub": "repo:flidai/leapview:ref:refs/heads/main",
+		"iss": issuer, "aud": "https://outback.example", "sub": "repo:flidai/leapview:ref:refs/heads/main",
 		"iat": now.Add(-time.Minute).Unix(), "nbf": now.Add(-time.Minute).Unix(), "exp": now.Add(5 * time.Minute).Unix(),
 		"repository_owner_id": "100", "repository_id": "200", "workflow_ref": "workflow", "ref": "refs/heads/main", "event_name": "push",
 	}

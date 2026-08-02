@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestExitCodeDoesNotTreatFailedZeroAsSuccess(t *testing.T) {

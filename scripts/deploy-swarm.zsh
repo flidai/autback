@@ -2,64 +2,64 @@
 
 source "${0:A:h}/lib.zsh"
 
-: "${RTEST_SERVER_IP:?set RTEST_SERVER_IP to an existing host; this script never provisions infrastructure}"
-: "${RTEST_SSH_KEY:?set RTEST_SSH_KEY to the existing host identity file}"
-[[ -f "${RTEST_SSH_KEY}" ]] || { print -u2 "missing ${RTEST_SSH_KEY}"; exit 1; }
+: "${OUTBACK_SERVER_IP:?set OUTBACK_SERVER_IP to an existing host; this script never provisions infrastructure}"
+: "${OUTBACK_SSH_KEY:?set OUTBACK_SSH_KEY to the existing host identity file}"
+[[ -f "${OUTBACK_SSH_KEY}" ]] || { print -u2 "missing ${OUTBACK_SSH_KEY}"; exit 1; }
 
-host="${RTEST_SERVER_IP}"
-ssh_user="${RTEST_SSH_USER:-root}"
-server_names="${RTEST_SERVER_NAMES:-${host}}"
-project_slug="${RTEST_PROJECT:-default}"
-project_name="${RTEST_PROJECT_NAME:-Default}"
+host="${OUTBACK_SERVER_IP}"
+ssh_user="${OUTBACK_SSH_USER:-root}"
+server_names="${OUTBACK_SERVER_NAMES:-${host}}"
+project_slug="${OUTBACK_PROJECT:-default}"
+project_name="${OUTBACK_PROJECT_NAME:-Default}"
 ssh_args
 ssh "${reply[@]}" "${ssh_user}@${host}" 'docker version >/dev/null'
 
-build_dir="${RTEST_TMP_DIR}/service-build"
-config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/rtest"
-install_dir="${RTEST_INSTALL_DIR:-${HOME}/.local/bin}"
+build_dir="${OUTBACK_TMP_DIR}/service-build"
+config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/outback"
+install_dir="${OUTBACK_INSTALL_DIR:-${HOME}/.local/bin}"
 config_file="${config_dir}/config.json"
 ca_file="${config_dir}/ca.pem"
 mkdir -p "${build_dir}" "${config_dir}" "${install_dir}"
-env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "${RTEST_DIR}" build -trimpath -ldflags='-s -w' \
-  -o "${build_dir}/rtest-server" ./cmd/rtest-server
-env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "${RTEST_DIR}" build -trimpath -ldflags='-s -w' \
-  -o "${build_dir}/rtest-job-entrypoint" ./cmd/rtest-job-entrypoint
-go -C "${RTEST_DIR}" build -trimpath -o "${build_dir}/rtest" ./cmd/rtest
+env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "${OUTBACK_DIR}" build -trimpath -ldflags='-s -w' \
+  -o "${build_dir}/outback-server" ./cmd/outback-server
+env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "${OUTBACK_DIR}" build -trimpath -ldflags='-s -w' \
+  -o "${build_dir}/outback-job-entrypoint" ./cmd/outback-job-entrypoint
+go -C "${OUTBACK_DIR}" build -trimpath -o "${build_dir}/outback" ./cmd/outback
 
 scp "${reply[@]}" \
-  "${build_dir}/rtest-server" \
-  "${build_dir}/rtest-job-entrypoint" \
-  "${RTEST_DIR}/host/install-swarm.sh" \
-  "${RTEST_DIR}/host/rtest-server.service" \
-  "${RTEST_DIR}/host/rtest-cas.service" \
-  "${RTEST_DIR}/host/rtest-buildkit.service" \
-  "${RTEST_DIR}/host/maintain.sh" \
-  "${RTEST_DIR}/host/rtest-maintenance.service" \
-  "${RTEST_DIR}/host/rtest-maintenance.timer" \
+  "${build_dir}/outback-server" \
+  "${build_dir}/outback-job-entrypoint" \
+  "${OUTBACK_DIR}/host/install-swarm.sh" \
+  "${OUTBACK_DIR}/host/outback-server.service" \
+  "${OUTBACK_DIR}/host/outback-cas.service" \
+  "${OUTBACK_DIR}/host/outback-buildkit.service" \
+  "${OUTBACK_DIR}/host/maintain.sh" \
+  "${OUTBACK_DIR}/host/outback-maintenance.service" \
+  "${OUTBACK_DIR}/host/outback-maintenance.timer" \
   "${ssh_user}@${host}:/tmp/"
 
 ssh "${reply[@]}" "${ssh_user}@${host}" \
-  "sudo -n env RTEST_SERVER_NAMES=${(q)server_names} RTEST_BOOTSTRAP_PROJECT=${(q)project_slug} RTEST_BOOTSTRAP_PROJECT_NAME=${(q)project_name} bash /tmp/install-swarm.sh"
+  "sudo -n env OUTBACK_SERVER_NAMES=${(q)server_names} OUTBACK_BOOTSTRAP_PROJECT=${(q)project_slug} OUTBACK_BOOTSTRAP_PROJECT_NAME=${(q)project_name} bash /tmp/install-swarm.sh"
 
 umask 077
-ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n cat /var/lib/rtest/pki/ca.pem' > "${ca_file}"
+ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n cat /var/lib/outback/pki/ca.pem' > "${ca_file}"
 chmod 0600 "${ca_file}"
 jq -n \
   --arg url "https://${server_names%%,*}" \
-  --arg image "${RTEST_PROJECT_IMAGE:-}" \
+  --arg image "${OUTBACK_PROJECT_IMAGE:-}" \
   --arg ca "${ca_file}" \
   '{backend:"service",url:$url,service:{image:$image,cpus:"2",memory:"4g",ca_cert_file:$ca,oidc_audience:$url}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
-install -m 0755 "${build_dir}/rtest" "${install_dir}/rtest"
+install -m 0755 "${build_dir}/outback" "${install_dir}/outback"
 
-if ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n test -f /etc/rtest/bootstrap-token'; then
-  bootstrap_token="$(ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n cat /etc/rtest/bootstrap-token')"
-  RTEST_CONFIG="${config_file}" "${build_dir}/rtest" login --token "${bootstrap_token}"
+if ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n test -f /etc/outback/bootstrap-token'; then
+  bootstrap_token="$(ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n cat /etc/outback/bootstrap-token')"
+  OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" login --token "${bootstrap_token}"
   unset bootstrap_token
-  ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n shred -u /etc/rtest/bootstrap-token 2>/dev/null || sudo -n rm -f /etc/rtest/bootstrap-token'
+  ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n shred -u /etc/outback/bootstrap-token 2>/dev/null || sudo -n rm -f /etc/outback/bootstrap-token'
 fi
 
-RTEST_CONFIG="${config_file}" "${build_dir}/rtest" doctor
-print "deployed rtest shared service to existing host ${host}"
+OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" doctor
+print "deployed outback shared service to existing host ${host}"
 print "configured ${config_file}; the device token is stored in the OS keychain"

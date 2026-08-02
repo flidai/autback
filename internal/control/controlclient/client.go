@@ -9,16 +9,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/flidai/leapview/rtest/internal/gen/rtest/v1/rtestv1connect"
+	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
 )
 
-func New(baseURL, token, caCertFile string) (rtestv1connect.ControlServiceClient, error) {
+func New(baseURL, token, caCertFile string) (outbackv1connect.ControlServiceClient, error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("rtest service URL must be absolute")
+		return nil, errors.New("outback service URL must be absolute")
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return nil, errors.New("rtest service URL must use HTTPS or local HTTP")
+		return nil, errors.New("outback service URL must use HTTPS or local HTTP")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -32,7 +32,7 @@ func New(baseURL, token, caCertFile string) (rtestv1connect.ControlServiceClient
 			return nil, err
 		}
 		if !roots.AppendCertsFromPEM(data) {
-			return nil, errors.New("rtest control CA file contains no certificates")
+			return nil, errors.New("outback control CA file contains no certificates")
 		}
 		transport.TLSClientConfig.RootCAs = roots
 	}
@@ -41,7 +41,7 @@ func New(baseURL, token, caCertFile string) (rtestv1connect.ControlServiceClient
 		roundTripper = authorizationTransport{token: token, next: transport}
 	}
 	httpClient := &http.Client{Transport: roundTripper}
-	return rtestv1connect.NewControlServiceClient(httpClient, parsed.String()), nil
+	return outbackv1connect.NewControlServiceClient(httpClient, parsed.String()), nil
 }
 
 type authorizationTransport struct {

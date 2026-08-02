@@ -6,19 +6,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 	spec := Spec{
-		ID: "rtest-job-1", Repository: "example/service", Suite: "integration", Runner: "standard",
-		Image: "runner:test", CASAddress: "127.0.0.1:50051", CASInstance: "rtest",
-		RootDigest: "abc/123", JobsRoot: "/var/lib/rtest/jobs", Command: []string{"go", "test", "./..."},
+		ID: "outback-job-1", Repository: "example/service", Suite: "integration", Runner: "standard",
+		Image: "runner:test", CASAddress: "127.0.0.1:50051", CASInstance: "outback",
+		RootDigest: "abc/123", JobsRoot: "/var/lib/outback/jobs", Command: []string{"go", "test", "./..."},
 		Timeout: 15 * time.Minute, CPUs: "2", Memory: "4g",
-		WorkingDirectory: "cmd/service", Environment: map[string]string{"RTEST_PROOF": "generic-oci"},
-		EntrypointHostPath: "/usr/local/lib/rtest/rtest-job-entrypoint",
+		WorkingDirectory: "cmd/service", Environment: map[string]string{"OUTBACK_PROOF": "generic-oci"},
+		EntrypointHostPath: "/usr/local/lib/outback/outback-job-entrypoint",
 		HostUID:            "123", HostGID: "456",
-		CacheRoot: "/var/lib/rtest/cache", ProjectID: "prj-example",
+		CacheRoot: "/var/lib/outback/cache", ProjectID: "prj-example",
 		Caches: []CacheMount{{Name: "go-build", Target: "/root/.cache/go-build"}, {Name: "modules", Target: "/go/pkg/mod"}},
 	}
 	args := CreateArgs(spec)
@@ -29,21 +29,21 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 		{"--reserve-cpu", "2"},
 		{"--reserve-memory", "4g"},
 		{"--mount", "type=tmpfs,dst=/dev/shm,tmpfs-size=1073741824"},
-		{"--mount", "type=bind,src=/var/lib/rtest/jobs,dst=/var/lib/rtest/jobs"},
-		{"--mount", "type=bind,src=/var/lib/rtest/cache/prj-example/go-build,dst=/root/.cache/go-build"},
-		{"--mount", "type=bind,src=/var/lib/rtest/cache/prj-example/modules,dst=/go/pkg/mod"},
-		{"--mount", "type=bind,src=/usr/local/lib/rtest/rtest-job-entrypoint,dst=/usr/local/bin/rtest-job-entrypoint,readonly"},
-		{"--label", "rtest.project=prj-example"},
-		{"--label", "rtest.job=rtest-job-1"},
-		{"--env", "RTEST_WORKSPACE=/var/lib/rtest/jobs/rtest-job-1/workspace"},
-		{"--env", "RTEST_WORKER_LOCK=/var/lib/rtest/jobs/.worker.lock"},
-		{"--env", "RTEST_HOST_UID=123"},
-		{"--env", "RTEST_HOST_GID=456"},
-		{"--env", "RTEST_ROOT_DIGEST=abc/123"},
-		{"--env", "RTEST_WORKING_DIRECTORY=cmd/service"},
+		{"--mount", "type=bind,src=/var/lib/outback/jobs,dst=/var/lib/outback/jobs"},
+		{"--mount", "type=bind,src=/var/lib/outback/cache/prj-example/go-build,dst=/root/.cache/go-build"},
+		{"--mount", "type=bind,src=/var/lib/outback/cache/prj-example/modules,dst=/go/pkg/mod"},
+		{"--mount", "type=bind,src=/usr/local/lib/outback/outback-job-entrypoint,dst=/usr/local/bin/outback-job-entrypoint,readonly"},
+		{"--label", "outback.project=prj-example"},
+		{"--label", "outback.job=outback-job-1"},
+		{"--env", "OUTBACK_WORKSPACE=/var/lib/outback/jobs/outback-job-1/workspace"},
+		{"--env", "OUTBACK_WORKER_LOCK=/var/lib/outback/jobs/.worker.lock"},
+		{"--env", "OUTBACK_HOST_UID=123"},
+		{"--env", "OUTBACK_HOST_GID=456"},
+		{"--env", "OUTBACK_ROOT_DIGEST=abc/123"},
+		{"--env", "OUTBACK_WORKING_DIRECTORY=cmd/service"},
 		{"--env", "TMPDIR=/tmp"},
-		{"--env", "RTEST_PROOF=generic-oci"},
-		{"--entrypoint", "/usr/local/bin/rtest-job-entrypoint"},
+		{"--env", "OUTBACK_PROOF=generic-oci"},
+		{"--entrypoint", "/usr/local/bin/outback-job-entrypoint"},
 		{"--user", "0:0"},
 		{"runner:test", "go", "test", "./..."},
 	} {
@@ -51,7 +51,7 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 			t.Fatalf("args %#v missing sequence %#v", args, sequence)
 		}
 	}
-	for _, forbidden := range []string{"rtest-go-build-cache", "rtest-go-mod-cache"} {
+	for _, forbidden := range []string{"outback-go-build-cache", "outback-go-mod-cache"} {
 		if strings.Contains(strings.Join(args, "\n"), forbidden) {
 			t.Fatalf("args %#v contain global cache %q", args, forbidden)
 		}

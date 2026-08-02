@@ -1,22 +1,22 @@
 [Unit]
-Description=rtest REAPI and CAS (NativeLink)
+Description=outback REAPI and CAS (NativeLink)
 After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
 Type=simple
-User=rtest
-Group=rtest
+User=outback
+Group=outback
 SupplementaryGroups=docker
-EnvironmentFile=/etc/rtest/standards.env
-ExecStart=/usr/local/bin/nativelink /etc/rtest/nativelink.json5
+EnvironmentFile=/etc/outback/standards.env
+ExecStart=/usr/local/bin/nativelink /etc/outback/nativelink.json5
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=24576
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/rtest
+ReadWritePaths=/var/lib/outback
 
 [Install]
 WantedBy=multi-user.target

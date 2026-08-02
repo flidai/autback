@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/reapi"
+	"github.com/flidai/outback/internal/reapi"
 )
 
 func TestActionUsesSelectedFilesAndPinnedRunner(t *testing.T) {
@@ -24,7 +24,7 @@ func TestActionUsesSelectedFilesAndPinnedRunner(t *testing.T) {
 	if !reflect.DeepEqual(got.Args, []string{"go", "test", "./..."}) || got.Timeout != 15*time.Minute {
 		t.Fatalf("command = %#v", got)
 	}
-	if got.Platform["rtest.runner"] != "standard" || got.Platform["rtest.repository"] != "example/service" {
+	if got.Platform["outback.runner"] != "standard" || got.Platform["outback.repository"] != "example/service" {
 		t.Fatalf("platform = %#v", got.Platform)
 	}
 	if options.AcceptCached || !options.DoNotCache || !options.DownloadOutErr || !options.StreamOutErr {

@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/coordinator/sqlite"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/coordinator/sqlite"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 const (

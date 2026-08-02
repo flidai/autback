@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/cli"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/cli"
+	"github.com/flidai/outback/internal/protocol"
 )
 
 func TestStatusPrintsHumanReadableJob(t *testing.T) {
@@ -87,7 +87,7 @@ func authenticatedServer(t *testing.T, next http.HandlerFunc) *httptest.Server {
 
 func configure(t *testing.T, url string) {
 	t.Helper()
-	t.Setenv("RTEST_CONFIG", t.TempDir()+"/missing.json")
-	t.Setenv("RTEST_URL", url)
-	t.Setenv("RTEST_TOKEN", "test-token")
+	t.Setenv("OUTBACK_CONFIG", t.TempDir()+"/missing.json")
+	t.Setenv("OUTBACK_URL", url)
+	t.Setenv("OUTBACK_TOKEN", "test-token")
 }

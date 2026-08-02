@@ -4,7 +4,10 @@
 // 	protoc        (unknown)
 // source: rtest/v1/control.proto
 
-package rtestv1
+// The v1 wire package intentionally retains its original route so deployed rtest clients
+// and the renamed Outback client can share one control plane during migration.
+
+package outbackv1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -4032,7 +4035,7 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\x10ListDeviceTokens\x12!.rtest.v1.ListDeviceTokensRequest\x1a\".rtest.v1.ListDeviceTokensResponse\x12\\\n" +
 	"\x11RevokeDeviceToken\x12\".rtest.v1.RevokeDeviceTokenRequest\x1a#.rtest.v1.RevokeDeviceTokenResponse\x12e\n" +
 	"\x14CreateEnrollmentCode\x12%.rtest.v1.CreateEnrollmentCodeRequest\x1a&.rtest.v1.CreateEnrollmentCodeResponse\x12k\n" +
-	"\x16ExchangeEnrollmentCode\x12'.rtest.v1.ExchangeEnrollmentCodeRequest\x1a(.rtest.v1.ExchangeEnrollmentCodeResponseB@Z>github.com/flidai/leapview/rtest/internal/gen/rtest/v1;rtestv1b\x06proto3"
+	"\x16ExchangeEnrollmentCode\x12'.rtest.v1.ExchangeEnrollmentCodeRequest\x1a(.rtest.v1.ExchangeEnrollmentCodeResponseB;Z9github.com/flidai/outback/internal/gen/rtest/v1;outbackv1b\x06proto3"
 
 var (
 	file_rtest_v1_control_proto_rawDescOnce sync.Once

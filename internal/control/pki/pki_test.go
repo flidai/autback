@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/rtest/internal/control/pki"
+	"github.com/flidai/outback/internal/control/pki"
 )
 
 func TestAuthorityIssuesShortLivedOperationCertificates(t *testing.T) {
@@ -34,7 +34,7 @@ func TestAuthorityIssuesShortLivedOperationCertificates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantURI, _ := url.Parse("spiffe://rtest/job/job-123")
+	wantURI, _ := url.Parse("spiffe://outback/job/job-123")
 	if len(certificate.URIs) != 1 || certificate.URIs[0].String() != wantURI.String() {
 		t.Fatalf("uris = %#v", certificate.URIs)
 	}

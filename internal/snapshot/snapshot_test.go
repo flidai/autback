@@ -11,14 +11,14 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/flidai/leapview/rtest/internal/snapshot"
+	"github.com/flidai/outback/internal/snapshot"
 	"github.com/klauspost/compress/zstd"
 )
 
 func TestCreateCapturesExactDirtyWorktree(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init")
-	git(t, repo, "config", "user.email", "rtest@example.test")
+	git(t, repo, "config", "user.email", "outback@example.test")
 	git(t, repo, "config", "user.name", "Remote Test Runner")
 
 	write(t, repo, "kept.txt", "baseline\n", 0o644)

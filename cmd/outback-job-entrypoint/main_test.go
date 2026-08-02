@@ -138,13 +138,13 @@ func TestWorkerSlotWaitHonorsCancellation(t *testing.T) {
 }
 
 func TestHostIdentityFromEnvironment(t *testing.T) {
-	t.Setenv("RTEST_HOST_UID", "123")
-	t.Setenv("RTEST_HOST_GID", "456")
+	t.Setenv("OUTBACK_HOST_UID", "123")
+	t.Setenv("OUTBACK_HOST_GID", "456")
 	uid, gid, err := hostIdentityFromEnvironment()
 	if err != nil || uid != 123 || gid != 456 {
 		t.Fatalf("uid=%d gid=%d err=%v", uid, gid, err)
 	}
-	t.Setenv("RTEST_HOST_UID", "invalid")
+	t.Setenv("OUTBACK_HOST_UID", "invalid")
 	if _, _, err := hostIdentityFromEnvironment(); err == nil {
 		t.Fatal("invalid host identity was accepted")
 	}

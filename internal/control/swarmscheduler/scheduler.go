@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/flidai/leapview/rtest/internal/control"
-	"github.com/flidai/leapview/rtest/internal/protocol"
-	"github.com/flidai/leapview/rtest/internal/swarm"
+	"github.com/flidai/outback/internal/control"
+	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/outback/internal/swarm"
 )
 
 type Config struct {

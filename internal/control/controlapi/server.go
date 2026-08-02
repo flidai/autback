@@ -17,17 +17,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/flidai/leapview/rtest/internal/control"
-	"github.com/flidai/leapview/rtest/internal/control/pki"
-	controlsqlite "github.com/flidai/leapview/rtest/internal/control/sqlite"
-	rtestv1 "github.com/flidai/leapview/rtest/internal/gen/rtest/v1"
-	"github.com/flidai/leapview/rtest/internal/gen/rtest/v1/rtestv1connect"
-	"github.com/flidai/leapview/rtest/internal/protocol"
+	"github.com/flidai/outback/internal/control"
+	"github.com/flidai/outback/internal/control/pki"
+	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
+	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
+	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
+	"github.com/flidai/outback/internal/protocol"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const Version = "0.7.0"
+const Version = "0.1.0"
 
 type OIDCVerifier interface {
 	Verify(context.Context, string) (control.GitHubClaims, error)
@@ -63,7 +63,7 @@ func New(config Config) (http.Handler, error) {
 		return nil, errors.New("credential TTL must be between 1 minute and 2 hours")
 	}
 	server := &Server{config: config}
-	path, handler := rtestv1connect.NewControlServiceHandler(server)
+	path, handler := outbackv1connect.NewControlServiceHandler(server)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	mux.HandleFunc("GET /healthz", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
@@ -92,13 +92,13 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) GetServiceInfo(context.Context, *connect.Request[rtestv1.GetServiceInfoRequest]) (*connect.Response[rtestv1.GetServiceInfoResponse], error) {
-	return connect.NewResponse(&rtestv1.GetServiceInfoResponse{Version: Version, Capabilities: []string{
+func (s *Server) GetServiceInfo(context.Context, *connect.Request[outbackv1.GetServiceInfoRequest]) (*connect.Response[outbackv1.GetServiceInfoResponse], error) {
+	return connect.NewResponse(&outbackv1.GetServiceInfoResponse{Version: Version, Capabilities: []string{
 		"connect", "projects", "project-images", "project-caches", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "single-worker-admission", "buildkit-mtls",
 	}}), nil
 }
 
-func (s *Server) CreateUser(ctx context.Context, request *connect.Request[rtestv1.CreateUserRequest]) (*connect.Response[rtestv1.CreateUserResponse], error) {
+func (s *Server) CreateUser(ctx context.Context, request *connect.Request[outbackv1.CreateUserRequest]) (*connect.Response[outbackv1.CreateUserResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -110,10 +110,10 @@ func (s *Server) CreateUser(ctx context.Context, request *connect.Request[rtestv
 	if err := s.config.Store.Audit(ctx, principal, "", "user.create", user.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.CreateUserResponse{User: userProto(user)}), nil
+	return connect.NewResponse(&outbackv1.CreateUserResponse{User: userProto(user)}), nil
 }
 
-func (s *Server) CreateProject(ctx context.Context, request *connect.Request[rtestv1.CreateProjectRequest]) (*connect.Response[rtestv1.CreateProjectResponse], error) {
+func (s *Server) CreateProject(ctx context.Context, request *connect.Request[outbackv1.CreateProjectRequest]) (*connect.Response[outbackv1.CreateProjectResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -128,10 +128,10 @@ func (s *Server) CreateProject(ctx context.Context, request *connect.Request[rte
 	if err := s.config.Store.Audit(ctx, principal, project.ID, "project.create", project.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.CreateProjectResponse{Project: projectProto(project)}), nil
+	return connect.NewResponse(&outbackv1.CreateProjectResponse{Project: projectProto(project)}), nil
 }
 
-func (s *Server) ListProjects(ctx context.Context, request *connect.Request[rtestv1.ListProjectsRequest]) (*connect.Response[rtestv1.ListProjectsResponse], error) {
+func (s *Server) ListProjects(ctx context.Context, request *connect.Request[outbackv1.ListProjectsRequest]) (*connect.Response[outbackv1.ListProjectsResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -140,14 +140,14 @@ func (s *Server) ListProjects(ctx context.Context, request *connect.Request[rtes
 	if err != nil {
 		return nil, connectError(err)
 	}
-	response := &rtestv1.ListProjectsResponse{Projects: make([]*rtestv1.Project, 0, len(projects))}
+	response := &outbackv1.ListProjectsResponse{Projects: make([]*outbackv1.Project, 0, len(projects))}
 	for _, project := range projects {
 		response.Projects = append(response.Projects, projectProto(project))
 	}
 	return connect.NewResponse(response), nil
 }
 
-func (s *Server) AddProjectMember(ctx context.Context, request *connect.Request[rtestv1.AddProjectMemberRequest]) (*connect.Response[rtestv1.AddProjectMemberResponse], error) {
+func (s *Server) AddProjectMember(ctx context.Context, request *connect.Request[outbackv1.AddProjectMemberRequest]) (*connect.Response[outbackv1.AddProjectMemberResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -162,10 +162,10 @@ func (s *Server) AddProjectMember(ctx context.Context, request *connect.Request[
 	if err := s.config.Store.Audit(ctx, principal, project.ID, "project.member.add", request.Msg.UserId, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.AddProjectMemberResponse{}), nil
+	return connect.NewResponse(&outbackv1.AddProjectMemberResponse{}), nil
 }
 
-func (s *Server) ActivateProjectImage(ctx context.Context, request *connect.Request[rtestv1.ActivateProjectImageRequest]) (*connect.Response[rtestv1.ActivateProjectImageResponse], error) {
+func (s *Server) ActivateProjectImage(ctx context.Context, request *connect.Request[outbackv1.ActivateProjectImageRequest]) (*connect.Response[outbackv1.ActivateProjectImageResponse], error) {
 	principal, project, err := s.projectConfiguration(ctx, request.Header(), request.Msg.Project)
 	if err != nil {
 		return nil, err
@@ -183,10 +183,10 @@ func (s *Server) ActivateProjectImage(ctx context.Context, request *connect.Requ
 	if err := s.config.Store.Audit(ctx, principal, project.ID, "project.image.activate", project.ID, map[string]string{"image": project.ActiveImage, "replaced_image": project.PreviousImage}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.ActivateProjectImageResponse{Project: projectProto(project)}), nil
+	return connect.NewResponse(&outbackv1.ActivateProjectImageResponse{Project: projectProto(project)}), nil
 }
 
-func (s *Server) RollbackProjectImage(ctx context.Context, request *connect.Request[rtestv1.RollbackProjectImageRequest]) (*connect.Response[rtestv1.RollbackProjectImageResponse], error) {
+func (s *Server) RollbackProjectImage(ctx context.Context, request *connect.Request[outbackv1.RollbackProjectImageRequest]) (*connect.Response[outbackv1.RollbackProjectImageResponse], error) {
 	principal, project, err := s.projectConfiguration(ctx, request.Header(), request.Msg.Project)
 	if err != nil {
 		return nil, err
@@ -204,10 +204,10 @@ func (s *Server) RollbackProjectImage(ctx context.Context, request *connect.Requ
 	if err := s.config.Store.Audit(ctx, principal, project.ID, "project.image.rollback", project.ID, map[string]string{"image": project.ActiveImage, "replaced_image": project.PreviousImage}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.RollbackProjectImageResponse{Project: projectProto(project)}), nil
+	return connect.NewResponse(&outbackv1.RollbackProjectImageResponse{Project: projectProto(project)}), nil
 }
 
-func (s *Server) SetProjectImagePolicy(ctx context.Context, request *connect.Request[rtestv1.SetProjectImagePolicyRequest]) (*connect.Response[rtestv1.SetProjectImagePolicyResponse], error) {
+func (s *Server) SetProjectImagePolicy(ctx context.Context, request *connect.Request[outbackv1.SetProjectImagePolicyRequest]) (*connect.Response[outbackv1.SetProjectImagePolicyResponse], error) {
 	principal, project, err := s.projectConfiguration(ctx, request.Header(), request.Msg.Project)
 	if err != nil {
 		return nil, err
@@ -219,10 +219,10 @@ func (s *Server) SetProjectImagePolicy(ctx context.Context, request *connect.Req
 	if err := s.config.Store.Audit(ctx, principal, project.ID, "project.image.policy", project.ID, map[string]string{"allow_overrides": fmt.Sprint(project.AllowImageOverrides)}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.SetProjectImagePolicyResponse{Project: projectProto(project)}), nil
+	return connect.NewResponse(&outbackv1.SetProjectImagePolicyResponse{Project: projectProto(project)}), nil
 }
 
-func (s *Server) ListProjectImageHistory(ctx context.Context, request *connect.Request[rtestv1.ListProjectImageHistoryRequest]) (*connect.Response[rtestv1.ListProjectImageHistoryResponse], error) {
+func (s *Server) ListProjectImageHistory(ctx context.Context, request *connect.Request[outbackv1.ListProjectImageHistoryRequest]) (*connect.Response[outbackv1.ListProjectImageHistoryResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -235,7 +235,7 @@ func (s *Server) ListProjectImageHistory(ctx context.Context, request *connect.R
 	if err != nil {
 		return nil, connectError(err)
 	}
-	response := &rtestv1.ListProjectImageHistoryResponse{Events: make([]*rtestv1.ProjectImageEvent, 0, len(events))}
+	response := &outbackv1.ListProjectImageHistoryResponse{Events: make([]*outbackv1.ProjectImageEvent, 0, len(events))}
 	for _, event := range events {
 		response.Events = append(response.Events, projectImageEventProto(event))
 	}
@@ -257,7 +257,7 @@ func (s *Server) projectConfiguration(ctx context.Context, header http.Header, s
 	return principal, project, nil
 }
 
-func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[rtestv1.PrepareJobRequest]) (*connect.Response[rtestv1.PrepareJobResponse], error) {
+func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[outbackv1.PrepareJobRequest]) (*connect.Response[outbackv1.PrepareJobResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -299,10 +299,10 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[rtestv
 			return nil, connectError(err)
 		}
 	}
-	return connect.NewResponse(&rtestv1.PrepareJobResponse{Job: jobProto(job), Cas: connectionProto(s.config.CASEndpoint, s.config.CASInstance, credential)}), nil
+	return connect.NewResponse(&outbackv1.PrepareJobResponse{Job: jobProto(job), Cas: connectionProto(s.config.CASEndpoint, s.config.CASInstance, credential)}), nil
 }
 
-func (s *Server) StartJob(ctx context.Context, request *connect.Request[rtestv1.StartJobRequest]) (*connect.Response[rtestv1.StartJobResponse], error) {
+func (s *Server) StartJob(ctx context.Context, request *connect.Request[outbackv1.StartJobRequest]) (*connect.Response[outbackv1.StartJobResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -328,10 +328,10 @@ func (s *Server) StartJob(ctx context.Context, request *connect.Request[rtestv1.
 	if err := s.config.Store.Audit(ctx, principal, job.ProjectID, "job.start", job.ID, map[string]string{"root_digest": job.RootDigest}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.StartJobResponse{Job: jobProto(job)}), nil
+	return connect.NewResponse(&outbackv1.StartJobResponse{Job: jobProto(job)}), nil
 }
 
-func (s *Server) GetJob(ctx context.Context, request *connect.Request[rtestv1.GetJobRequest]) (*connect.Response[rtestv1.GetJobResponse], error) {
+func (s *Server) GetJob(ctx context.Context, request *connect.Request[outbackv1.GetJobRequest]) (*connect.Response[outbackv1.GetJobResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -344,10 +344,10 @@ func (s *Server) GetJob(ctx context.Context, request *connect.Request[rtestv1.Ge
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.GetJobResponse{Job: jobProto(job)}), nil
+	return connect.NewResponse(&outbackv1.GetJobResponse{Job: jobProto(job)}), nil
 }
 
-func (s *Server) ListJobs(ctx context.Context, request *connect.Request[rtestv1.ListJobsRequest]) (*connect.Response[rtestv1.ListJobsResponse], error) {
+func (s *Server) ListJobs(ctx context.Context, request *connect.Request[outbackv1.ListJobsRequest]) (*connect.Response[outbackv1.ListJobsResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -370,7 +370,7 @@ func (s *Server) ListJobs(ctx context.Context, request *connect.Request[rtestv1.
 	if err != nil {
 		return nil, connectError(err)
 	}
-	response := &rtestv1.ListJobsResponse{Jobs: make([]*rtestv1.Job, 0, len(page.Jobs)), NextPageToken: page.NextPageToken}
+	response := &outbackv1.ListJobsResponse{Jobs: make([]*outbackv1.Job, 0, len(page.Jobs)), NextPageToken: page.NextPageToken}
 	for _, job := range page.Jobs {
 		refreshed, refreshErr := s.refreshJob(ctx, job)
 		if refreshErr == nil {
@@ -381,7 +381,7 @@ func (s *Server) ListJobs(ctx context.Context, request *connect.Request[rtestv1.
 	return connect.NewResponse(response), nil
 }
 
-func (s *Server) CancelJob(ctx context.Context, request *connect.Request[rtestv1.CancelJobRequest]) (*connect.Response[rtestv1.CancelJobResponse], error) {
+func (s *Server) CancelJob(ctx context.Context, request *connect.Request[outbackv1.CancelJobRequest]) (*connect.Response[outbackv1.CancelJobResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -405,10 +405,10 @@ func (s *Server) CancelJob(ctx context.Context, request *connect.Request[rtestv1
 	if err := s.config.Store.Audit(ctx, principal, job.ProjectID, "job.cancel", job.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.CancelJobResponse{Job: jobProto(job)}), nil
+	return connect.NewResponse(&outbackv1.CancelJobResponse{Job: jobProto(job)}), nil
 }
 
-func (s *Server) StreamJobLogs(ctx context.Context, request *connect.Request[rtestv1.StreamJobLogsRequest], stream *connect.ServerStream[rtestv1.StreamJobLogsResponse]) error {
+func (s *Server) StreamJobLogs(ctx context.Context, request *connect.Request[outbackv1.StreamJobLogsRequest], stream *connect.ServerStream[outbackv1.StreamJobLogsResponse]) error {
 	if request.Msg.Offset < 0 {
 		return connect.NewError(connect.CodeInvalidArgument, errors.New("log offset cannot be negative"))
 	}
@@ -441,7 +441,7 @@ func (s *Server) StreamJobLogs(ctx context.Context, request *connect.Request[rte
 	if job.Status != protocol.StatusPreparing {
 		nextOffset = writer.offset
 	}
-	return stream.Send(&rtestv1.StreamJobLogsResponse{TerminalJob: jobProto(job), NextOffset: nextOffset})
+	return stream.Send(&outbackv1.StreamJobLogsResponse{TerminalJob: jobProto(job), NextOffset: nextOffset})
 }
 
 func (s *Server) followJob(ctx context.Context, job control.Job, output io.Writer) (control.Job, error) {
@@ -490,7 +490,7 @@ func (s *Server) followJob(ctx context.Context, job control.Job, output io.Write
 	}
 }
 
-func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[rtestv1.PrepareBuildRequest]) (*connect.Response[rtestv1.PrepareBuildResponse], error) {
+func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[outbackv1.PrepareBuildRequest]) (*connect.Response[outbackv1.PrepareBuildResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -522,10 +522,10 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[rtes
 			return nil, connectError(err)
 		}
 	}
-	return connect.NewResponse(&rtestv1.PrepareBuildResponse{Build: buildProto(build), Buildkit: connectionProto(s.config.BuildKitEndpoint, "", credential)}), nil
+	return connect.NewResponse(&outbackv1.PrepareBuildResponse{Build: buildProto(build), Buildkit: connectionProto(s.config.BuildKitEndpoint, "", credential)}), nil
 }
 
-func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[rtestv1.FinishBuildRequest]) (*connect.Response[rtestv1.FinishBuildResponse], error) {
+func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[outbackv1.FinishBuildRequest]) (*connect.Response[outbackv1.FinishBuildResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -550,10 +550,10 @@ func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[rtest
 	if err := s.config.Store.Audit(ctx, principal, build.ProjectID, "build.finish", build.ID, map[string]string{"status": string(status)}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.FinishBuildResponse{Build: buildProto(build)}), nil
+	return connect.NewResponse(&outbackv1.FinishBuildResponse{Build: buildProto(build)}), nil
 }
 
-func (s *Server) ExchangeGitHubOIDC(ctx context.Context, request *connect.Request[rtestv1.ExchangeGitHubOIDCRequest]) (*connect.Response[rtestv1.ExchangeGitHubOIDCResponse], error) {
+func (s *Server) ExchangeGitHubOIDC(ctx context.Context, request *connect.Request[outbackv1.ExchangeGitHubOIDCRequest]) (*connect.Response[outbackv1.ExchangeGitHubOIDCResponse], error) {
 	if s.config.OIDCVerifier == nil {
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("GitHub OIDC is not configured"))
 	}
@@ -580,10 +580,10 @@ func (s *Server) ExchangeGitHubOIDC(ctx context.Context, request *connect.Reques
 	if err := s.config.Store.Audit(ctx, principal, trust.ProjectID, "github.exchange", trust.ID, map[string]string{"repository_id": claims.RepositoryID}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.ExchangeGitHubOIDCResponse{Token: issued.Token, ExpiresAt: timestamppb.New(issued.ExpiresAt)}), nil
+	return connect.NewResponse(&outbackv1.ExchangeGitHubOIDCResponse{Token: issued.Token, ExpiresAt: timestamppb.New(issued.ExpiresAt)}), nil
 }
 
-func (s *Server) CreateGitHubTrust(ctx context.Context, request *connect.Request[rtestv1.CreateGitHubTrustRequest]) (*connect.Response[rtestv1.CreateGitHubTrustResponse], error) {
+func (s *Server) CreateGitHubTrust(ctx context.Context, request *connect.Request[outbackv1.CreateGitHubTrustRequest]) (*connect.Response[outbackv1.CreateGitHubTrustResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -598,10 +598,10 @@ func (s *Server) CreateGitHubTrust(ctx context.Context, request *connect.Request
 	if err := s.config.Store.Audit(ctx, principal, trust.ProjectID, "github.trust.create", trust.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.CreateGitHubTrustResponse{Trust: trustProto(trust)}), nil
+	return connect.NewResponse(&outbackv1.CreateGitHubTrustResponse{Trust: trustProto(trust)}), nil
 }
 
-func (s *Server) ListGitHubTrusts(ctx context.Context, request *connect.Request[rtestv1.ListGitHubTrustsRequest]) (*connect.Response[rtestv1.ListGitHubTrustsResponse], error) {
+func (s *Server) ListGitHubTrusts(ctx context.Context, request *connect.Request[outbackv1.ListGitHubTrustsRequest]) (*connect.Response[outbackv1.ListGitHubTrustsResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -610,14 +610,14 @@ func (s *Server) ListGitHubTrusts(ctx context.Context, request *connect.Request[
 	if err != nil {
 		return nil, connectError(err)
 	}
-	response := &rtestv1.ListGitHubTrustsResponse{Trusts: make([]*rtestv1.GitHubTrust, 0, len(trusts))}
+	response := &outbackv1.ListGitHubTrustsResponse{Trusts: make([]*outbackv1.GitHubTrust, 0, len(trusts))}
 	for _, trust := range trusts {
 		response.Trusts = append(response.Trusts, trustProto(trust))
 	}
 	return connect.NewResponse(response), nil
 }
 
-func (s *Server) RevokeGitHubTrust(ctx context.Context, request *connect.Request[rtestv1.RevokeGitHubTrustRequest]) (*connect.Response[rtestv1.RevokeGitHubTrustResponse], error) {
+func (s *Server) RevokeGitHubTrust(ctx context.Context, request *connect.Request[outbackv1.RevokeGitHubTrustRequest]) (*connect.Response[outbackv1.RevokeGitHubTrustResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -628,10 +628,10 @@ func (s *Server) RevokeGitHubTrust(ctx context.Context, request *connect.Request
 	if err := s.config.Store.Audit(ctx, principal, "", "github.trust.revoke", request.Msg.Id, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.RevokeGitHubTrustResponse{}), nil
+	return connect.NewResponse(&outbackv1.RevokeGitHubTrustResponse{}), nil
 }
 
-func (s *Server) CreateDeviceToken(ctx context.Context, request *connect.Request[rtestv1.CreateDeviceTokenRequest]) (*connect.Response[rtestv1.CreateDeviceTokenResponse], error) {
+func (s *Server) CreateDeviceToken(ctx context.Context, request *connect.Request[outbackv1.CreateDeviceTokenRequest]) (*connect.Response[outbackv1.CreateDeviceTokenResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -647,10 +647,10 @@ func (s *Server) CreateDeviceToken(ctx context.Context, request *connect.Request
 	if err := s.config.Store.Audit(ctx, principal, "", "device-token.create", issued.Metadata.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.CreateDeviceTokenResponse{TokenMetadata: tokenProto(issued.Metadata), Token: issued.Secret}), nil
+	return connect.NewResponse(&outbackv1.CreateDeviceTokenResponse{TokenMetadata: tokenProto(issued.Metadata), Token: issued.Secret}), nil
 }
 
-func (s *Server) ListDeviceTokens(ctx context.Context, request *connect.Request[rtestv1.ListDeviceTokensRequest]) (*connect.Response[rtestv1.ListDeviceTokensResponse], error) {
+func (s *Server) ListDeviceTokens(ctx context.Context, request *connect.Request[outbackv1.ListDeviceTokensRequest]) (*connect.Response[outbackv1.ListDeviceTokensResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -659,14 +659,14 @@ func (s *Server) ListDeviceTokens(ctx context.Context, request *connect.Request[
 	if err != nil {
 		return nil, connectError(err)
 	}
-	response := &rtestv1.ListDeviceTokensResponse{Tokens: make([]*rtestv1.DeviceToken, 0, len(tokens))}
+	response := &outbackv1.ListDeviceTokensResponse{Tokens: make([]*outbackv1.DeviceToken, 0, len(tokens))}
 	for _, token := range tokens {
 		response.Tokens = append(response.Tokens, tokenProto(token))
 	}
 	return connect.NewResponse(response), nil
 }
 
-func (s *Server) RevokeDeviceToken(ctx context.Context, request *connect.Request[rtestv1.RevokeDeviceTokenRequest]) (*connect.Response[rtestv1.RevokeDeviceTokenResponse], error) {
+func (s *Server) RevokeDeviceToken(ctx context.Context, request *connect.Request[outbackv1.RevokeDeviceTokenRequest]) (*connect.Response[outbackv1.RevokeDeviceTokenResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -677,10 +677,10 @@ func (s *Server) RevokeDeviceToken(ctx context.Context, request *connect.Request
 	if err := s.config.Store.Audit(ctx, principal, "", "device-token.revoke", request.Msg.Id, nil); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.RevokeDeviceTokenResponse{}), nil
+	return connect.NewResponse(&outbackv1.RevokeDeviceTokenResponse{}), nil
 }
 
-func (s *Server) CreateEnrollmentCode(ctx context.Context, request *connect.Request[rtestv1.CreateEnrollmentCodeRequest]) (*connect.Response[rtestv1.CreateEnrollmentCodeResponse], error) {
+func (s *Server) CreateEnrollmentCode(ctx context.Context, request *connect.Request[outbackv1.CreateEnrollmentCodeRequest]) (*connect.Response[outbackv1.CreateEnrollmentCodeResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
 		return nil, err
@@ -703,10 +703,10 @@ func (s *Server) CreateEnrollmentCode(ctx context.Context, request *connect.Requ
 	if err := s.config.Store.Audit(ctx, principal, "", "enrollment.create", issued.Metadata.ID, map[string]string{"user_id": issued.Metadata.UserID, "device_name": issued.Metadata.DeviceName}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.CreateEnrollmentCodeResponse{Enrollment: enrollmentProto(issued.Metadata), Code: issued.Secret}), nil
+	return connect.NewResponse(&outbackv1.CreateEnrollmentCodeResponse{Enrollment: enrollmentProto(issued.Metadata), Code: issued.Secret}), nil
 }
 
-func (s *Server) ExchangeEnrollmentCode(ctx context.Context, request *connect.Request[rtestv1.ExchangeEnrollmentCodeRequest]) (*connect.Response[rtestv1.ExchangeEnrollmentCodeResponse], error) {
+func (s *Server) ExchangeEnrollmentCode(ctx context.Context, request *connect.Request[outbackv1.ExchangeEnrollmentCodeRequest]) (*connect.Response[outbackv1.ExchangeEnrollmentCodeResponse], error) {
 	if len(request.Msg.Code) < 32 || len(request.Msg.Code) > 256 {
 		return nil, connectError(control.ErrUnauthenticated)
 	}
@@ -718,7 +718,7 @@ func (s *Server) ExchangeEnrollmentCode(ctx context.Context, request *connect.Re
 	if err := s.config.Store.Audit(ctx, principal, "", "enrollment.exchange", enrollment.ID, map[string]string{"device_token_id": issued.Metadata.ID}); err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&rtestv1.ExchangeEnrollmentCodeResponse{DeviceToken: tokenProto(issued.Metadata), Token: issued.Secret}), nil
+	return connect.NewResponse(&outbackv1.ExchangeEnrollmentCodeResponse{DeviceToken: tokenProto(issued.Metadata), Token: issued.Secret}), nil
 }
 
 func (s *Server) authenticate(ctx context.Context, header http.Header) (control.Principal, error) {
@@ -764,7 +764,7 @@ var (
 	cacheNamePattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 )
 
-func (s *Server) validateJob(projectID string, message *rtestv1.PrepareJobRequest) (control.PrepareJob, error) {
+func (s *Server) validateJob(projectID string, message *outbackv1.PrepareJobRequest) (control.PrepareJob, error) {
 	if message.Image == "" || !s.config.AllowUnpinnedImages && !imageDigestPattern.MatchString(message.Image) {
 		return control.PrepareJob{}, errors.New("image must be pinned by sha256 digest")
 	}
@@ -819,13 +819,13 @@ func (s *Server) validateJob(projectID string, message *rtestv1.PrepareJobReques
 	}, nil
 }
 
-func validateCaches(input []*rtestv1.CacheMount) ([]control.CacheMount, error) {
+func validateCaches(input []*outbackv1.CacheMount) ([]control.CacheMount, error) {
 	if len(input) > 16 {
 		return nil, errors.New("a job may declare at most 16 caches")
 	}
 	result := make([]control.CacheMount, 0, len(input))
 	names, targets := map[string]bool{}, map[string]bool{}
-	reserved := []string{"/var/run/docker.sock", "/usr/local/bin/rtest-job-entrypoint"}
+	reserved := []string{"/var/run/docker.sock", "/usr/local/bin/outback-job-entrypoint"}
 	for _, item := range input {
 		if item == nil || !cacheNamePattern.MatchString(item.Name) {
 			return nil, errors.New("cache name must contain 1 to 63 lowercase safe characters")
@@ -857,14 +857,14 @@ func pathsOverlap(first, second string) bool {
 }
 
 type streamWriter struct {
-	stream *connect.ServerStream[rtestv1.StreamJobLogsResponse]
+	stream *connect.ServerStream[outbackv1.StreamJobLogsResponse]
 	offset int64
 }
 
 func (w *streamWriter) Write(data []byte) (int, error) {
 	copyData := append([]byte(nil), data...)
 	w.offset += int64(len(copyData))
-	if err := w.stream.Send(&rtestv1.StreamJobLogsResponse{Data: copyData, NextOffset: w.offset}); err != nil {
+	if err := w.stream.Send(&outbackv1.StreamJobLogsResponse{Data: copyData, NextOffset: w.offset}); err != nil {
 		w.offset -= int64(len(copyData))
 		return 0, err
 	}
@@ -899,23 +899,23 @@ func admissionHash(value any) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func connectionProto(endpoint, instance string, credential pki.Credential) *rtestv1.DataPlaneConnection {
-	return &rtestv1.DataPlaneConnection{
+func connectionProto(endpoint, instance string, credential pki.Credential) *outbackv1.DataPlaneConnection {
+	return &outbackv1.DataPlaneConnection{
 		Endpoint: endpoint, InstanceName: instance, ServerName: credential.ServerName,
 		CaPem: credential.CAPEM, CertificatePem: credential.CertificatePEM, PrivateKeyPem: credential.PrivateKeyPEM,
 		ExpiresAt: timestamppb.New(credential.ExpiresAt),
 	}
 }
 
-func jobProto(job control.Job) *rtestv1.Job {
-	result := &rtestv1.Job{
+func jobProto(job control.Job) *outbackv1.Job {
+	result := &outbackv1.Job{
 		Id: job.ID, ProjectId: job.ProjectID, Image: job.Image, Command: append([]string(nil), job.Command...),
 		WorkingDirectory: job.WorkingDirectory, Environment: cloneMap(job.Environment), RootDigest: job.RootDigest,
 		Status: jobStatusProto(job.Status), Timeout: durationpb.New(job.Timeout), Cpus: job.CPUs, Memory: job.Memory,
 		CreatedAt: timestamppb.New(job.CreatedAt), ErrorMessage: job.ErrorMessage, CancelRequested: job.CancelRequested, WorkerId: job.WorkerID,
 	}
 	for _, cache := range job.Caches {
-		result.Caches = append(result.Caches, &rtestv1.CacheMount{Name: cache.Name, Target: cache.Target})
+		result.Caches = append(result.Caches, &outbackv1.CacheMount{Name: cache.Name, Target: cache.Target})
 	}
 	result.StartedAt, result.FinishedAt = timestamp(job.StartedAt), timestamp(job.FinishedAt)
 	if job.ExitCode != nil {
@@ -925,40 +925,40 @@ func jobProto(job control.Job) *rtestv1.Job {
 	return result
 }
 
-func jobStatusProto(status protocol.Status) rtestv1.JobStatus {
+func jobStatusProto(status protocol.Status) outbackv1.JobStatus {
 	switch status {
 	case protocol.StatusPreparing:
-		return rtestv1.JobStatus_JOB_STATUS_PREPARING
+		return outbackv1.JobStatus_JOB_STATUS_PREPARING
 	case protocol.StatusQueued:
-		return rtestv1.JobStatus_JOB_STATUS_QUEUED
+		return outbackv1.JobStatus_JOB_STATUS_QUEUED
 	case protocol.StatusRunning:
-		return rtestv1.JobStatus_JOB_STATUS_RUNNING
+		return outbackv1.JobStatus_JOB_STATUS_RUNNING
 	case protocol.StatusSucceeded:
-		return rtestv1.JobStatus_JOB_STATUS_SUCCEEDED
+		return outbackv1.JobStatus_JOB_STATUS_SUCCEEDED
 	case protocol.StatusFailed:
-		return rtestv1.JobStatus_JOB_STATUS_FAILED
+		return outbackv1.JobStatus_JOB_STATUS_FAILED
 	case protocol.StatusCancelled:
-		return rtestv1.JobStatus_JOB_STATUS_CANCELLED
+		return outbackv1.JobStatus_JOB_STATUS_CANCELLED
 	case protocol.StatusTimedOut:
-		return rtestv1.JobStatus_JOB_STATUS_TIMED_OUT
+		return outbackv1.JobStatus_JOB_STATUS_TIMED_OUT
 	case protocol.StatusLost:
-		return rtestv1.JobStatus_JOB_STATUS_LOST
+		return outbackv1.JobStatus_JOB_STATUS_LOST
 	default:
-		return rtestv1.JobStatus_JOB_STATUS_UNSPECIFIED
+		return outbackv1.JobStatus_JOB_STATUS_UNSPECIFIED
 	}
 }
 
-func buildProto(build control.Build) *rtestv1.Build {
-	result := &rtestv1.Build{Id: build.ID, ProjectId: build.ProjectID, CreatedAt: timestamppb.New(build.CreatedAt), FinishedAt: timestamp(build.FinishedAt)}
+func buildProto(build control.Build) *outbackv1.Build {
+	result := &outbackv1.Build{Id: build.ID, ProjectId: build.ProjectID, CreatedAt: timestamppb.New(build.CreatedAt), FinishedAt: timestamp(build.FinishedAt)}
 	switch build.Status {
 	case control.BuildRunning:
-		result.Status = rtestv1.BuildStatus_BUILD_STATUS_RUNNING
+		result.Status = outbackv1.BuildStatus_BUILD_STATUS_RUNNING
 	case control.BuildSucceeded:
-		result.Status = rtestv1.BuildStatus_BUILD_STATUS_SUCCEEDED
+		result.Status = outbackv1.BuildStatus_BUILD_STATUS_SUCCEEDED
 	case control.BuildFailed:
-		result.Status = rtestv1.BuildStatus_BUILD_STATUS_FAILED
+		result.Status = outbackv1.BuildStatus_BUILD_STATUS_FAILED
 	case control.BuildCancelled:
-		result.Status = rtestv1.BuildStatus_BUILD_STATUS_CANCELLED
+		result.Status = outbackv1.BuildStatus_BUILD_STATUS_CANCELLED
 	}
 	if build.ExitCode != nil {
 		value := int32(*build.ExitCode)
@@ -967,43 +967,43 @@ func buildProto(build control.Build) *rtestv1.Build {
 	return result
 }
 
-func userProto(user control.User) *rtestv1.User {
-	return &rtestv1.User{Id: user.ID, Name: user.Name, Admin: user.Admin, CreatedAt: timestamppb.New(user.CreatedAt)}
+func userProto(user control.User) *outbackv1.User {
+	return &outbackv1.User{Id: user.ID, Name: user.Name, Admin: user.Admin, CreatedAt: timestamppb.New(user.CreatedAt)}
 }
 
-func projectProto(project control.Project) *rtestv1.Project {
-	return &rtestv1.Project{
+func projectProto(project control.Project) *outbackv1.Project {
+	return &outbackv1.Project{
 		Id: project.ID, Slug: project.Slug, Name: project.Name, CreatedAt: timestamppb.New(project.CreatedAt),
 		ActiveImage: project.ActiveImage, PreviousImage: project.PreviousImage, AllowImageOverrides: project.AllowImageOverrides,
 	}
 }
 
-func projectImageEventProto(event control.ProjectImageEvent) *rtestv1.ProjectImageEvent {
-	return &rtestv1.ProjectImageEvent{
+func projectImageEventProto(event control.ProjectImageEvent) *outbackv1.ProjectImageEvent {
+	return &outbackv1.ProjectImageEvent{
 		Id: event.ID, ProjectId: event.ProjectID, Action: event.Action, Image: event.Image,
 		ReplacedImage: event.ReplacedImage, Actor: event.Actor, CreatedAt: timestamppb.New(event.CreatedAt),
 	}
 }
 
-func trustProto(trust control.GitHubTrust) *rtestv1.GitHubTrust {
+func trustProto(trust control.GitHubTrust) *outbackv1.GitHubTrust {
 	events := append([]string(nil), trust.Events...)
 	sort.Strings(events)
-	return &rtestv1.GitHubTrust{
+	return &outbackv1.GitHubTrust{
 		Id: trust.ID, ProjectId: trust.ProjectID, RepositoryOwnerId: trust.RepositoryOwnerID, RepositoryId: trust.RepositoryID,
 		WorkflowRef: trust.WorkflowRef, Ref: trust.Ref, Environment: trust.Environment, Events: events,
 		CreatedAt: timestamppb.New(trust.CreatedAt), RevokedAt: timestamp(trust.RevokedAt),
 	}
 }
 
-func tokenProto(token control.DeviceToken) *rtestv1.DeviceToken {
-	return &rtestv1.DeviceToken{
+func tokenProto(token control.DeviceToken) *outbackv1.DeviceToken {
+	return &outbackv1.DeviceToken{
 		Id: token.ID, Name: token.Name, UserId: token.UserID, CreatedAt: timestamppb.New(token.CreatedAt),
 		ExpiresAt: timestamp(token.ExpiresAt), LastUsedAt: timestamp(token.LastUsedAt), RevokedAt: timestamp(token.RevokedAt),
 	}
 }
 
-func enrollmentProto(enrollment control.EnrollmentCode) *rtestv1.EnrollmentCode {
-	return &rtestv1.EnrollmentCode{
+func enrollmentProto(enrollment control.EnrollmentCode) *outbackv1.EnrollmentCode {
+	return &outbackv1.EnrollmentCode{
 		Id: enrollment.ID, UserId: enrollment.UserID, DeviceName: enrollment.DeviceName,
 		CreatedAt: timestamppb.New(enrollment.CreatedAt), ExpiresAt: timestamppb.New(enrollment.ExpiresAt),
 		ConsumedAt: timestamp(enrollment.ConsumedAt), FailedAttempts: int32(enrollment.FailedAttempts), MaxAttempts: int32(enrollment.MaxAttempts),
@@ -1040,10 +1040,10 @@ func connectError(err error) error {
 	case errors.Is(err, control.ErrInvalidPageToken):
 		return connect.NewError(connect.CodeInvalidArgument, control.ErrInvalidPageToken)
 	default:
-		return connect.NewError(connect.CodeInternal, errors.New("internal rtest error"))
+		return connect.NewError(connect.CodeInternal, errors.New("internal outback error"))
 	}
 }
 
-var _ rtestv1connect.ControlServiceHandler = (*Server)(nil)
+var _ outbackv1connect.ControlServiceHandler = (*Server)(nil)
 var _ io.Writer = (*streamWriter)(nil)
 var _ io.Writer = (*offsetWriter)(nil)

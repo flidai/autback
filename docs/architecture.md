@@ -1,13 +1,13 @@
 # Architecture
 
-This document describes the implemented shared-service architecture for rtest. The legacy
+This document describes the implemented shared-service architecture for outback. The legacy
 SSH backends remain migration evidence, not the client contract.
 The binding decision and its consequences are recorded in
 [ADR 0001](decisions/0001-shared-service-architecture.md).
 
 ## Product boundary
 
-rtest moves trusted, resource-heavy commands and Docker image builds away from developer
+outback moves trusted, resource-heavy commands and Docker image builds away from developer
 laptops and GitHub-hosted runners. It is project-aware, but it does not define a project
 task language: repositories continue to own commands in Taskfiles, scripts, Makefiles, or
 their CI configuration.
@@ -25,12 +25,12 @@ The core contract is deliberately small:
 - OpenTelemetry and JUnit are optional standard observability and test-result formats.
 
 There are no language-specific runner types, generated preparation hooks, or required
-`.rtest.json` suite definitions in the target contract. A Dev Container adapter can be
+`.outback.json` suite definitions in the target contract. A Dev Container adapter can be
 added later if real consumers need it, but the Dev Container specification is not a CI
 or remote-execution dependency.
 
-Repository identity uses one deliberately small, non-secret `rtest.json` containing only
-the rtest project slug. The CLI resolves an explicit flag, `RTEST_PROJECT`, or the nearest
+Repository identity uses one deliberately small, non-secret `outback.json` containing only
+the outback project slug. The CLI resolves an explicit flag, `OUTBACK_PROJECT`, or the nearest
 link between the working directory and Git root, in that order. This supports nested
 monorepos without turning the file into a task or environment specification.
 
@@ -38,7 +38,7 @@ monorepos without turning the file into a task or environment specification.
 
 ```mermaid
 flowchart LR
-    L["Local rtest CLI\nper-device token"] -->|"Connect RPC over HTTPS :443"| C["rtest control plane"]
+    L["Local outback CLI\nper-device token"] -->|"Connect RPC over HTTPS :443"| C["outback control plane"]
     G["GitHub Actions\nOIDC JWT"] -->|"OIDC exchange over HTTPS :443"| C
     C --> A["Projects, memberships, policy, audit"]
     C --> J["Job admission, status, logs, cancellation"]
@@ -77,7 +77,7 @@ an expiry and are stored server-side only as a keyed digest. Compromise of one l
 not require rotating every user or CI credential.
 
 An administrator enrolls a new laptop with a high-entropy code that expires within 30
-minutes and locks after five failed attempts. `rtest login` reads the code from a hidden
+minutes and locks after five failed attempts. `outback login` reads the code from a hidden
 terminal prompt or stdin, exchanges it once for the ordinary per-device token, and stores
 that durable token in the operating-system credential store. The durable token is never
 placed in a command argument, repository file, or enrollment message. Browser OAuth can
@@ -86,8 +86,8 @@ be added later without changing the resulting device-token model.
 Credential resolution is deterministic:
 
 1. `--token`, for explicit automation and diagnostics;
-2. `RTEST_TOKEN`;
-3. the operating-system credential store populated by `rtest login`;
+2. `OUTBACK_TOKEN`;
+3. the operating-system credential store populated by `outback login`;
 4. GitHub OIDC exchange when the Actions identity variables are present.
 
 A static token may authenticate a person to the control plane. It is never forwarded to
@@ -95,7 +95,7 @@ CAS, BuildKit, Docker, Swarm, or a worker.
 
 ### GitHub Actions
 
-GitHub Actions presents its OIDC JWT to an rtest exchange endpoint with an exact rtest
+GitHub Actions presents its OIDC JWT to an outback exchange endpoint with an exact outback
 audience. The control plane validates the issuer, signature through GitHub's JWKS, audience,
 expiry, not-before time, and an enabled project trust relationship.
 
@@ -104,7 +104,7 @@ configured workflow, ref, environment, and event policy. Repository names are me
 not identity. A successful exchange returns a short-lived project credential bounded to
 the workflow job. A `pull_request` trust must name a protected GitHub environment because
 the OIDC JWT does not contain an immutable head-repository ID. Environment approval is the
-explicit trust gate; unapproved forks and other untrusted PRs never receive an rtest
+explicit trust gate; unapproved forks and other untrusted PRs never receive an outback
 project session.
 
 ### Jobs and builds
@@ -189,7 +189,7 @@ migration:
 | SSH tunnels expose CAS and BuildKit | Job-scoped CAS credentials and build-scoped BuildKit mTLS |
 | One shared legacy server token | Separate user, CI, job/build, and worker identities |
 | Pinned `standard` Go runner | Project-selected, digest-pinned OCI image |
-| `.rtest.json` defines named suites | Existing project tooling supplies arbitrary commands |
+| `.outback.json` defines named suites | Existing project tooling supplies arbitrary commands |
 
 No new product feature should deepen the SSH backend, direct client-to-Docker access, the
 legacy shared-token coordinator, or language-specific runner/profile abstractions.

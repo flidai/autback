@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Autback moves heavy tests and image builds off your laptop and onto compute you control.">
+    <meta name="theme-color" content="#f2eee5">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Autback — send the hard work elsewhere">
+    <meta property="og:description" content="Remote execution for small, trusted engineering teams.">
+    <title>Autback — send the hard work elsewhere</title>
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="script.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="Autback home">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>Autback</span>
+      </a>
+
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="main-navigation">
+        <span class="sr-only">Open navigation</span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+
+      <nav id="main-navigation" class="main-navigation" aria-label="Primary navigation">
+        <a href="#journey">How it works</a>
+        <a href="#proof">Proof</a>
+        <a href="#architecture">Architecture</a>
+        <a class="nav-cta" href="https://github.com/flidai/autback">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section id="top" class="hero" aria-labelledby="hero-title">
+        <div class="contours" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div class="hero-inner">
+          <p class="eyebrow">Remote execution for trusted teams</p>
+          <h1 id="hero-title">Let the laptop<br><em>breathe.</em></h1>
+          <p class="hero-copy">Keep the repository in your hands. Send its heaviest commands to a worker built to carry them.</p>
+          <div class="hero-actions">
+            <a class="button button-dark" href="#journey">Follow the work <span aria-hidden="true">↓</span></a>
+            <a class="button button-light" href="https://github.com/flidai/autback">View the repository <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+        <div class="hero-command" aria-label="Example Autback command">
+          <span class="command-prompt" aria-hidden="true">$</span>
+          <code>autback exec -- task test</code>
+          <span class="command-result"><i aria-hidden="true"></i> worker ready</span>
+        </div>
+        <p class="scroll-cue"><span aria-hidden="true">01</span> Scroll to dispatch</p>
+      </section>
+
+      <section id="journey" class="motion-stage" data-motion-stage aria-labelledby="motion-title">
+        <h2 id="motion-title" class="sr-only">How work moves through Autback</h2>
+        <div class="motion-sticky">
+          <canvas id="scene-canvas" aria-hidden="true"></canvas>
+          <div class="canvas-wash" aria-hidden="true"></div>
+
+          <div class="scene-meta" aria-hidden="true">
+            <span>Dispatch trace</span>
+            <span data-progress-label>00%</span>
+          </div>
+
+          <div class="scene-progress" aria-hidden="true">
+            <span data-progress-bar></span>
+          </div>
+
+          <div class="chapters">
+            <article class="chapter is-active" data-scene="0">
+              <p class="chapter-number">01 / 06</p>
+              <h3 data-reveal>The hard work starts here.</h3>
+              <p>Your editor, browser, calls, and local containers already share one machine. Autback removes the largest competitor.</p>
+            </article>
+
+            <article class="chapter" data-scene="1" aria-hidden="true">
+              <p class="chapter-number">02 / 06</p>
+              <h3 data-reveal>Only the change crosses the wire.</h3>
+              <p>A content-addressed workspace sends missing blobs, not another full copy of your repository.</p>
+            </article>
+
+            <article class="chapter" data-scene="2" aria-hidden="true">
+              <p class="chapter-number">03 / 06</p>
+              <h3 data-reveal>The project arrives already warm.</h3>
+              <p>Source, image layers, modules, and test dependencies remain close to the worker that uses them.</p>
+            </article>
+
+            <article class="chapter" data-scene="3" aria-hidden="true">
+              <p class="chapter-number">04 / 06</p>
+              <h3 data-reveal>One FIFO queue. The whole machine.</h3>
+              <p>Every job gets the worker's elastic CPU and RAM. Parallelism stays inside the job, where the project understands it.</p>
+            </article>
+
+            <article class="chapter" data-scene="4" aria-hidden="true">
+              <p class="chapter-number">05 / 06</p>
+              <h3 data-reveal>Tests run. Images build. Digests return.</h3>
+              <p>Execute any container command or use native Buildx to push once and hand CI an immutable artifact.</p>
+            </article>
+
+            <article class="chapter" data-scene="5" aria-hidden="true">
+              <p class="chapter-number">06 / 06</p>
+              <h3 data-reveal>Your laptop keeps the context. Autback carries the weight.</h3>
+              <p>Same repository. Same command. A remote machine you own, shared by a small team you trust.</p>
+            </article>
+          </div>
+
+          <div class="scene-status" aria-hidden="true">
+            <span data-scene-label>LOCAL</span>
+            <i></i>
+            <span>WORKER</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="proof" class="proof" aria-labelledby="proof-title">
+        <div class="proof-heading">
+          <p class="eyebrow">Measured, not estimated</p>
+          <h2 id="proof-title">The second run is the one that matters.</h2>
+          <p>Warm-cache measurements from the actual LeapView workload on a Hetzner CPX32 worker.</p>
+        </div>
+        <dl class="metric-grid">
+          <div>
+            <dt>Repeat source upload</dt>
+            <dd>0 B</dd>
+            <p>Nothing crosses the wire when content already exists remotely.</p>
+          </div>
+          <div>
+            <dt>Go test execution</dt>
+            <dd>3.89<span>s</span></dd>
+            <p>The project command runs in its declared container environment.</p>
+          </div>
+          <div>
+            <dt>Build and push median</dt>
+            <dd>13.68<span>s</span></dd>
+            <p>Buildx pushes from the worker and returns the immutable digest.</p>
+          </div>
+          <div>
+            <dt>Worker policy</dt>
+            <dd>1<span> job</span></dd>
+            <p>Strict FIFO admission gives the active job the whole machine.</p>
+          </div>
+        </dl>
+      </section>
+
+      <section id="architecture" class="architecture" aria-labelledby="architecture-title">
+        <div class="architecture-intro">
+          <p class="eyebrow">Familiar pieces, deliberately composed</p>
+          <h2 id="architecture-title">No new pipeline language.</h2>
+          <p>Autback is a thin control plane around standards your repositories already understand.</p>
+        </div>
+        <div class="architecture-flow" aria-label="Autback architecture flow">
+          <article>
+            <span>01</span>
+            <h3>Project</h3>
+            <p>Repository identity, command, and container image.</p>
+            <strong>CLI + OCI</strong>
+          </article>
+          <i aria-hidden="true">→</i>
+          <article>
+            <span>02</span>
+            <h3>Control</h3>
+            <p>Token or OIDC authentication and strict FIFO admission.</p>
+            <strong>Connect + SQLite</strong>
+          </article>
+          <i aria-hidden="true">→</i>
+          <article>
+            <span>03</span>
+            <h3>Worker</h3>
+            <p>Content-addressed source, private Docker, and native builds.</p>
+            <strong>REAPI + Buildx</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="closing" aria-labelledby="closing-title">
+        <div class="closing-particles" aria-hidden="true"></div>
+        <p class="eyebrow">One machine. Your rules.</p>
+        <h2 id="closing-title">Send the hard work<br><em>elsewhere.</em></h2>
+        <p>Open-source remote execution for the small, trusted team.</p>
+        <div class="hero-actions">
+          <a class="button button-accent" href="https://github.com/flidai/autback">Explore Autback <span aria-hidden="true">↗</span></a>
+          <a class="button button-outline" href="https://github.com/flidai/autback/tree/main/docs">Read the architecture <span aria-hidden="true">→</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="brand footer-brand" href="#top">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>Autback</span>
+      </a>
+      <p>Self-hosted remote execution for small, trusted teams.</p>
+      <nav aria-label="Footer navigation">
+        <a href="#journey">How it works</a>
+        <a href="#proof">Benchmarks</a>
+        <a href="#architecture">Architecture</a>
+        <a href="https://github.com/flidai/autback">GitHub</a>
+      </nav>
+      <p class="footer-license">Apache-2.0 · Built on open standards</p>
+    </footer>
+
+    <noscript>
+      <p class="noscript">The animated journey needs JavaScript. All product details remain available below it.</p>
+    </noscript>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+name: Autback POC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: autback-poc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    environment: autback-poc
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Autback
+        uses: ./action/setup-autback
+        with:
+          version: 0.1.0
+          service-url: ${{ vars.AUTBACK_SERVICE_URL }}
+          project: poc
+          image: ${{ vars.AUTBACK_PROJECT_IMAGE }}
+          ca-certificate: ${{ vars.AUTBACK_CA_CERTIFICATE }}
+
+      - name: Check worker dependencies
+        run: autback doctor
+
+      - name: Run Testcontainers remotely
+        working-directory: examples/go-redis
+        run: autback exec -- go test -count=1 -v ./...

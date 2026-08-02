@@ -1,0 +1,74 @@
+version: '3'
+
+vars:
+  BUF_VERSION: v1.57.2
+
+tasks:
+  test:
+    cmds:
+      - go test ./...
+      - task: proto:check
+      - task: terraform:check
+
+  proto:check:
+    desc: Lint protobufs, reject v1 breakage, and verify committed generated clients
+    cmds:
+      - go run github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}} lint
+      - go run github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}} breaking --against api/compat/control-v1.binpb
+      - go run github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}} generate
+      - git diff --exit-code -- internal/gen
+
+  terraform:check:
+    desc: Initialize providers without a backend and validate the Terraform module
+    cmds:
+      - terraform -chdir=infra fmt -check -recursive
+      - |
+        set -eu
+        validation_dir="$(mktemp -d)"
+        trap 'rm -rf "${validation_dir}"' EXIT
+        TF_DATA_DIR="${validation_dir}" terraform -chdir=infra init -backend=false -input=false
+        TF_DATA_DIR="${validation_dir}" terraform -chdir=infra validate
+
+  fmt:
+    cmds:
+      - gofmt -w cmd internal examples
+      - terraform -chdir=infra fmt -recursive
+
+  provision:
+    cmds:
+      - ./scripts/provision.zsh
+
+  deploy:
+    desc: Deploy the shared service to an explicitly supplied existing host; never provisions
+    cmds:
+      - ./scripts/deploy-swarm.zsh
+
+  deploy:service:
+    desc: Alias for the canonical deployment
+    cmds:
+      - task: deploy
+
+  e2e:
+    desc: Run the complete shared-service proof locally
+    cmds:
+      - ./scripts/e2e-service-local.zsh
+
+  e2e:service:local:
+    desc: Alias for the canonical local proof
+    cmds:
+      - task: e2e
+
+  e2e:service:
+    desc: Run the shared-service proof against an explicitly supplied existing host
+    cmds:
+      - ./scripts/e2e-service.zsh
+
+  benchmark:
+    desc: Prime and measure a real project command through autback
+    cmds:
+      - ./scripts/benchmark.zsh {{.CLI_ARGS}}
+
+  benchmark:compare:
+    desc: Run a controlled multi-candidate command benchmark from a JSON specification
+    cmds:
+      - go run ./cmd/autback-benchmark {{.CLI_ARGS}}

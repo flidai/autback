@@ -1,0 +1,237 @@
+# Benchmarks
+
+## Controlled comparison harness
+
+`autback-benchmark` measures multiple argv-based candidates against one exact worktree.
+The checked-in LeapView specifications live under `.autback/benchmarks/` and compare:
+
+- native Docker Buildx, autback Buildx, and Depot for `Dockerfile` and `Dockerfile.site`;
+- local Go and generic `autback exec` for the two focused Testcontainers workloads.
+
+Every specification uses one excluded warmup followed by five serial measured runs. It
+passes identical trailing build/test arguments to every candidate and requires a clean
+source worktree. Test samples execute in new detached worktrees so ignored derived files
+and mutations from an earlier candidate cannot influence a later one. Image samples stay
+in the same read-only source worktree because changing local-context paths defeats the
+cache identity used by BuildKit and does not represent normal repeated builds. The runner
+records the Git commit and a content fingerprint, preserves a log for every run, and writes
+median plus nearest-rank p95 to `summary.json`. An unavailable optional
+candidate is labeled `unavailable`; it is never replaced with an estimate or an older
+cross-commit measurement.
+
+Run a specification from the `autback` module, choosing an untracked output directory:
+
+```console
+task benchmark:compare -- \
+  --spec ../.autback/benchmarks/testcontainers-lifecycle.json \
+  --output .tmp/benchmarks/testcontainers-lifecycle
+
+DEPOT_PROJECT_ID=<project-id> task benchmark:compare -- \
+  --spec ../.autback/benchmarks/production-image.json \
+  --output .tmp/benchmarks/production-image
+```
+
+Image comparisons intentionally include `--load`, because both local development and
+the current CI smoke tests consume the resulting image from the caller's Docker daemon.
+The runner records end-to-end command latency. Provider-internal phase timing remains in
+each raw log and must not be presented as a directly comparable metric unless all three
+providers expose the same boundary.
+
+The focused test specifications call repository-owned Taskfile workloads. Those tasks
+force normal source generation before `go test` on both local and remote candidates.
+autback itself has no LeapView preparation hook and ignored generated files are never added
+to its generic source-transfer contract.
+
+## Controlled provider result
+
+The controlled run on 2026-08-02 used one excluded warmup and five serial measured runs.
+Both candidates in each comparison used the same clean commit, source fingerprint,
+Dockerfile arguments, platform, tag, and `--load` output contract.
+
+| Workload | Candidate | Median | p95 | Measured values |
+| --- | --- | ---: | ---: | --- |
+| Generated Testcontainers lifecycle | local | 43.88 s | 44.46 s | 43.46, 44.19, 43.88, 44.46, 42.87 s |
+| Generated Testcontainers lifecycle | autback | 72.90 s | 75.53 s | 71.13, 74.78, 72.90, 75.53, 72.51 s |
+| Public site image | autback | 15.13 s | 16.90 s | 16.90, 15.13, 14.93, 14.62, 15.34 s |
+| Public site image | Depot | 13.17 s | 199.45 s | 130.70, 199.45, 13.17, 7.88, 7.26 s |
+| Production image | autback | 29.19 s | 30.34 s | 30.34, 29.19, 29.23, 28.82, 28.72 s |
+| Production image | Depot | 31.00 s | 138.68 s | 138.68, 34.00, 31.00, 7.40, 7.80 s |
+
+Every measured autback test run transferred `0 B` of source. The CPX32 was approximately
+1.66 times slower than the laptop for the generated Testcontainers command, reflecting
+the worker's 3.5-vCPU job reservation plus the remote boundary. The result still moves
+the sustained CPU load off the laptop, which is the product objective.
+
+autback's BuildKit cache was immediately stable after its excluded warmup. Depot produced
+the fastest eventual hot image loads—about 7 to 8 seconds—but its first measured runs
+continued rebuilding while cache state settled, creating high p95 values in this sample.
+The production/site difference in autback (29 versus 15 seconds) indicates that native
+remote Buildx `--load` remains sensitive to output image size. Depot's optimized load
+path largely removes that cost once fully hot.
+
+No local image median is reported. OrbStack repeatedly rebuilt the source-generation
+layer for an unchanged commit instead of producing a valid warm hit, so the runs were
+stopped rather than mislabeled as cached performance. During diagnosis, adding `**/.tmp`
+to `.dockerignore` reduced the context from 304 MB to 108 MB, but the constrained local
+builder still did not retain the expensive layer reliably.
+
+The compact machine-readable evidence is
+[`leapview-provider-comparison/summary.json`](../evidence/benchmarks/leapview-provider-comparison/summary.json).
+
+## Hosted digest-push proof
+
+The LeapView consumer then replaced trusted `--load` jobs with the standard registry
+handoff documented in [Build, push, and smoke-test an immutable image](build-push-smoke.md).
+GitHub Actions run [30742453481, attempt 2](https://github.com/flidai/leapview/actions/runs/30742453481)
+reran the exact unchanged merge commit after the first complete run had populated the
+cache. The remote builder pushed to GHCR, Buildx reported the immutable manifest digest,
+and a separate Autback job exercised that exact digest on the worker.
+
+| Workload | Warm build + push | Remote exact-digest check | Source upload | GitHub job |
+| --- | ---: | ---: | ---: | ---: |
+| Public site image | 11.96 s | 5.50 s smoke | 0 B | 62 s |
+| Production runner image | 9.54 s | — | — | part of production job |
+| Production application image | 13.41 s | 56.11 s full qualification | 0 B | 139 s |
+
+The GitHub job duration includes checkout, tool installation, Buildx setup, registry
+login, OIDC exchange, and post-job cleanup. The build column starts when Autback reports
+the native Buildx backend and ends when the digest-addressed manifest push completes.
+The production qualification includes image pull, smoke validation, API generation,
+remote CLI compilation, Compose startup, and browser checks; it is intentionally broader
+than a build benchmark.
+
+This result removes the production image-size penalty seen in the earlier `--load`
+comparison: the production build-and-push was 13.41 seconds instead of Autback's 29.19
+second `--load` median. It is also below the earlier Depot 31.00 second median, while
+Depot's final fully settled samples remained faster at roughly 7–8 seconds. The site
+result was 11.96 seconds versus the earlier 15.13 second Autback and 13.17 second Depot
+medians. These comparisons describe the observed runs, not a new five-sample
+distribution; the committed evidence labels the hosted proof as a single warm repeat.
+
+The exact runner digest from this proof was activated only after both image jobs passed.
+A default-image verification reported Docker Compose v5.0.0 and completed in 1.665
+seconds with `0 B` uploaded. The prior runner digest remains in the audited image history
+for one-command rollback.
+
+The machine-readable evidence is
+[`leapview-digest-push-warm/summary.json`](../evidence/benchmarks/leapview-digest-push-warm/summary.json).
+
+### Controlled warm distribution
+
+A dedicated, isolated workflow dispatch then ran one excluded warmup followed by five
+serial samples per workload. GitHub Actions run
+[30743918183](https://github.com/flidai/leapview/actions/runs/30743918183) used commit
+`ae2380d02832968842eff6d6fd6c972a855cb4fb`. Each sample measured the complete Autback
+CLI boundary: project-scoped OIDC authentication, scoped BuildKit mTLS setup, native
+`buildx --push`, immutable digest capture, and a second remote job exercising that exact
+digest.
+
+| Workload | Build + push median | Build + push p95 | Exact-digest check median | Exact-digest check p95 | Total median | Total p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Public site image | 13.31 s | 13.51 s | 8.77 s | 51.67 s | 22.10 s | 65.18 s |
+| Production image | 13.68 s | 13.94 s | 13.54 s | 13.94 s | 27.46 s | 27.69 s |
+
+The production samples are tightly clustered. Four of five site checks completed in
+8.76–9.19 seconds; the first measured site check took 51.67 seconds while other work was
+active on the single CPX32. The table intentionally retains that contention tail. It
+shows that cached builds are stable while exact-digest execution latency still depends
+on shared-worker capacity and should be protected with queueing or concurrency limits.
+
+The full sorted distributions and every digest are in
+[`controlled-summary.json`](../evidence/benchmarks/leapview-digest-push-warm/controlled-summary.json),
+with per-run boundaries in
+[`controlled-results.ndjson`](../evidence/benchmarks/leapview-digest-push-warm/controlled-results.ndjson).
+
+## Shared-service local proof
+
+The generic service E2E on 2026-08-01 ran a project-selected pinned Go image through
+Connect/HTTPS, job-scoped CAS mTLS, private Swarm scheduling, and Testcontainers. Its
+repeat input upload was `0 B`; the final cached end-to-end sample was 2.800 seconds. A native
+Buildx build then reached BuildKit through a separate build-scoped certificate and hit
+its cached layer. The committed machine-readable result is
+[`evidence/service-local/proof.json`](../evidence/service-local/proof.json); raw logs are
+intentionally retained only as local operational output.
+
+This is a functional boundary benchmark on the constrained local OrbStack VM, not a fair
+capacity comparison with the developer laptop or CPX32. The CPX32 warm workload numbers
+below remain the useful remote compute baseline.
+
+## Shared-service CPX32 proof
+
+The final generic service proof on the existing Hetzner CPX32 completed its warm run in
+3.893 seconds with `0 B` uploaded; its preceding sample was 3.807 seconds. Testcontainers,
+timeout, cancellation, durable FIFO queueing, and native BuildKit mTLS all passed. An
+earlier first deployment sample uploaded only 590 bytes because the prior legacy
+benchmarks had already populated most CAS/image content. The committed proof is
+[`evidence/service/proof.json`](../evidence/service/proof.json).
+
+## Legacy LeapView Testcontainers baseline
+
+Measured on 2026-08-01 at LeapView merge commit
+`23248fa0c4ebbef579b10f090a7ad26e7ccc67f3` using the existing Hetzner CPX32:
+
+- worker: 4 vCPU, 8 GB RAM;
+- job reservation and limit: 2.5 vCPU, 5 GB RAM;
+- one priming run excluded, followed by five serial measured runs;
+- source snapshot: 1,921 files, 26.2 MiB;
+- every measured run transferred `0 B` through CAS;
+- `go test -count=1` forced the tests to execute while retaining dependency/build caches;
+- pinned Docker and Testcontainers images were already present for measured runs.
+
+| Workload | End-to-end median | End-to-end p95 | Remote median | autback boundary median |
+| --- | ---: | ---: | ---: | ---: |
+| MinIO Parquet refresh contract | 29.04 s | 29.70 s | 24.53 s | 4.51 s |
+| Testcontainers qualification lifecycle | 21.91 s | 22.41 s | 17.42 s | 4.52 s |
+
+“End-to-end” starts before source selection/CAS negotiation and stops after the CLI has
+reported the terminal result. “Remote” is the Swarm task lifetime. “autback boundary” is
+their difference and, for this pre-service client, included local input hashing, zero-byte
+CAS negotiation, SSH setup, Swarm submission/status, and final result retrieval. Current
+clients use only the Connect/HTTPS service boundary measured in the preceding sections.
+
+The committed five-run summaries are
+[`leapview-minio-warm/summary.json`](../evidence/benchmarks/leapview-minio-warm/summary.json)
+and
+[`leapview-testcontainers-lifecycle-warm/summary.json`](../evidence/benchmarks/leapview-testcontainers-lifecycle-warm/summary.json).
+Per-run logs are intentionally retained only as local operational output.
+
+The benchmark does not report a cold-cache number. Source-generation and build-tag
+configuration were corrected during initial setup, which seeded parts of CAS, Docker,
+and Go caches. Clearing shared worker caches solely to manufacture a cold number would
+disturb the useful POC state and is not necessary for the primary warm-cache decision.
+
+## Findings
+
+LeapView's build-only generated Go packages are intentionally gitignored. The benchmark
+ran the normal source-generation step once and explicitly included those derived files in
+the immutable input snapshot; generation time is outside the measurements. LeapView's
+project image and repository command must make that preparation reproducible without
+weakening Git ignore semantics. The project OCI image supplies the toolchain, and a
+repository-owned command such as `task test` performs generation and testing inside one
+remote job.
+
+The first full qualification attempt also found that Debian Bookworm's `docker.io` CLI
+only supported API 1.41, while the worker's Docker 29 daemon requires API 1.44 or newer.
+The then-current runner was corrected to copy the official digest-pinned Docker 29.1.3
+CLI. After that upgrade, the complete merged qualification lifecycle passed both its
+`docker-cli` and `testcontainers` implementations remotely in one job. Autback no longer
+ships that language-specific runner; the same dependency now belongs in LeapView's OCI
+project image.
+
+This legacy run established a roughly 4.5-second boundary. The current service proof above
+replaced the SSH client path and reduced that boundary. More CPU can reduce Go compilation
+and test execution, but it does not remove fixed CAS, control-plane, or Swarm lifecycle
+latency.
+
+## LeapView canonical CI cutover
+
+The final warm-cache cutover run executed the repository's unmodified `task ci` contract
+on the existing CPX32 in 652.317 seconds (10m52.317s). CAS transferred `0 B`. This was not
+a reduced benchmark: generation verification, browser and Go suites, Testcontainers,
+vet, race checks, route QA, and both Terraform deployment validations all passed. The
+runner reserved 3.5 vCPU and 6 GiB from the 4-vCPU/8-GiB worker.
+
+The machine-readable result is
+[`service/leapview-cutover.json`](../evidence/service/leapview-cutover.json), and the
+operational cutover and rollback procedure is in
+[`leapview-cutover.md`](leapview-cutover.md).

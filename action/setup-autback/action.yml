@@ -1,0 +1,111 @@
+name: Set up autback
+description: Install a verified autback release and configure GitHub OIDC access to a shared service.
+
+inputs:
+  version:
+    description: Exact autback release version to install.
+    required: false
+    default: "0.1.0"
+  repository:
+    description: GitHub repository that owns v* release assets.
+    required: false
+    default: flidai/autback
+  service-url:
+    description: HTTPS URL of the autback control plane.
+    required: true
+  project:
+    description: autback project slug or ID authorized for this workflow.
+    required: true
+  image:
+    description: Optional digest-pinned OCI image override; the project default is used when omitted.
+    required: false
+  ca-certificate:
+    description: Optional PEM CA certificate when the service does not use a publicly trusted HTTPS certificate.
+    required: false
+  oidc-audience:
+    description: GitHub OIDC audience; defaults to the service URL.
+    required: false
+  job-cpus:
+    description: CPU limit and reservation for each test job.
+    required: false
+    default: "2"
+  job-memory:
+    description: Memory limit and reservation for each test job.
+    required: false
+    default: 4g
+
+outputs:
+  install-source:
+    description: Whether the CLI came from cache or a verified release.
+    value: ${{ steps.install.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore pinned autback CLI
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/autback/bin
+        key: autback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install pinned autback CLI
+      id: install
+      shell: bash
+      env:
+        AUTBACK_VERSION: ${{ inputs.version }}
+        AUTBACK_REPOSITORY: ${{ inputs.repository }}
+        AUTBACK_INSTALL_ROOT: ${{ runner.temp }}/autback
+      run: "${GITHUB_ACTION_PATH}/install-release.sh"
+
+    - name: Cache verified autback release
+      if: steps.cache.outputs.cache-hit != 'true' && steps.install.outputs.source == 'release'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/autback/bin
+        key: autback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Configure autback
+      shell: bash
+      env:
+        INPUT_SERVICE_URL: ${{ inputs.service-url }}
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_CA_CERTIFICATE: ${{ inputs.ca-certificate }}
+        INPUT_OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
+        INPUT_JOB_CPUS: ${{ inputs.job-cpus }}
+        INPUT_JOB_MEMORY: ${{ inputs.job-memory }}
+      run: |
+        set -euo pipefail
+        install_root="${RUNNER_TEMP}/autback"
+        bin_dir="${install_root}/bin"
+        config_file="${install_root}/config.json"
+        ca_file=""
+
+        if [[ -n "${INPUT_CA_CERTIFICATE}" ]]; then
+          ca_file="${install_root}/ca.pem"
+          umask 077
+          printf '%s\n' "${INPUT_CA_CERTIFICATE}" > "${ca_file}"
+          chmod 0600 "${ca_file}"
+        fi
+
+        audience="${INPUT_OIDC_AUDIENCE:-${INPUT_SERVICE_URL}}"
+        umask 077
+        jq -n \
+          --arg url "${INPUT_SERVICE_URL}" \
+          --arg image "${INPUT_IMAGE}" \
+          --arg ca "${ca_file}" \
+          --arg audience "${audience}" \
+          --arg cpus "${INPUT_JOB_CPUS}" \
+          --arg memory "${INPUT_JOB_MEMORY}" \
+          '{
+            url: $url,
+            service: ({cpus: $cpus, memory: $memory, oidc_audience: $audience}
+              + if $image == "" then {} else {image: $image} end
+              + if $ca == "" then {} else {ca_cert_file: $ca} end)
+          }' > "${config_file}"
+        chmod 0600 "${config_file}"
+
+        printf '%s\n' "${bin_dir}" >> "${GITHUB_PATH}"
+        printf 'AUTBACK_CONFIG=%s\n' "${config_file}" >> "${GITHUB_ENV}"
+        printf 'AUTBACK_PROJECT=%s\n' "${INPUT_PROJECT}" >> "${GITHUB_ENV}"

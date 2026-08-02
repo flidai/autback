@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/flidai/outback/internal/control"
-	"github.com/flidai/outback/internal/control/controlapi"
-	"github.com/flidai/outback/internal/control/dispatcher"
-	"github.com/flidai/outback/internal/control/pki"
-	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
-	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
-	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/control"
+	"github.com/flidai/autback/internal/control/controlapi"
+	"github.com/flidai/autback/internal/control/dispatcher"
+	"github.com/flidai/autback/internal/control/pki"
+	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
+	autbackv1 "github.com/flidai/autback/internal/gen/rtest/v1"
+	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
+	"github.com/flidai/autback/internal/protocol"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -32,7 +32,7 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
-	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		IdempotencyKey: "job-lifecycle-1",
 		Project:        fixture.bootstrap.Project.Slug,
 		Image:          "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64),
@@ -43,20 +43,20 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Msg.Job.Status != outbackv1.JobStatus_JOB_STATUS_PREPARING || prepared.Msg.Cas == nil || len(prepared.Msg.Cas.CertificatePem) == 0 {
+	if prepared.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || prepared.Msg.Cas == nil || len(prepared.Msg.Cas.CertificatePem) == 0 {
 		t.Fatalf("prepared = %#v", prepared.Msg)
 	}
 	if fixture.scheduler.createdCount() != 0 {
 		t.Fatal("job was scheduled before CAS upload completed")
 	}
 
-	started, err := client.StartJob(ctx, connect.NewRequest(&outbackv1.StartJobRequest{
+	started, err := client.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{
 		Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("a", 64) + "/123",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixture.scheduler.createdCount() != 1 || started.Msg.Job.Status != outbackv1.JobStatus_JOB_STATUS_QUEUED {
+	if fixture.scheduler.createdCount() != 1 || started.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_QUEUED {
 		t.Fatalf("created=%d started=%#v", fixture.scheduler.createdCount(), started.Msg.Job)
 	}
 	created := fixture.scheduler.created[0]
@@ -65,19 +65,19 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	}
 
 	fixture.scheduler.complete(prepared.Msg.Job.Id, protocol.StatusSucceeded, 0)
-	got, err := client.GetJob(ctx, connect.NewRequest(&outbackv1.GetJobRequest{Id: prepared.Msg.Job.Id}))
+	got, err := client.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: prepared.Msg.Job.Id}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Msg.Job.Status != outbackv1.JobStatus_JOB_STATUS_SUCCEEDED || got.Msg.Job.ExitCode == nil || *got.Msg.Job.ExitCode != 0 {
+	if got.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_SUCCEEDED || got.Msg.Job.ExitCode == nil || *got.Msg.Job.ExitCode != 0 {
 		t.Fatalf("job = %#v", got.Msg.Job)
 	}
-	stream, err := client.StreamJobLogs(ctx, connect.NewRequest(&outbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id}))
+	stream, err := client.StreamJobLogs(ctx, connect.NewRequest(&autbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	var terminal *outbackv1.Job
+	var terminal *autbackv1.Job
 	for stream.Receive() {
 		output.Write(stream.Msg().Data)
 		if stream.Msg().TerminalJob != nil {
@@ -87,7 +87,7 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "remote output\n" || terminal == nil || terminal.Status != outbackv1.JobStatus_JOB_STATUS_SUCCEEDED {
+	if output.String() != "remote output\n" || terminal == nil || terminal.Status != autbackv1.JobStatus_JOB_STATUS_SUCCEEDED {
 		t.Fatalf("output=%q terminal=%#v", output.String(), terminal)
 	}
 }
@@ -96,27 +96,27 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
-	prepareJob := func(key string) *outbackv1.Job {
+	prepareJob := func(key string) *autbackv1.Job {
 		t.Helper()
-		prepared, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+		prepared, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 			IdempotencyKey: key, Project: fixture.bootstrap.Project.Slug,
 			Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"task", "ci"}, Timeout: durationpb.New(time.Minute),
 		}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		started, err := client.StartJob(ctx, connect.NewRequest(&outbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("a", 64) + "/1"}))
+		started, err := client.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("a", 64) + "/1"}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return started.Msg.Job
 	}
 	first := prepareJob("fifo-first-job")
-	build, err := client.PrepareBuild(ctx, connect.NewRequest(&outbackv1.PrepareBuildRequest{Project: fixture.bootstrap.Project.Slug, IdempotencyKey: "fifo-build-0001"}))
+	build, err := client.PrepareBuild(ctx, connect.NewRequest(&autbackv1.PrepareBuildRequest{Project: fixture.bootstrap.Project.Slug, IdempotencyKey: "fifo-build-0001"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if build.Msg.Build.Status != outbackv1.BuildStatus_BUILD_STATUS_QUEUED || build.Msg.Buildkit != nil {
+	if build.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_QUEUED || build.Msg.Buildkit != nil {
 		t.Fatalf("queued build = %#v", build.Msg)
 	}
 	second := prepareJob("fifo-second-job")
@@ -125,17 +125,17 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	}
 
 	fixture.scheduler.complete(first.Id, protocol.StatusSucceeded, 0)
-	if _, err := client.GetJob(ctx, connect.NewRequest(&outbackv1.GetJobRequest{Id: first.Id})); err != nil {
+	if _, err := client.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: first.Id})); err != nil {
 		t.Fatal(err)
 	}
-	runningBuild, err := client.GetBuild(ctx, connect.NewRequest(&outbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
+	runningBuild, err := client.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runningBuild.Msg.Build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
+	if runningBuild.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
 		t.Fatalf("admitted build = %#v", runningBuild.Msg)
 	}
-	if _, err := client.FinishBuild(ctx, connect.NewRequest(&outbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
+	if _, err := client.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
 		t.Fatal(err)
 	}
 	if fixture.scheduler.createdCount() != 2 || fixture.scheduler.created[1].ID != second.Id {
@@ -150,7 +150,7 @@ func TestProjectImageActivationResolvesDefaultAndRollbackIsAudited(t *testing.T)
 	first := "ghcr.io/example/runner@sha256:" + strings.Repeat("a", 64)
 	second := "ghcr.io/example/runner@sha256:" + strings.Repeat("b", 64)
 
-	activated, err := client.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{
+	activated, err := client.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{
 		Project: fixture.bootstrap.Project.Slug, Image: first,
 	}))
 	if err != nil {
@@ -159,7 +159,7 @@ func TestProjectImageActivationResolvesDefaultAndRollbackIsAudited(t *testing.T)
 	if activated.Msg.Project.ActiveImage != first || !activated.Msg.Project.AllowImageOverrides {
 		t.Fatalf("activated project = %#v", activated.Msg.Project)
 	}
-	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		IdempotencyKey: "default-image-job", Project: fixture.bootstrap.Project.Slug,
 		Command: []string{"go", "version"}, Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
 	}))
@@ -170,19 +170,19 @@ func TestProjectImageActivationResolvesDefaultAndRollbackIsAudited(t *testing.T)
 		t.Fatalf("resolved image = %q, want %q", prepared.Msg.Job.Image, first)
 	}
 
-	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{
+	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{
 		Project: fixture.bootstrap.Project.Slug, Image: second,
 	})); err != nil {
 		t.Fatal(err)
 	}
-	rolledBack, err := client.RollbackProjectImage(ctx, connect.NewRequest(&outbackv1.RollbackProjectImageRequest{Project: fixture.bootstrap.Project.Slug}))
+	rolledBack, err := client.RollbackProjectImage(ctx, connect.NewRequest(&autbackv1.RollbackProjectImageRequest{Project: fixture.bootstrap.Project.Slug}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rolledBack.Msg.Project.ActiveImage != first || rolledBack.Msg.Project.PreviousImage != second {
 		t.Fatalf("rolled back project = %#v", rolledBack.Msg.Project)
 	}
-	history, err := client.ListProjectImageHistory(ctx, connect.NewRequest(&outbackv1.ListProjectImageHistoryRequest{Project: fixture.bootstrap.Project.Slug}))
+	history, err := client.ListProjectImageHistory(ctx, connect.NewRequest(&autbackv1.ListProjectImageHistoryRequest{Project: fixture.bootstrap.Project.Slug}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,14 +197,14 @@ func TestProjectImageActivationFailsClosedBeforeMutation(t *testing.T) {
 	ctx := context.Background()
 	good := "ghcr.io/example/runner@sha256:" + strings.Repeat("c", 64)
 	bad := "ghcr.io/example/runner@sha256:" + strings.Repeat("d", 64)
-	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{Project: "example", Image: good})); err != nil {
+	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{Project: "example", Image: good})); err != nil {
 		t.Fatal(err)
 	}
 	fixture.scheduler.validateErr = errors.New("registry unavailable")
-	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{Project: "example", Image: bad})); connect.CodeOf(err) != connect.CodeUnavailable {
+	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{Project: "example", Image: bad})); connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("activation error = %v", err)
 	}
-	projects, err := client.ListProjects(ctx, connect.NewRequest(&outbackv1.ListProjectsRequest{}))
+	projects, err := client.ListProjects(ctx, connect.NewRequest(&autbackv1.ListProjectsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,13 +219,13 @@ func TestProjectImageOverridePolicyIsEnforcedAtAdmission(t *testing.T) {
 	ctx := context.Background()
 	active := "ghcr.io/example/runner@sha256:" + strings.Repeat("e", 64)
 	override := "ghcr.io/example/runner@sha256:" + strings.Repeat("f", 64)
-	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{Project: "example", Image: active})); err != nil {
+	if _, err := client.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{Project: "example", Image: active})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.SetProjectImagePolicy(ctx, connect.NewRequest(&outbackv1.SetProjectImagePolicyRequest{Project: "example", AllowImageOverrides: false})); err != nil {
+	if _, err := client.SetProjectImagePolicy(ctx, connect.NewRequest(&autbackv1.SetProjectImagePolicyRequest{Project: "example", AllowImageOverrides: false})); err != nil {
 		t.Fatal(err)
 	}
-	_, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	_, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		IdempotencyKey: "denied-override-job", Project: "example", Image: override,
 		Command: []string{"true"}, Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
 	}))
@@ -238,11 +238,11 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
-	request := &outbackv1.PrepareJobRequest{
+	request := &autbackv1.PrepareJobRequest{
 		IdempotencyKey: "generic-cache-job", Project: "example",
 		Image:   "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64),
 		Command: []string{"go", "test", "./..."}, Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
-		Caches: []*outbackv1.CacheMount{{Name: "modules", Target: "/go/pkg/mod"}, {Name: "go-build", Target: "/root/.cache/go-build"}},
+		Caches: []*autbackv1.CacheMount{{Name: "modules", Target: "/go/pkg/mod"}, {Name: "go-build", Target: "/root/.cache/go-build"}},
 	}
 	prepared, err := client.PrepareJob(ctx, connect.NewRequest(request))
 	if err != nil {
@@ -254,17 +254,17 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 
 	invalid := []struct {
 		name   string
-		caches []*outbackv1.CacheMount
+		caches []*autbackv1.CacheMount
 	}{
-		{name: "unsafe name", caches: []*outbackv1.CacheMount{{Name: "../shared", Target: "/cache"}}},
-		{name: "relative target", caches: []*outbackv1.CacheMount{{Name: "cache", Target: "cache"}}},
-		{name: "duplicate name", caches: []*outbackv1.CacheMount{{Name: "cache", Target: "/one"}, {Name: "cache", Target: "/two"}}},
-		{name: "duplicate target", caches: []*outbackv1.CacheMount{{Name: "one", Target: "/cache"}, {Name: "two", Target: "/cache"}}},
-		{name: "docker socket overlap", caches: []*outbackv1.CacheMount{{Name: "socket", Target: "/var/run"}}},
+		{name: "unsafe name", caches: []*autbackv1.CacheMount{{Name: "../shared", Target: "/cache"}}},
+		{name: "relative target", caches: []*autbackv1.CacheMount{{Name: "cache", Target: "cache"}}},
+		{name: "duplicate name", caches: []*autbackv1.CacheMount{{Name: "cache", Target: "/one"}, {Name: "cache", Target: "/two"}}},
+		{name: "duplicate target", caches: []*autbackv1.CacheMount{{Name: "one", Target: "/cache"}, {Name: "two", Target: "/cache"}}},
+		{name: "docker socket overlap", caches: []*autbackv1.CacheMount{{Name: "socket", Target: "/var/run"}}},
 	}
 	for index, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
-			copyRequest := proto.Clone(request).(*outbackv1.PrepareJobRequest)
+			copyRequest := proto.Clone(request).(*autbackv1.PrepareJobRequest)
 			copyRequest.IdempotencyKey = fmt.Sprintf("invalid-cache-%02d", index)
 			copyRequest.Caches = test.caches
 			if _, err := client.PrepareJob(ctx, connect.NewRequest(copyRequest)); connect.CodeOf(err) != connect.CodeInvalidArgument {
@@ -278,11 +278,11 @@ func TestOneTimeEnrollmentExchangeNeedsNoExistingCredential(t *testing.T) {
 	fixture := newFixture(t)
 	admin := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
-	user, err := admin.CreateUser(ctx, connect.NewRequest(&outbackv1.CreateUserRequest{Name: "Coworker"}))
+	user, err := admin.CreateUser(ctx, connect.NewRequest(&autbackv1.CreateUserRequest{Name: "Coworker"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := admin.CreateEnrollmentCode(ctx, connect.NewRequest(&outbackv1.CreateEnrollmentCodeRequest{
+	enrollment, err := admin.CreateEnrollmentCode(ctx, connect.NewRequest(&autbackv1.CreateEnrollmentCodeRequest{
 		UserId: user.Msg.User.Id, DeviceName: "coworker-laptop", ExpiresAt: timestamppb.New(time.Now().Add(10 * time.Minute)),
 	}))
 	if err != nil {
@@ -292,17 +292,17 @@ func TestOneTimeEnrollmentExchangeNeedsNoExistingCredential(t *testing.T) {
 		t.Fatalf("enrollment = %#v", enrollment.Msg)
 	}
 	unauthenticated := fixture.client("")
-	exchanged, err := unauthenticated.ExchangeEnrollmentCode(ctx, connect.NewRequest(&outbackv1.ExchangeEnrollmentCodeRequest{Code: enrollment.Msg.Code}))
+	exchanged, err := unauthenticated.ExchangeEnrollmentCode(ctx, connect.NewRequest(&autbackv1.ExchangeEnrollmentCodeRequest{Code: enrollment.Msg.Code}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if exchanged.Msg.Token == "" || exchanged.Msg.DeviceToken.UserId != user.Msg.User.Id || exchanged.Msg.DeviceToken.Name != "coworker-laptop" {
 		t.Fatalf("exchange = %#v", exchanged.Msg)
 	}
-	if _, err := unauthenticated.ExchangeEnrollmentCode(ctx, connect.NewRequest(&outbackv1.ExchangeEnrollmentCodeRequest{Code: enrollment.Msg.Code})); connect.CodeOf(err) != connect.CodeUnauthenticated {
+	if _, err := unauthenticated.ExchangeEnrollmentCode(ctx, connect.NewRequest(&autbackv1.ExchangeEnrollmentCodeRequest{Code: enrollment.Msg.Code})); connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("reuse error = %v", err)
 	}
-	if _, err := fixture.client(exchanged.Msg.Token).ListProjects(ctx, connect.NewRequest(&outbackv1.ListProjectsRequest{})); err != nil {
+	if _, err := fixture.client(exchanged.Msg.Token).ListProjects(ctx, connect.NewRequest(&autbackv1.ListProjectsRequest{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -314,7 +314,7 @@ func TestStreamingLogsStopsFollowerWhenJobBecomesTerminal(t *testing.T) {
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		IdempotencyKey: "job-follow-1",
 		Project:        fixture.bootstrap.Project.Slug,
 		Image:          "ghcr.io/example/ci@sha256:" + strings.Repeat("3", 64),
@@ -323,17 +323,17 @@ func TestStreamingLogsStopsFollowerWhenJobBecomesTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartJob(ctx, connect.NewRequest(&outbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("b", 64) + "/1"})); err != nil {
+	if _, err := client.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("b", 64) + "/1"})); err != nil {
 		t.Fatal(err)
 	}
-	stream, err := client.StreamJobLogs(ctx, connect.NewRequest(&outbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id}))
+	stream, err := client.StreamJobLogs(ctx, connect.NewRequest(&autbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	terminal := make(chan *outbackv1.Job, 1)
+	terminal := make(chan *autbackv1.Job, 1)
 	streamError := make(chan error, 1)
 	go func() {
-		var job *outbackv1.Job
+		var job *autbackv1.Job
 		for stream.Receive() {
 			if stream.Msg().TerminalJob != nil {
 				job = stream.Msg().TerminalJob
@@ -351,7 +351,7 @@ func TestStreamingLogsStopsFollowerWhenJobBecomesTerminal(t *testing.T) {
 	if err := <-streamError; err != nil {
 		t.Fatal(err)
 	}
-	if job := <-terminal; job == nil || job.Status != outbackv1.JobStatus_JOB_STATUS_SUCCEEDED {
+	if job := <-terminal; job == nil || job.Status != autbackv1.JobStatus_JOB_STATUS_SUCCEEDED {
 		t.Fatalf("terminal job = %#v", job)
 	}
 }
@@ -377,7 +377,7 @@ func TestProjectAuthorizationPreventsCrossProjectJobAccess(t *testing.T) {
 	}
 
 	ownerClient := fixture.client(fixture.bootstrap.Token)
-	prepared, err := ownerClient.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	prepared, err := ownerClient.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		IdempotencyKey: "job-authorization-1",
 		Project:        fixture.bootstrap.Project.ID, Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("2", 64),
 		Command: []string{"true"}, Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
@@ -385,15 +385,15 @@ func TestProjectAuthorizationPreventsCrossProjectJobAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fixture.client(issued.Secret).GetJob(ctx, connect.NewRequest(&outbackv1.GetJobRequest{Id: prepared.Msg.Job.Id}))
+	_, err = fixture.client(issued.Secret).GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: prepared.Msg.Job.Id}))
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("cross-project error = %v", err)
 	}
-	_, err = fixture.client(issued.Secret).CancelJob(ctx, connect.NewRequest(&outbackv1.CancelJobRequest{Id: prepared.Msg.Job.Id}))
+	_, err = fixture.client(issued.Secret).CancelJob(ctx, connect.NewRequest(&autbackv1.CancelJobRequest{Id: prepared.Msg.Job.Id}))
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("cross-project cancel error = %v", err)
 	}
-	stream, err := fixture.client(issued.Secret).StreamJobLogs(ctx, connect.NewRequest(&outbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id}))
+	stream, err := fixture.client(issued.Secret).StreamJobLogs(ctx, connect.NewRequest(&autbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id}))
 	if err == nil {
 		for stream.Receive() {
 		}
@@ -402,7 +402,7 @@ func TestProjectAuthorizationPreventsCrossProjectJobAccess(t *testing.T) {
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("cross-project stream error = %v", err)
 	}
-	_, err = fixture.client("").ListJobs(ctx, connect.NewRequest(&outbackv1.ListJobsRequest{Project: other.ID}))
+	_, err = fixture.client("").ListJobs(ctx, connect.NewRequest(&autbackv1.ListJobsRequest{Project: other.ID}))
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("unauthenticated error = %v", err)
 	}
@@ -410,7 +410,7 @@ func TestProjectAuthorizationPreventsCrossProjectJobAccess(t *testing.T) {
 
 func TestBuildPreparationReturnsBuildScopedCertificate(t *testing.T) {
 	fixture := newFixture(t)
-	response, err := fixture.client(fixture.bootstrap.Token).PrepareBuild(context.Background(), connect.NewRequest(&outbackv1.PrepareBuildRequest{
+	response, err := fixture.client(fixture.bootstrap.Token).PrepareBuild(context.Background(), connect.NewRequest(&autbackv1.PrepareBuildRequest{
 		Project: fixture.bootstrap.Project.ID, IdempotencyKey: "build-certificate-1",
 	}))
 	if err != nil {
@@ -425,8 +425,8 @@ func TestBuildPreparationReturnsBuildScopedCertificate(t *testing.T) {
 	if !fixture.store.OperationActive(context.Background(), "build", response.Msg.Build.Id) {
 		t.Fatal("build credential is not active")
 	}
-	finished, err := fixture.client(fixture.bootstrap.Token).FinishBuild(context.Background(), connect.NewRequest(&outbackv1.FinishBuildRequest{Id: response.Msg.Build.Id, ExitCode: 0}))
-	if err != nil || finished.Msg.Build.Status != outbackv1.BuildStatus_BUILD_STATUS_SUCCEEDED {
+	finished, err := fixture.client(fixture.bootstrap.Token).FinishBuild(context.Background(), connect.NewRequest(&autbackv1.FinishBuildRequest{Id: response.Msg.Build.Id, ExitCode: 0}))
+	if err != nil || finished.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_SUCCEEDED {
 		t.Fatalf("finished=%#v err=%v", finished, err)
 	}
 	if fixture.store.OperationActive(context.Background(), "build", response.Msg.Build.Id) {
@@ -438,7 +438,7 @@ func TestAdmissionIdempotencyReplaysResourcesAndRejectsChangedRequests(t *testin
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
-	request := &outbackv1.PrepareJobRequest{
+	request := &autbackv1.PrepareJobRequest{
 		Project: fixture.bootstrap.Project.ID, IdempotencyKey: "job-retry-1",
 		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("4", 64), Command: []string{"task", "test"},
 		Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
@@ -454,13 +454,13 @@ func TestAdmissionIdempotencyReplaysResourcesAndRejectsChangedRequests(t *testin
 	if second.Msg.Job.Id != first.Msg.Job.Id {
 		t.Fatalf("replayed job ID = %q, want %q", second.Msg.Job.Id, first.Msg.Job.Id)
 	}
-	changed := proto.Clone(request).(*outbackv1.PrepareJobRequest)
+	changed := proto.Clone(request).(*autbackv1.PrepareJobRequest)
 	changed.Command = []string{"task", "ci"}
 	if _, err := client.PrepareJob(ctx, connect.NewRequest(changed)); connect.CodeOf(err) != connect.CodeAlreadyExists {
 		t.Fatalf("changed idempotent request error = %v", err)
 	}
 
-	buildRequest := &outbackv1.PrepareBuildRequest{Project: fixture.bootstrap.Project.ID, IdempotencyKey: "build-retry-1"}
+	buildRequest := &autbackv1.PrepareBuildRequest{Project: fixture.bootstrap.Project.ID, IdempotencyKey: "build-retry-1"}
 	firstBuild, err := client.PrepareBuild(ctx, connect.NewRequest(buildRequest))
 	if err != nil {
 		t.Fatal(err)
@@ -478,24 +478,24 @@ func TestOneDeviceCredentialListsEveryAuthorizedProject(t *testing.T) {
 	fixture := newFixture(t)
 	ctx := context.Background()
 	ownerClient := fixture.client(fixture.bootstrap.Token)
-	second, err := ownerClient.CreateProject(ctx, connect.NewRequest(&outbackv1.CreateProjectRequest{Slug: "second-project", Name: "Second project"}))
+	second, err := ownerClient.CreateProject(ctx, connect.NewRequest(&autbackv1.CreateProjectRequest{Slug: "second-project", Name: "Second project"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := ownerClient.CreateUser(ctx, connect.NewRequest(&outbackv1.CreateUserRequest{Name: "Project member"}))
+	member, err := ownerClient.CreateUser(ctx, connect.NewRequest(&autbackv1.CreateUserRequest{Name: "Project member"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, project := range []string{fixture.bootstrap.Project.ID, second.Msg.Project.Id} {
-		if _, err := ownerClient.AddProjectMember(ctx, connect.NewRequest(&outbackv1.AddProjectMemberRequest{Project: project, UserId: member.Msg.User.Id})); err != nil {
+		if _, err := ownerClient.AddProjectMember(ctx, connect.NewRequest(&autbackv1.AddProjectMemberRequest{Project: project, UserId: member.Msg.User.Id})); err != nil {
 			t.Fatal(err)
 		}
 	}
-	issued, err := ownerClient.CreateDeviceToken(ctx, connect.NewRequest(&outbackv1.CreateDeviceTokenRequest{Name: "member-laptop", UserId: member.Msg.User.Id}))
+	issued, err := ownerClient.CreateDeviceToken(ctx, connect.NewRequest(&autbackv1.CreateDeviceTokenRequest{Name: "member-laptop", UserId: member.Msg.User.Id}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	projects, err := fixture.client(issued.Msg.Token).ListProjects(ctx, connect.NewRequest(&outbackv1.ListProjectsRequest{}))
+	projects, err := fixture.client(issued.Msg.Token).ListProjects(ctx, connect.NewRequest(&autbackv1.ListProjectsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +509,7 @@ func TestListJobsUsesOpaqueProjectBoundKeysetPagination(t *testing.T) {
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
 	for index := 0; index < 3; index++ {
-		_, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+		_, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 			Project: fixture.bootstrap.Project.ID, IdempotencyKey: fmt.Sprintf("page-job-%d", index),
 			Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("5", 64), Command: []string{"true"},
 			Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
@@ -518,14 +518,14 @@ func TestListJobsUsesOpaqueProjectBoundKeysetPagination(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first, err := client.ListJobs(ctx, connect.NewRequest(&outbackv1.ListJobsRequest{Project: fixture.bootstrap.Project.ID, PageSize: 2}))
+	first, err := client.ListJobs(ctx, connect.NewRequest(&autbackv1.ListJobsRequest{Project: fixture.bootstrap.Project.ID, PageSize: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Msg.Jobs) != 2 || first.Msg.NextPageToken == "" {
 		t.Fatalf("first page = %#v", first.Msg)
 	}
-	second, err := client.ListJobs(ctx, connect.NewRequest(&outbackv1.ListJobsRequest{
+	second, err := client.ListJobs(ctx, connect.NewRequest(&autbackv1.ListJobsRequest{
 		Project: fixture.bootstrap.Project.ID, PageSize: 2, PageToken: first.Msg.NextPageToken,
 	}))
 	if err != nil {
@@ -534,7 +534,7 @@ func TestListJobsUsesOpaqueProjectBoundKeysetPagination(t *testing.T) {
 	if len(second.Msg.Jobs) != 1 || second.Msg.NextPageToken != "" || second.Msg.Jobs[0].Id == first.Msg.Jobs[0].Id || second.Msg.Jobs[0].Id == first.Msg.Jobs[1].Id {
 		t.Fatalf("second page = %#v", second.Msg)
 	}
-	if _, err := client.ListJobs(ctx, connect.NewRequest(&outbackv1.ListJobsRequest{
+	if _, err := client.ListJobs(ctx, connect.NewRequest(&autbackv1.ListJobsRequest{
 		Project: fixture.bootstrap.Project.ID, PageSize: 2, PageToken: first.Msg.NextPageToken + "tampered",
 	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("tampered page token error = %v", err)
@@ -547,7 +547,7 @@ func TestListJobsUsesOpaqueProjectBoundKeysetPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ListJobs(ctx, connect.NewRequest(&outbackv1.ListJobsRequest{
+	if _, err := client.ListJobs(ctx, connect.NewRequest(&autbackv1.ListJobsRequest{
 		Project: otherProject.ID, PageSize: 2, PageToken: first.Msg.NextPageToken,
 	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("cross-project page token error = %v", err)
@@ -558,7 +558,7 @@ func TestStreamJobLogsResumesAtByteOffset(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
 	ctx := context.Background()
-	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		Project: fixture.bootstrap.Project.ID, IdempotencyKey: "job-log-offset-1",
 		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("6", 64), Command: []string{"true"},
 		Timeout: durationpb.New(time.Minute), Cpus: "1", Memory: "1g",
@@ -566,11 +566,11 @@ func TestStreamJobLogsResumesAtByteOffset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartJob(ctx, connect.NewRequest(&outbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("c", 64) + "/1"})); err != nil {
+	if _, err := client.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("c", 64) + "/1"})); err != nil {
 		t.Fatal(err)
 	}
 	fixture.scheduler.complete(prepared.Msg.Job.Id, protocol.StatusSucceeded, 0)
-	stream, err := client.StreamJobLogs(ctx, connect.NewRequest(&outbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id, Offset: 7}))
+	stream, err := client.StreamJobLogs(ctx, connect.NewRequest(&autbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id, Offset: 7}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestStreamJobLogsResumesAtByteOffset(t *testing.T) {
 	if output.String() != "output\n" || nextOffset != int64(len("remote output\n")) {
 		t.Fatalf("output=%q next offset=%d", output.String(), nextOffset)
 	}
-	stream, err = client.StreamJobLogs(ctx, connect.NewRequest(&outbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id, Offset: -1}))
+	stream, err = client.StreamJobLogs(ctx, connect.NewRequest(&autbackv1.StreamJobLogsRequest{Id: prepared.Msg.Job.Id, Offset: -1}))
 	if err == nil {
 		for stream.Receive() {
 		}
@@ -599,21 +599,21 @@ func TestStreamJobLogsResumesAtByteOffset(t *testing.T) {
 
 func TestGitHubOIDCExchangeReturnsProjectScopedTemporaryToken(t *testing.T) {
 	claims := control.GitHubClaims{
-		Subject: "repo:flidai/leapview:environment:outback", RepositoryOwnerID: "100", RepositoryID: "200",
+		Subject: "repo:flidai/leapview:environment:autback", RepositoryOwnerID: "100", RepositoryID: "200",
 		WorkflowRef: "flidai/leapview/.github/workflows/ci.yml@refs/heads/main", Ref: "refs/heads/main",
-		Environment: "outback", EventName: "workflow_dispatch", ExpiresAt: time.Now().Add(5 * time.Minute),
+		Environment: "autback", EventName: "workflow_dispatch", ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 	fixture := newFixtureWithVerifier(t, fakeVerifier{claims: claims})
 	client := fixture.client(fixture.bootstrap.Token)
-	_, err := client.CreateGitHubTrust(context.Background(), connect.NewRequest(&outbackv1.CreateGitHubTrustRequest{
+	_, err := client.CreateGitHubTrust(context.Background(), connect.NewRequest(&autbackv1.CreateGitHubTrustRequest{
 		Project: fixture.bootstrap.Project.ID, RepositoryOwnerId: "100", RepositoryId: "200",
 		WorkflowRef: "flidai/leapview/.github/workflows/ci.yml@refs/heads/*", Ref: "refs/heads/*",
-		Environment: "outback", Events: []string{"workflow_dispatch"},
+		Environment: "autback", Events: []string{"workflow_dispatch"},
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchanged, err := fixture.client("").ExchangeGitHubOIDC(context.Background(), connect.NewRequest(&outbackv1.ExchangeGitHubOIDCRequest{
+	exchanged, err := fixture.client("").ExchangeGitHubOIDC(context.Background(), connect.NewRequest(&autbackv1.ExchangeGitHubOIDCRequest{
 		Project: fixture.bootstrap.Project.ID, IdToken: "signed-github-token",
 	}))
 	if err != nil {
@@ -662,7 +662,7 @@ func newFixtureWithVerifier(t *testing.T, verifier controlapi.OIDCVerifier) *fix
 	dispatch := dispatcher.New(store, scheduler)
 	handler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
-		CASEndpoint: "cas.example:50051", CASInstance: "outback", BuildKitEndpoint: "buildkit.example:1234",
+		CASEndpoint: "cas.example:50051", CASInstance: "autback", BuildKitEndpoint: "buildkit.example:1234",
 		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier,
 	})
 	if err != nil {
@@ -695,14 +695,14 @@ func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	}
 }
 
-func (f *fixture) client(token string) outbackv1connect.ControlServiceClient {
+func (f *fixture) client(token string) autbackv1connect.ControlServiceClient {
 	transport := roundTripper(func(request *http.Request) (*http.Response, error) {
 		if token != "" {
 			request.Header.Set("Authorization", "Bearer "+token)
 		}
 		return http.DefaultTransport.RoundTrip(request)
 	})
-	return outbackv1connect.NewControlServiceClient(&http.Client{Transport: transport}, f.server.URL)
+	return autbackv1connect.NewControlServiceClient(&http.Client{Transport: transport}, f.server.URL)
 }
 
 type roundTripper func(*http.Request) (*http.Response, error)

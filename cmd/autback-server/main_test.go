@@ -10,7 +10,7 @@ func TestEndpointUsesThePublicServerNameAndListenerPort(t *testing.T) {
 	for _, test := range []struct {
 		name, listen, want string
 	}{
-		{"outback.example.com", ":50052", "outback.example.com:50052"},
+		{"autback.example.com", ":50052", "autback.example.com:50052"},
 		{"127.0.0.1", "127.0.0.1:1235", "127.0.0.1:1235"},
 		{"2001:db8::1", "[::]:50052", "[2001:db8::1]:50052"},
 	} {

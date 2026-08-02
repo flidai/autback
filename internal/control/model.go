@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 var (

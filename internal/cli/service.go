@@ -15,17 +15,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/flidai/outback/internal/authclient"
-	"github.com/flidai/outback/internal/buildkit"
-	"github.com/flidai/outback/internal/cas"
-	"github.com/flidai/outback/internal/config"
-	"github.com/flidai/outback/internal/control/controlclient"
-	"github.com/flidai/outback/internal/credentialfiles"
-	outbackv1 "github.com/flidai/outback/internal/gen/rtest/v1"
-	"github.com/flidai/outback/internal/gen/rtest/v1/outbackv1connect"
-	"github.com/flidai/outback/internal/projectlink"
-	"github.com/flidai/outback/internal/protocol"
-	"github.com/flidai/outback/internal/workspace"
+	"github.com/flidai/autback/internal/authclient"
+	"github.com/flidai/autback/internal/buildkit"
+	"github.com/flidai/autback/internal/cas"
+	"github.com/flidai/autback/internal/config"
+	"github.com/flidai/autback/internal/control/controlclient"
+	"github.com/flidai/autback/internal/credentialfiles"
+	autbackv1 "github.com/flidai/autback/internal/gen/rtest/v1"
+	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
+	"github.com/flidai/autback/internal/projectlink"
+	"github.com/flidai/autback/internal/protocol"
+	"github.com/flidai/autback/internal/workspace"
 	"golang.org/x/term"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -44,13 +44,13 @@ func runService(ctx context.Context, settings config.Config, explicitToken strin
 	}
 	// Commands such as doctor do not otherwise need a project, but an Actions
 	// workload identity must select one before it can exchange its OIDC token.
-	selectedProject := strings.TrimSpace(os.Getenv("OUTBACK_PROJECT"))
+	selectedProject := strings.TrimSpace(os.Getenv("AUTBACK_PROJECT"))
 	if args[0] == "exec" || args[0] == "build" || args[0] == "image" || args[0] == "list" {
 		explicitProject, err := explicitProject(args[1:])
 		if err != nil {
 			return failUsage(streams.Stderr, err.Error())
 		}
-		selectedProject, err = projectlink.Resolve(ctx, streams.Dir, explicitProject, os.Getenv("OUTBACK_PROJECT"))
+		selectedProject, err = projectlink.Resolve(ctx, streams.Dir, explicitProject, os.Getenv("AUTBACK_PROJECT"))
 		if err != nil {
 			return failUsage(streams.Stderr, err.Error())
 		}
@@ -90,7 +90,7 @@ func runService(ctx context.Context, settings config.Config, explicitToken strin
 	}
 }
 
-func serviceAdmin(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
+func serviceAdmin(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	if len(args) < 2 {
 		return failUsage(streams.Stderr, "admin requires user create, project create, member add, or enrollment create")
 	}
@@ -112,7 +112,7 @@ func serviceAdmin(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if values["--name"] == "" {
 			return failUsage(streams.Stderr, "admin user create requires --name")
 		}
-		response, err := api.CreateUser(ctx, connect.NewRequest(&outbackv1.CreateUserRequest{Name: values["--name"], Admin: admin}))
+		response, err := api.CreateUser(ctx, connect.NewRequest(&autbackv1.CreateUserRequest{Name: values["--name"], Admin: admin}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -121,7 +121,7 @@ func serviceAdmin(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if values["--slug"] == "" || values["--name"] == "" {
 			return failUsage(streams.Stderr, "admin project create requires --slug and --name")
 		}
-		response, err := api.CreateProject(ctx, connect.NewRequest(&outbackv1.CreateProjectRequest{Slug: values["--slug"], Name: values["--name"]}))
+		response, err := api.CreateProject(ctx, connect.NewRequest(&autbackv1.CreateProjectRequest{Slug: values["--slug"], Name: values["--name"]}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -130,7 +130,7 @@ func serviceAdmin(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if values["--project"] == "" || values["--user"] == "" {
 			return failUsage(streams.Stderr, "admin member add requires --project and --user")
 		}
-		if _, err := api.AddProjectMember(ctx, connect.NewRequest(&outbackv1.AddProjectMemberRequest{Project: values["--project"], UserId: values["--user"]})); err != nil {
+		if _, err := api.AddProjectMember(ctx, connect.NewRequest(&autbackv1.AddProjectMemberRequest{Project: values["--project"], UserId: values["--user"]})); err != nil {
 			return fail(streams.Stderr, err)
 		}
 		fmt.Fprintf(streams.Stdout, "Added user %s to project %s\n", values["--user"], values["--project"])
@@ -147,7 +147,7 @@ func serviceAdmin(ctx context.Context, api outbackv1connect.ControlServiceClient
 			}
 			expires = parsed
 		}
-		response, err := api.CreateEnrollmentCode(ctx, connect.NewRequest(&outbackv1.CreateEnrollmentCodeRequest{
+		response, err := api.CreateEnrollmentCode(ctx, connect.NewRequest(&autbackv1.CreateEnrollmentCodeRequest{
 			UserId: values["--user"], DeviceName: values["--device"], ExpiresAt: timestamppb.New(time.Now().Add(expires)),
 		}))
 		if err != nil {
@@ -161,7 +161,7 @@ func serviceAdmin(ctx context.Context, api outbackv1connect.ControlServiceClient
 	}
 }
 
-func authenticatedServiceClient(ctx context.Context, settings config.Config, explicitToken, project string, keyring authclient.Keyring) (outbackv1connect.ControlServiceClient, authclient.Source, error) {
+func authenticatedServiceClient(ctx context.Context, settings config.Config, explicitToken, project string, keyring authclient.Keyring) (autbackv1connect.ControlServiceClient, authclient.Source, error) {
 	github := authclient.GitHubActions{}
 	oidc := func(ctx context.Context) (string, error) {
 		if !github.Available() {
@@ -178,7 +178,7 @@ func authenticatedServiceClient(ctx context.Context, settings config.Config, exp
 		if err != nil {
 			return "", err
 		}
-		response, err := unauthenticated.ExchangeGitHubOIDC(ctx, connect.NewRequest(&outbackv1.ExchangeGitHubOIDCRequest{Project: project, IdToken: idToken}))
+		response, err := unauthenticated.ExchangeGitHubOIDC(ctx, connect.NewRequest(&autbackv1.ExchangeGitHubOIDCRequest{Project: project, IdToken: idToken}))
 		if err != nil {
 			return "", err
 		}
@@ -200,7 +200,7 @@ func authenticatedServiceClient(ctx context.Context, settings config.Config, exp
 	if source == authclient.SourceOIDC {
 		api = &renewableControlClient{
 			ControlServiceClient: api,
-			renew: func(ctx context.Context) (outbackv1connect.ControlServiceClient, error) {
+			renew: func(ctx context.Context) (autbackv1connect.ControlServiceClient, error) {
 				token, err := oidc(ctx)
 				if err != nil {
 					return nil, err
@@ -213,11 +213,11 @@ func authenticatedServiceClient(ctx context.Context, settings config.Config, exp
 }
 
 type renewableControlClient struct {
-	outbackv1connect.ControlServiceClient
-	renew func(context.Context) (outbackv1connect.ControlServiceClient, error)
+	autbackv1connect.ControlServiceClient
+	renew func(context.Context) (autbackv1connect.ControlServiceClient, error)
 }
 
-func renewServiceClient(ctx context.Context, api outbackv1connect.ControlServiceClient) (outbackv1connect.ControlServiceClient, error) {
+func renewServiceClient(ctx context.Context, api autbackv1connect.ControlServiceClient) (autbackv1connect.ControlServiceClient, error) {
 	renewable, ok := api.(*renewableControlClient)
 	if !ok {
 		return api, nil
@@ -243,7 +243,7 @@ func serviceLogin(ctx context.Context, settings config.Config, explicitToken str
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
-		exchanged, err := api.ExchangeEnrollmentCode(ctx, connect.NewRequest(&outbackv1.ExchangeEnrollmentCodeRequest{Code: code}))
+		exchanged, err := api.ExchangeEnrollmentCode(ctx, connect.NewRequest(&autbackv1.ExchangeEnrollmentCodeRequest{Code: code}))
 		if err != nil {
 			return fail(streams.Stderr, fmt.Errorf("exchange enrollment code: %w", err))
 		}
@@ -253,7 +253,7 @@ func serviceLogin(ctx context.Context, settings config.Config, explicitToken str
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	if _, err := api.ListDeviceTokens(ctx, connect.NewRequest(&outbackv1.ListDeviceTokensRequest{})); err != nil {
+	if _, err := api.ListDeviceTokens(ctx, connect.NewRequest(&autbackv1.ListDeviceTokensRequest{})); err != nil {
 		return fail(streams.Stderr, fmt.Errorf("validate device token: %w", err))
 	}
 	if err := authclient.StoreToken(streams.Keyring, settings.URL, token); err != nil {
@@ -267,7 +267,7 @@ func serviceLogout(settings config.Config, streams IO) int {
 	if err := authclient.DeleteToken(streams.Keyring, settings.URL); err != nil {
 		return fail(streams.Stderr, err)
 	}
-	fmt.Fprintln(streams.Stdout, "Removed the local outback credential")
+	fmt.Fprintln(streams.Stdout, "Removed the local autback credential")
 	return 0
 }
 
@@ -297,14 +297,14 @@ func validateEnrollmentInput(value string) (string, error) {
 	return value, nil
 }
 
-func serviceInit(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
-	project := os.Getenv("OUTBACK_PROJECT")
+func serviceInit(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
+	project := os.Getenv("AUTBACK_PROJECT")
 	if len(args) == 2 && args[0] == "--project" && args[1] != "" {
 		project = args[1]
 	} else if len(args) != 0 {
 		return failUsage(streams.Stderr, "init accepts only --project <project>")
 	}
-	response, err := api.ListProjects(ctx, connect.NewRequest(&outbackv1.ListProjectsRequest{}))
+	response, err := api.ListProjects(ctx, connect.NewRequest(&autbackv1.ListProjectsRequest{}))
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("list authorized projects: %w", err))
 	}
@@ -329,7 +329,7 @@ func serviceInit(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	fmt.Fprintf(streams.Stdout, "Linked %s to outback project %s\n", path, selected.Slug)
+	fmt.Fprintf(streams.Stdout, "Linked %s to autback project %s\n", path, selected.Slug)
 	return 0
 }
 
@@ -355,21 +355,21 @@ func explicitProject(args []string) (string, error) {
 	return project, nil
 }
 
-func authorizedProject(ctx context.Context, api outbackv1connect.ControlServiceClient, selector string) (*outbackv1.Project, error) {
-	response, err := api.ListProjects(ctx, connect.NewRequest(&outbackv1.ListProjectsRequest{}))
+func authorizedProject(ctx context.Context, api autbackv1connect.ControlServiceClient, selector string) (*autbackv1.Project, error) {
+	response, err := api.ListProjects(ctx, connect.NewRequest(&autbackv1.ListProjectsRequest{}))
 	if err != nil {
 		return nil, fmt.Errorf("authorize project %q: %w", selector, err)
 	}
 	return selectAuthorizedProject(response.Msg.Projects, selector)
 }
 
-func selectAuthorizedProject(projects []*outbackv1.Project, selector string) (*outbackv1.Project, error) {
+func selectAuthorizedProject(projects []*autbackv1.Project, selector string) (*autbackv1.Project, error) {
 	for _, project := range projects {
 		if project.Id == selector || project.Slug == selector {
 			return project, nil
 		}
 	}
-	return nil, fmt.Errorf("not authorized for outback project %q", selector)
+	return nil, fmt.Errorf("not authorized for autback project %q", selector)
 }
 
 type execOptions struct {
@@ -378,10 +378,10 @@ type execOptions struct {
 	detach                  bool
 	environment             map[string]string
 	command                 []string
-	caches                  []*outbackv1.CacheMount
+	caches                  []*autbackv1.CacheMount
 }
 
-func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
+func serviceExec(ctx context.Context, api autbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
 	options, err := parseExec(settings, project, args)
 	if err != nil {
 		return failUsage(streams.Stderr, err.Error())
@@ -407,7 +407,7 @@ func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	prepared, err := api.PrepareJob(ctx, connect.NewRequest(&outbackv1.PrepareJobRequest{
+	prepared, err := api.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		Project: options.project, Image: options.image, Command: options.command, WorkingDirectory: options.workdir,
 		Environment: options.environment, Timeout: durationpb.New(options.timeout),
 		IdempotencyKey: idempotencyKey, Caches: options.caches,
@@ -428,11 +428,11 @@ func serviceExec(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("upload inputs: %w", err))
 	}
-	started, err := api.StartJob(ctx, connect.NewRequest(&outbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: upload.RootDigest}))
+	started, err := api.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: upload.RootDigest}))
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("start remote job: %w", err))
 	}
-	fmt.Fprintf(streams.Stderr, "Backend: outback shared service\nJob: %s\nInputs: %d files, %s\nTransfer: %s uploaded\n",
+	fmt.Fprintf(streams.Stderr, "Backend: autback shared service\nJob: %s\nInputs: %d files, %s\nTransfer: %s uploaded\n",
 		started.Msg.Job.Id, upload.InputFiles, humanBytes(upload.TotalInputBytes), humanBytes(upload.TransferredBytes))
 	if options.detach {
 		return 0
@@ -479,7 +479,7 @@ func parseExec(settings config.Config, project string, args []string) (execOptio
 				if !ok || name == "" || target == "" {
 					return execOptions{}, errors.New("--cache requires NAME=/absolute/container/path")
 				}
-				options.caches = append(options.caches, &outbackv1.CacheMount{Name: name, Target: target})
+				options.caches = append(options.caches, &autbackv1.CacheMount{Name: name, Target: target})
 			}
 		default:
 			return execOptions{}, errors.New("unknown exec option " + args[0])
@@ -522,7 +522,7 @@ func canonicalDirectory(path string) (string, error) {
 	return filepath.EvalSymlinks(absolute)
 }
 
-func serviceImage(ctx context.Context, api outbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
+func serviceImage(ctx context.Context, api autbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
 	if len(args) == 0 {
 		return failUsage(streams.Stderr, "image requires show, activate, rollback, history, overrides, or build")
 	}
@@ -548,7 +548,7 @@ func serviceImage(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 2 || args[0] != "--image" || args[1] == "" {
 			return failUsage(streams.Stderr, "image activate requires --image <digest>")
 		}
-		response, err := api.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{Project: project, Image: args[1]}))
+		response, err := api.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{Project: project, Image: args[1]}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -558,7 +558,7 @@ func serviceImage(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 0 {
 			return failUsage(streams.Stderr, "image rollback accepts only --project")
 		}
-		response, err := api.RollbackProjectImage(ctx, connect.NewRequest(&outbackv1.RollbackProjectImageRequest{Project: project}))
+		response, err := api.RollbackProjectImage(ctx, connect.NewRequest(&autbackv1.RollbackProjectImageRequest{Project: project}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -568,7 +568,7 @@ func serviceImage(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 0 {
 			return failUsage(streams.Stderr, "image history accepts only --project")
 		}
-		response, err := api.ListProjectImageHistory(ctx, connect.NewRequest(&outbackv1.ListProjectImageHistoryRequest{Project: project}))
+		response, err := api.ListProjectImageHistory(ctx, connect.NewRequest(&autbackv1.ListProjectImageHistoryRequest{Project: project}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -577,7 +577,7 @@ func serviceImage(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 1 || args[0] != "allow" && args[0] != "deny" {
 			return failUsage(streams.Stderr, "image overrides requires allow or deny")
 		}
-		response, err := api.SetProjectImagePolicy(ctx, connect.NewRequest(&outbackv1.SetProjectImagePolicyRequest{Project: project, AllowImageOverrides: args[0] == "allow"}))
+		response, err := api.SetProjectImagePolicy(ctx, connect.NewRequest(&autbackv1.SetProjectImagePolicyRequest{Project: project, AllowImageOverrides: args[0] == "allow"}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -590,7 +590,7 @@ func serviceImage(ctx context.Context, api outbackv1connect.ControlServiceClient
 	}
 }
 
-func serviceImageBuild(ctx context.Context, api outbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
+func serviceImageBuild(ctx context.Context, api autbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
 	tag, dockerfile := "", "Dockerfile"
 	var extra []string
 	for len(args) > 0 {
@@ -614,7 +614,7 @@ func serviceImageBuild(ctx context.Context, api outbackv1connect.ControlServiceC
 	if tag == "" || strings.Contains(tag, "@") {
 		return failUsage(streams.Stderr, "image build requires a mutable --tag <registry/repository:tag> destination")
 	}
-	metadata, err := os.CreateTemp("", "outback-build-metadata-*.json")
+	metadata, err := os.CreateTemp("", "autback-build-metadata-*.json")
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
@@ -644,7 +644,7 @@ func serviceImageBuild(ctx context.Context, api outbackv1connect.ControlServiceC
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("renew authorization before image activation: %w", err))
 	}
-	response, err := activationAPI.ActivateProjectImage(ctx, connect.NewRequest(&outbackv1.ActivateProjectImageRequest{Project: project, Image: image}))
+	response, err := activationAPI.ActivateProjectImage(ctx, connect.NewRequest(&autbackv1.ActivateProjectImageRequest{Project: project, Image: image}))
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("activate built image: %w", err))
 	}
@@ -683,12 +683,12 @@ func repositoryFromTag(reference string) string {
 	return reference
 }
 
-func waitServiceJob(ctx context.Context, api outbackv1connect.ControlServiceClient, id string, streams IO) int {
-	var terminal *outbackv1.Job
+func waitServiceJob(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, streams IO) int {
+	var terminal *autbackv1.Job
 	var offset int64
 	retryDelay := 250 * time.Millisecond
 	for terminal == nil {
-		stream, err := api.StreamJobLogs(ctx, connect.NewRequest(&outbackv1.StreamJobLogsRequest{Id: id, Offset: offset}))
+		stream, err := api.StreamJobLogs(ctx, connect.NewRequest(&autbackv1.StreamJobLogsRequest{Id: id, Offset: offset}))
 		if err == nil {
 			for stream.Receive() {
 				message := stream.Msg()
@@ -711,7 +711,7 @@ func waitServiceJob(ctx context.Context, api outbackv1connect.ControlServiceClie
 		}
 		if ctx.Err() != nil {
 			cancelCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, _ = api.CancelJob(cancelCtx, connect.NewRequest(&outbackv1.CancelJobRequest{Id: id}))
+			_, _ = api.CancelJob(cancelCtx, connect.NewRequest(&autbackv1.CancelJobRequest{Id: id}))
 			cancel()
 			return fail(streams.Stderr, fmt.Errorf("stream job logs: %w", ctx.Err()))
 		}
@@ -737,7 +737,7 @@ func waitServiceJob(ctx context.Context, api outbackv1connect.ControlServiceClie
 	return clientExitCode(job)
 }
 
-func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
+func serviceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
 	if len(args) >= 2 && args[0] == "--project" {
 		project, args = args[1], args[2:]
 	}
@@ -760,11 +760,11 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	prepared, err := api.PrepareBuild(ctx, connect.NewRequest(&outbackv1.PrepareBuildRequest{Project: project, IdempotencyKey: random}))
+	prepared, err := api.PrepareBuild(ctx, connect.NewRequest(&autbackv1.PrepareBuildRequest{Project: project, IdempotencyKey: random}))
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("prepare remote build: %w", err))
 	}
-	fmt.Fprintf(streams.Stderr, "Backend: native Buildx via outback mTLS\nBuild: %s\n", prepared.Msg.Build.Id)
+	fmt.Fprintf(streams.Stderr, "Backend: native Buildx via autback mTLS\nBuild: %s\n", prepared.Msg.Build.Id)
 	build, connection, err := waitForServiceBuild(ctx, api, prepared.Msg.Build, prepared.Msg.Buildkit)
 	if err != nil {
 		cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -772,7 +772,7 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 		cancel()
 		return fail(streams.Stderr, err)
 	}
-	if build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil {
+	if build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil {
 		return fail(streams.Stderr, errors.New("remote build was admitted without a BuildKit connection"))
 	}
 	credentials, err := credentialfiles.Write(connection.CaPem, connection.CertificatePem, connection.PrivateKeyPem)
@@ -783,13 +783,13 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 		return fail(streams.Stderr, err)
 	}
 	defer credentials.Cleanup()
-	builderName := strings.Replace(random, "outback-", "outback-build-", 1)
+	builderName := strings.Replace(random, "autback-", "autback-build-", 1)
 	address := connection.Endpoint
 	if !strings.Contains(address, "://") {
 		address = "tcp://" + address
 	}
 	fmt.Fprintf(streams.Stderr, "Builder: %s\n", address)
-	code, runErr := buildkit.RunWithTLS(ctx, os.Getenv("OUTBACK_DOCKER"), address, builderName, streams.Dir, args, buildkit.TLS{
+	code, runErr := buildkit.RunWithTLS(ctx, os.Getenv("AUTBACK_DOCKER"), address, builderName, streams.Dir, args, buildkit.TLS{
 		CA: credentials.CA, Certificate: credentials.Certificate, Key: credentials.Key, ServerName: connection.ServerName,
 	}, streams.Stdout, streams.Stderr)
 	cancelled := ctx.Err() != nil
@@ -810,11 +810,11 @@ func serviceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient
 	return code
 }
 
-func waitForServiceBuild(ctx context.Context, api outbackv1connect.ControlServiceClient, build *outbackv1.Build, connection *outbackv1.DataPlaneConnection) (*outbackv1.Build, *outbackv1.DataPlaneConnection, error) {
+func waitForServiceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient, build *autbackv1.Build, connection *autbackv1.DataPlaneConnection) (*autbackv1.Build, *autbackv1.DataPlaneConnection, error) {
 	if build == nil {
 		return nil, nil, errors.New("prepare build returned no build")
 	}
-	for build.Status == outbackv1.BuildStatus_BUILD_STATUS_QUEUED {
+	for build.Status == autbackv1.BuildStatus_BUILD_STATUS_QUEUED {
 		timer := time.NewTimer(250 * time.Millisecond)
 		select {
 		case <-ctx.Done():
@@ -822,50 +822,50 @@ func waitForServiceBuild(ctx context.Context, api outbackv1connect.ControlServic
 			return nil, nil, fmt.Errorf("wait for remote build: %w", ctx.Err())
 		case <-timer.C:
 		}
-		response, err := api.GetBuild(ctx, connect.NewRequest(&outbackv1.GetBuildRequest{Id: build.Id}))
+		response, err := api.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Id}))
 		if connect.CodeOf(err) == connect.CodeUnauthenticated {
 			renewed, renewErr := renewServiceClient(ctx, api)
 			if renewErr != nil {
 				return nil, nil, renewErr
 			}
 			api = renewed
-			response, err = renewed.GetBuild(ctx, connect.NewRequest(&outbackv1.GetBuildRequest{Id: build.Id}))
+			response, err = renewed.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Id}))
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("get remote build: %w", err)
 		}
 		build, connection = response.Msg.Build, response.Msg.Buildkit
 	}
-	if build.Status != outbackv1.BuildStatus_BUILD_STATUS_RUNNING {
+	if build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING {
 		return build, connection, fmt.Errorf("remote build became %s before admission", build.Status)
 	}
 	return build, connection, nil
 }
 
-func finishServiceBuildRecord(ctx context.Context, api outbackv1connect.ControlServiceClient, id string, exitCode int32, cancelled bool) error {
+func finishServiceBuildRecord(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, exitCode int32, cancelled bool) error {
 	finishAPI, err := renewServiceClient(ctx, api)
 	if err != nil {
 		return fmt.Errorf("renew authorization: %w", err)
 	}
-	_, err = finishAPI.FinishBuild(ctx, connect.NewRequest(&outbackv1.FinishBuildRequest{Id: id, ExitCode: exitCode, Cancelled: cancelled}))
+	_, err = finishAPI.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: id, ExitCode: exitCode, Cancelled: cancelled}))
 	return err
 }
 
-func cancelServiceBuildRecord(ctx context.Context, api outbackv1connect.ControlServiceClient, id string) error {
+func cancelServiceBuildRecord(ctx context.Context, api autbackv1connect.ControlServiceClient, id string) error {
 	cancelAPI, err := renewServiceClient(ctx, api)
 	if err != nil {
 		return fmt.Errorf("renew authorization: %w", err)
 	}
-	_, err = cancelAPI.CancelBuild(ctx, connect.NewRequest(&outbackv1.CancelBuildRequest{Id: id}))
+	_, err = cancelAPI.CancelBuild(ctx, connect.NewRequest(&autbackv1.CancelBuildRequest{Id: id}))
 	return err
 }
 
-func serviceStatus(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
+func serviceStatus(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	jsonOutput, id, err := jobArgs(args)
 	if err != nil {
 		return failUsage(streams.Stderr, "status "+err.Error())
 	}
-	response, err := api.GetJob(ctx, connect.NewRequest(&outbackv1.GetJobRequest{Id: id}))
+	response, err := api.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
@@ -877,18 +877,18 @@ func serviceStatus(ctx context.Context, api outbackv1connect.ControlServiceClien
 	return 0
 }
 
-func serviceLogs(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
+func serviceLogs(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	if len(args) != 1 {
 		return failUsage(streams.Stderr, "logs requires exactly one job ID")
 	}
 	return waitServiceJob(ctx, api, args[0], streams)
 }
 
-func serviceCancel(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
+func serviceCancel(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	if len(args) != 1 {
 		return failUsage(streams.Stderr, "cancel requires exactly one job ID")
 	}
-	response, err := api.CancelJob(ctx, connect.NewRequest(&outbackv1.CancelJobRequest{Id: args[0]}))
+	response, err := api.CancelJob(ctx, connect.NewRequest(&autbackv1.CancelJobRequest{Id: args[0]}))
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
@@ -896,7 +896,7 @@ func serviceCancel(ctx context.Context, api outbackv1connect.ControlServiceClien
 	return 0
 }
 
-func serviceList(ctx context.Context, api outbackv1connect.ControlServiceClient, project string, args []string, streams IO) int {
+func serviceList(ctx context.Context, api autbackv1connect.ControlServiceClient, project string, args []string, streams IO) int {
 	limit, jsonOutput := 20, false
 	for len(args) > 0 {
 		switch args[0] {
@@ -923,7 +923,7 @@ func serviceList(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	if project == "" {
 		return failUsage(streams.Stderr, "list requires a project")
 	}
-	response, err := api.ListJobs(ctx, connect.NewRequest(&outbackv1.ListJobsRequest{Project: project, PageSize: int32(limit)}))
+	response, err := api.ListJobs(ctx, connect.NewRequest(&autbackv1.ListJobsRequest{Project: project, PageSize: int32(limit)}))
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
@@ -943,16 +943,16 @@ func serviceList(ctx context.Context, api outbackv1connect.ControlServiceClient,
 	return 0
 }
 
-func serviceDoctor(ctx context.Context, api outbackv1connect.ControlServiceClient, streams IO) int {
-	info, err := api.GetServiceInfo(ctx, connect.NewRequest(&outbackv1.GetServiceInfoRequest{}))
+func serviceDoctor(ctx context.Context, api autbackv1connect.ControlServiceClient, streams IO) int {
+	info, err := api.GetServiceInfo(ctx, connect.NewRequest(&autbackv1.GetServiceInfoRequest{}))
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	fmt.Fprintf(streams.Stdout, "outback %s\nconnection: ok (Connect over HTTPS)\nserver: %s\n", version, info.Msg.Version)
+	fmt.Fprintf(streams.Stdout, "autback %s\nconnection: ok (Connect over HTTPS)\nserver: %s\n", version, info.Msg.Version)
 	return 0
 }
 
-func serviceToken(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
+func serviceToken(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	if len(args) == 0 {
 		return failUsage(streams.Stderr, "token requires create, list, or revoke")
 	}
@@ -983,7 +983,7 @@ func serviceToken(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if name == "" {
 			return failUsage(streams.Stderr, "token create requires --name")
 		}
-		response, err := api.CreateDeviceToken(ctx, connect.NewRequest(&outbackv1.CreateDeviceTokenRequest{Name: name, UserId: userID, ExpiresAt: expires}))
+		response, err := api.CreateDeviceToken(ctx, connect.NewRequest(&autbackv1.CreateDeviceTokenRequest{Name: name, UserId: userID, ExpiresAt: expires}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -994,7 +994,7 @@ func serviceToken(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 1 {
 			return failUsage(streams.Stderr, "token list accepts no arguments")
 		}
-		response, err := api.ListDeviceTokens(ctx, connect.NewRequest(&outbackv1.ListDeviceTokensRequest{}))
+		response, err := api.ListDeviceTokens(ctx, connect.NewRequest(&autbackv1.ListDeviceTokensRequest{}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -1003,7 +1003,7 @@ func serviceToken(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 2 {
 			return failUsage(streams.Stderr, "token revoke requires one token ID")
 		}
-		if _, err := api.RevokeDeviceToken(ctx, connect.NewRequest(&outbackv1.RevokeDeviceTokenRequest{Id: args[1]})); err != nil {
+		if _, err := api.RevokeDeviceToken(ctx, connect.NewRequest(&autbackv1.RevokeDeviceTokenRequest{Id: args[1]})); err != nil {
 			return fail(streams.Stderr, err)
 		}
 		fmt.Fprintln(streams.Stdout, "Revoked device token "+args[1])
@@ -1013,7 +1013,7 @@ func serviceToken(ctx context.Context, api outbackv1connect.ControlServiceClient
 	}
 }
 
-func serviceTrust(ctx context.Context, api outbackv1connect.ControlServiceClient, args []string, streams IO) int {
+func serviceTrust(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	if len(args) < 2 || args[0] != "github" {
 		return failUsage(streams.Stderr, "trust requires github create, list, or revoke")
 	}
@@ -1041,7 +1041,7 @@ func serviceTrust(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(events) == 0 {
 			return failUsage(streams.Stderr, "trust github create requires at least one --event")
 		}
-		response, err := api.CreateGitHubTrust(ctx, connect.NewRequest(&outbackv1.CreateGitHubTrustRequest{
+		response, err := api.CreateGitHubTrust(ctx, connect.NewRequest(&autbackv1.CreateGitHubTrustRequest{
 			Project: values["--project"], RepositoryOwnerId: values["--owner-id"], RepositoryId: values["--repository-id"],
 			WorkflowRef: values["--workflow-ref"], Ref: values["--ref"], Environment: values["--environment"], Events: events,
 		}))
@@ -1056,7 +1056,7 @@ func serviceTrust(ctx context.Context, api outbackv1connect.ControlServiceClient
 		} else if len(args) != 0 {
 			return failUsage(streams.Stderr, "trust github list accepts only --project")
 		}
-		response, err := api.ListGitHubTrusts(ctx, connect.NewRequest(&outbackv1.ListGitHubTrustsRequest{Project: project}))
+		response, err := api.ListGitHubTrusts(ctx, connect.NewRequest(&autbackv1.ListGitHubTrustsRequest{Project: project}))
 		if err != nil {
 			return fail(streams.Stderr, err)
 		}
@@ -1065,7 +1065,7 @@ func serviceTrust(ctx context.Context, api outbackv1connect.ControlServiceClient
 		if len(args) != 1 {
 			return failUsage(streams.Stderr, "trust github revoke requires one trust ID")
 		}
-		if _, err := api.RevokeGitHubTrust(ctx, connect.NewRequest(&outbackv1.RevokeGitHubTrustRequest{Id: args[0]})); err != nil {
+		if _, err := api.RevokeGitHubTrust(ctx, connect.NewRequest(&autbackv1.RevokeGitHubTrustRequest{Id: args[0]})); err != nil {
 			return fail(streams.Stderr, err)
 		}
 		fmt.Fprintln(streams.Stdout, "Revoked GitHub trust "+args[0])
@@ -1079,7 +1079,7 @@ func grpcAddress(endpoint string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "grpcs://")
 }
 
-func protocolJob(input *outbackv1.Job) protocol.Job {
+func protocolJob(input *autbackv1.Job) protocol.Job {
 	job := protocol.Job{
 		ID: input.Id, ProjectID: input.ProjectId, Image: input.Image, Command: append([]string(nil), input.Command...),
 		RootDigest: input.RootDigest, Status: protocolStatus(input.Status),
@@ -1099,23 +1099,23 @@ func protocolJob(input *outbackv1.Job) protocol.Job {
 	return job
 }
 
-func protocolStatus(status outbackv1.JobStatus) protocol.Status {
+func protocolStatus(status autbackv1.JobStatus) protocol.Status {
 	switch status {
-	case outbackv1.JobStatus_JOB_STATUS_PREPARING:
+	case autbackv1.JobStatus_JOB_STATUS_PREPARING:
 		return protocol.StatusPreparing
-	case outbackv1.JobStatus_JOB_STATUS_QUEUED:
+	case autbackv1.JobStatus_JOB_STATUS_QUEUED:
 		return protocol.StatusQueued
-	case outbackv1.JobStatus_JOB_STATUS_RUNNING:
+	case autbackv1.JobStatus_JOB_STATUS_RUNNING:
 		return protocol.StatusRunning
-	case outbackv1.JobStatus_JOB_STATUS_SUCCEEDED:
+	case autbackv1.JobStatus_JOB_STATUS_SUCCEEDED:
 		return protocol.StatusSucceeded
-	case outbackv1.JobStatus_JOB_STATUS_FAILED:
+	case autbackv1.JobStatus_JOB_STATUS_FAILED:
 		return protocol.StatusFailed
-	case outbackv1.JobStatus_JOB_STATUS_CANCELLED:
+	case autbackv1.JobStatus_JOB_STATUS_CANCELLED:
 		return protocol.StatusCancelled
-	case outbackv1.JobStatus_JOB_STATUS_TIMED_OUT:
+	case autbackv1.JobStatus_JOB_STATUS_TIMED_OUT:
 		return protocol.StatusTimedOut
-	case outbackv1.JobStatus_JOB_STATUS_LOST:
+	case autbackv1.JobStatus_JOB_STATUS_LOST:
 		return protocol.StatusLost
 	default:
 		return protocol.StatusLost

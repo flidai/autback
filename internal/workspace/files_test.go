@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/flidai/outback/internal/workspace"
+	"github.com/flidai/autback/internal/workspace"
 )
 
 func TestFilesSelectsExactNonIgnoredWorktree(t *testing.T) {
@@ -18,7 +18,7 @@ func TestFilesSelectsExactNonIgnoredWorktree(t *testing.T) {
 	write(t, filepath.Join(root, "tracked.txt"), "before\n")
 	write(t, filepath.Join(root, "deleted.txt"), "delete me\n")
 	runGit(t, root, "add", ".gitignore", "tracked.txt", "deleted.txt")
-	runGit(t, root, "-c", "user.name=outback", "-c", "user.email=outback@example.invalid", "commit", "-qm", "fixture")
+	runGit(t, root, "-c", "user.name=autback", "-c", "user.email=autback@example.invalid", "commit", "-qm", "fixture")
 
 	write(t, filepath.Join(root, "tracked.txt"), "dirty bytes\n")
 	write(t, filepath.Join(root, "untracked.txt"), "untracked bytes\n")

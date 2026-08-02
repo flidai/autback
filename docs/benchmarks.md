@@ -2,11 +2,11 @@
 
 ## Controlled comparison harness
 
-`outback-benchmark` measures multiple argv-based candidates against one exact worktree.
-The checked-in LeapView specifications live under `.outback/benchmarks/` and compare:
+`autback-benchmark` measures multiple argv-based candidates against one exact worktree.
+The checked-in LeapView specifications live under `.autback/benchmarks/` and compare:
 
-- native Docker Buildx, outback Buildx, and Depot for `Dockerfile` and `Dockerfile.site`;
-- local Go and generic `outback exec` for the two focused Testcontainers workloads.
+- native Docker Buildx, autback Buildx, and Depot for `Dockerfile` and `Dockerfile.site`;
+- local Go and generic `autback exec` for the two focused Testcontainers workloads.
 
 Every specification uses one excluded warmup followed by five serial measured runs. It
 passes identical trailing build/test arguments to every candidate and requires a clean
@@ -19,15 +19,15 @@ median plus nearest-rank p95 to `summary.json`. An unavailable optional
 candidate is labeled `unavailable`; it is never replaced with an estimate or an older
 cross-commit measurement.
 
-Run a specification from the `outback` module, choosing an untracked output directory:
+Run a specification from the `autback` module, choosing an untracked output directory:
 
 ```console
 task benchmark:compare -- \
-  --spec ../.outback/benchmarks/testcontainers-lifecycle.json \
+  --spec ../.autback/benchmarks/testcontainers-lifecycle.json \
   --output .tmp/benchmarks/testcontainers-lifecycle
 
 DEPOT_PROJECT_ID=<project-id> task benchmark:compare -- \
-  --spec ../.outback/benchmarks/production-image.json \
+  --spec ../.autback/benchmarks/production-image.json \
   --output .tmp/benchmarks/production-image
 ```
 
@@ -39,7 +39,7 @@ providers expose the same boundary.
 
 The focused test specifications call repository-owned Taskfile workloads. Those tasks
 force normal source generation before `go test` on both local and remote candidates.
-outback itself has no LeapView preparation hook and ignored generated files are never added
+autback itself has no LeapView preparation hook and ignored generated files are never added
 to its generic source-transfer contract.
 
 ## Controlled provider result
@@ -51,21 +51,21 @@ Dockerfile arguments, platform, tag, and `--load` output contract.
 | Workload | Candidate | Median | p95 | Measured values |
 | --- | --- | ---: | ---: | --- |
 | Generated Testcontainers lifecycle | local | 43.88 s | 44.46 s | 43.46, 44.19, 43.88, 44.46, 42.87 s |
-| Generated Testcontainers lifecycle | outback | 72.90 s | 75.53 s | 71.13, 74.78, 72.90, 75.53, 72.51 s |
-| Public site image | outback | 15.13 s | 16.90 s | 16.90, 15.13, 14.93, 14.62, 15.34 s |
+| Generated Testcontainers lifecycle | autback | 72.90 s | 75.53 s | 71.13, 74.78, 72.90, 75.53, 72.51 s |
+| Public site image | autback | 15.13 s | 16.90 s | 16.90, 15.13, 14.93, 14.62, 15.34 s |
 | Public site image | Depot | 13.17 s | 199.45 s | 130.70, 199.45, 13.17, 7.88, 7.26 s |
-| Production image | outback | 29.19 s | 30.34 s | 30.34, 29.19, 29.23, 28.82, 28.72 s |
+| Production image | autback | 29.19 s | 30.34 s | 30.34, 29.19, 29.23, 28.82, 28.72 s |
 | Production image | Depot | 31.00 s | 138.68 s | 138.68, 34.00, 31.00, 7.40, 7.80 s |
 
-Every measured outback test run transferred `0 B` of source. The CPX32 was approximately
+Every measured autback test run transferred `0 B` of source. The CPX32 was approximately
 1.66 times slower than the laptop for the generated Testcontainers command, reflecting
 the worker's 3.5-vCPU job reservation plus the remote boundary. The result still moves
 the sustained CPU load off the laptop, which is the product objective.
 
-outback's BuildKit cache was immediately stable after its excluded warmup. Depot produced
+autback's BuildKit cache was immediately stable after its excluded warmup. Depot produced
 the fastest eventual hot image loads—about 7 to 8 seconds—but its first measured runs
 continued rebuilding while cache state settled, creating high p95 values in this sample.
-The production/site difference in outback (29 versus 15 seconds) indicates that native
+The production/site difference in autback (29 versus 15 seconds) indicates that native
 remote Buildx `--load` remains sensitive to output image size. Depot's optimized load
 path largely removes that cost once fully hot.
 
@@ -85,7 +85,7 @@ handoff documented in [Build, push, and smoke-test an immutable image](build-pus
 GitHub Actions run [30742453481, attempt 2](https://github.com/flidai/leapview/actions/runs/30742453481)
 reran the exact unchanged merge commit after the first complete run had populated the
 cache. The remote builder pushed to GHCR, Buildx reported the immutable manifest digest,
-and a separate Outback job exercised that exact digest on the worker.
+and a separate Autback job exercised that exact digest on the worker.
 
 | Workload | Warm build + push | Remote exact-digest check | Source upload | GitHub job |
 | --- | ---: | ---: | ---: | ---: |
@@ -94,17 +94,17 @@ and a separate Outback job exercised that exact digest on the worker.
 | Production application image | 13.41 s | 56.11 s full qualification | 0 B | 139 s |
 
 The GitHub job duration includes checkout, tool installation, Buildx setup, registry
-login, OIDC exchange, and post-job cleanup. The build column starts when Outback reports
+login, OIDC exchange, and post-job cleanup. The build column starts when Autback reports
 the native Buildx backend and ends when the digest-addressed manifest push completes.
 The production qualification includes image pull, smoke validation, API generation,
 remote CLI compilation, Compose startup, and browser checks; it is intentionally broader
 than a build benchmark.
 
 This result removes the production image-size penalty seen in the earlier `--load`
-comparison: the production build-and-push was 13.41 seconds instead of Outback's 29.19
+comparison: the production build-and-push was 13.41 seconds instead of Autback's 29.19
 second `--load` median. It is also below the earlier Depot 31.00 second median, while
 Depot's final fully settled samples remained faster at roughly 7–8 seconds. The site
-result was 11.96 seconds versus the earlier 15.13 second Outback and 13.17 second Depot
+result was 11.96 seconds versus the earlier 15.13 second Autback and 13.17 second Depot
 medians. These comparisons describe the observed runs, not a new five-sample
 distribution; the committed evidence labels the hosted proof as a single warm repeat.
 
@@ -121,7 +121,7 @@ The machine-readable evidence is
 A dedicated, isolated workflow dispatch then ran one excluded warmup followed by five
 serial samples per workload. GitHub Actions run
 [30743918183](https://github.com/flidai/leapview/actions/runs/30743918183) used commit
-`ae2380d02832968842eff6d6fd6c972a855cb4fb`. Each sample measured the complete Outback
+`ae2380d02832968842eff6d6fd6c972a855cb4fb`. Each sample measured the complete Autback
 CLI boundary: project-scoped OIDC authentication, scoped BuildKit mTLS setup, native
 `buildx --push`, immutable digest capture, and a second remote job exercising that exact
 digest.
@@ -178,13 +178,13 @@ Measured on 2026-08-01 at LeapView merge commit
 - `go test -count=1` forced the tests to execute while retaining dependency/build caches;
 - pinned Docker and Testcontainers images were already present for measured runs.
 
-| Workload | End-to-end median | End-to-end p95 | Remote median | outback boundary median |
+| Workload | End-to-end median | End-to-end p95 | Remote median | autback boundary median |
 | --- | ---: | ---: | ---: | ---: |
 | MinIO Parquet refresh contract | 29.04 s | 29.70 s | 24.53 s | 4.51 s |
 | Testcontainers qualification lifecycle | 21.91 s | 22.41 s | 17.42 s | 4.52 s |
 
 “End-to-end” starts before source selection/CAS negotiation and stops after the CLI has
-reported the terminal result. “Remote” is the Swarm task lifetime. “outback boundary” is
+reported the terminal result. “Remote” is the Swarm task lifetime. “autback boundary” is
 their difference and, for this pre-service client, included local input hashing, zero-byte
 CAS negotiation, SSH setup, Swarm submission/status, and final result retrieval. Current
 clients use only the Connect/HTTPS service boundary measured in the preceding sections.
@@ -214,7 +214,7 @@ The first full qualification attempt also found that Debian Bookworm's `docker.i
 only supported API 1.41, while the worker's Docker 29 daemon requires API 1.44 or newer.
 The then-current runner was corrected to copy the official digest-pinned Docker 29.1.3
 CLI. After that upgrade, the complete merged qualification lifecycle passed both its
-`docker-cli` and `testcontainers` implementations remotely in one job. Outback no longer
+`docker-cli` and `testcontainers` implementations remotely in one job. Autback no longer
 ships that language-specific runner; the same dependency now belongs in LeapView's OCI
 project image.
 

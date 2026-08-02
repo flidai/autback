@@ -12,9 +12,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/flidai/outback/internal/authclient"
-	"github.com/flidai/outback/internal/config"
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/authclient"
+	"github.com/flidai/autback/internal/config"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 const version = "0.1.0"
@@ -53,7 +53,7 @@ func jobID() (string, error) {
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("outback-%x", value), nil
+	return fmt.Sprintf("autback-%x", value), nil
 }
 
 func printJob(output io.Writer, job protocol.Job) {
@@ -127,33 +127,33 @@ func defaults(streams IO) IO {
 
 func usage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
-  outback init [--project <project>]
-  outback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
-  outback [--token <token>] build [--project <project>] [-- <buildx arguments...>]
-  outback [--token <token>] image show [--project <project>]
-  outback [--token <token>] image activate [--project <project>] --image <digest>
-  outback [--token <token>] image rollback [--project <project>]
-  outback [--token <token>] image history [--project <project>]
-  outback [--token <token>] image overrides [--project <project>] <allow|deny>
-  outback [--token <token>] image build [--project <project>] --tag <registry/repository:tag> [--file Dockerfile] [-- <buildx arguments...>]
-  outback login
-  outback logout
-  outback token create --name <device> [--user <id>] [--expires 720h]
-  outback token list
-  outback token revoke <token-id>
-  outback trust github create --project <project> --owner-id <id> --repository-id <id> --workflow-ref <glob> --ref <glob> --event <event> [--environment <name>]
-  outback trust github list --project <project>
-  outback trust github revoke <trust-id>
-  outback admin user create --name <name> [--admin]
-  outback admin project create --slug <slug> --name <name>
-  outback admin member add --project <project> --user <user-id>
-  outback admin enrollment create --user <user-id> --device <name> [--expires 10m]
-  outback status [--json] <job-id>
-  outback logs <job-id>
-  outback cancel <job-id>
-  outback list [--project <project>] [--limit 20] [--json]
-  outback doctor
-  outback version`)
+  autback init [--project <project>]
+  autback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
+  autback [--token <token>] build [--project <project>] [-- <buildx arguments...>]
+  autback [--token <token>] image show [--project <project>]
+  autback [--token <token>] image activate [--project <project>] --image <digest>
+  autback [--token <token>] image rollback [--project <project>]
+  autback [--token <token>] image history [--project <project>]
+  autback [--token <token>] image overrides [--project <project>] <allow|deny>
+  autback [--token <token>] image build [--project <project>] --tag <registry/repository:tag> [--file Dockerfile] [-- <buildx arguments...>]
+  autback login
+  autback logout
+  autback token create --name <device> [--user <id>] [--expires 720h]
+  autback token list
+  autback token revoke <token-id>
+  autback trust github create --project <project> --owner-id <id> --repository-id <id> --workflow-ref <glob> --ref <glob> --event <event> [--environment <name>]
+  autback trust github list --project <project>
+  autback trust github revoke <trust-id>
+  autback admin user create --name <name> [--admin]
+  autback admin project create --slug <slug> --name <name>
+  autback admin member add --project <project> --user <user-id>
+  autback admin enrollment create --user <user-id> --device <name> [--expires 10m]
+  autback status [--json] <job-id>
+  autback logs <job-id>
+  autback cancel <job-id>
+  autback list [--project <project>] [--limit 20] [--json]
+  autback doctor
+  autback version`)
 }
 
 func globalArgs(args []string) (string, []string, error) {
@@ -168,12 +168,12 @@ func globalArgs(args []string) (string, []string, error) {
 }
 
 func fail(output io.Writer, err error) int {
-	fmt.Fprintln(output, "outback:", err)
+	fmt.Fprintln(output, "autback:", err)
 	return 1
 }
 
 func failUsage(output io.Writer, message string) int {
-	fmt.Fprintln(output, "outback:", message)
+	fmt.Fprintln(output, "autback:", message)
 	return 2
 }
 

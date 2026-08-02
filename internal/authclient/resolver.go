@@ -26,7 +26,7 @@ func Resolve(ctx context.Context, options ResolveOptions) (string, Source, error
 	if options.ExplicitToken != "" {
 		return options.ExplicitToken, SourceExplicit, nil
 	}
-	if token := os.Getenv("OUTBACK_TOKEN"); token != "" {
+	if token := os.Getenv("AUTBACK_TOKEN"); token != "" {
 		return token, SourceEnvironment, nil
 	}
 	var keyringErr error
@@ -49,5 +49,5 @@ func Resolve(ctx context.Context, options ResolveOptions) (string, Source, error
 	if keyringErr != nil {
 		return "", "", keyringErr
 	}
-	return "", "", errors.New("no outback credential is available; run outback login, set OUTBACK_TOKEN, or use GitHub OIDC")
+	return "", "", errors.New("no autback credential is available; run autback login, set AUTBACK_TOKEN, or use GitHub OIDC")
 }

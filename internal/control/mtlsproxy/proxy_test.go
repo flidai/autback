@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/outback/internal/control/mtlsproxy"
-	"github.com/flidai/outback/internal/control/pki"
+	"github.com/flidai/autback/internal/control/mtlsproxy"
+	"github.com/flidai/autback/internal/control/pki"
 )
 
 func TestProxyPreservesTCPProtocolAndChecksOperationIdentity(t *testing.T) {

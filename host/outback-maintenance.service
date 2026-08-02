@@ -1,8 +1,0 @@
-[Unit]
-Description=outback stale resource cleanup
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/outback-maintain

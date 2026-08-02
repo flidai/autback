@@ -5,29 +5,29 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/flidai/outback/internal/authclient"
+	"github.com/flidai/autback/internal/authclient"
 )
 
 func TestResolutionOrderIsExplicitEnvironmentKeyringThenOIDC(t *testing.T) {
 	store := &memoryKeyring{token: "stored"}
-	t.Setenv("OUTBACK_TOKEN", "environment")
+	t.Setenv("AUTBACK_TOKEN", "environment")
 	token, source, err := authclient.Resolve(context.Background(), authclient.ResolveOptions{
-		ExplicitToken: "explicit", ServiceURL: "https://outback.example", Keyring: store,
+		ExplicitToken: "explicit", ServiceURL: "https://autback.example", Keyring: store,
 		OIDC: func(context.Context) (string, error) { return "oidc", nil },
 	})
 	if err != nil || token != "explicit" || source != authclient.SourceExplicit {
 		t.Fatalf("token=%q source=%q err=%v", token, source, err)
 	}
-	t.Setenv("OUTBACK_TOKEN", "")
+	t.Setenv("AUTBACK_TOKEN", "")
 	token, source, err = authclient.Resolve(context.Background(), authclient.ResolveOptions{
-		ServiceURL: "https://outback.example", Keyring: store, OIDC: func(context.Context) (string, error) { return "oidc", nil },
+		ServiceURL: "https://autback.example", Keyring: store, OIDC: func(context.Context) (string, error) { return "oidc", nil },
 	})
 	if err != nil || token != "stored" || source != authclient.SourceKeyring {
 		t.Fatalf("token=%q source=%q err=%v", token, source, err)
 	}
 	store.err = errors.New("missing")
 	token, source, err = authclient.Resolve(context.Background(), authclient.ResolveOptions{
-		ServiceURL: "https://outback.example", Keyring: store, OIDC: func(context.Context) (string, error) { return "oidc", nil },
+		ServiceURL: "https://autback.example", Keyring: store, OIDC: func(context.Context) (string, error) { return "oidc", nil },
 	})
 	if err != nil || token != "oidc" || source != authclient.SourceOIDC {
 		t.Fatalf("token=%q source=%q err=%v", token, source, err)

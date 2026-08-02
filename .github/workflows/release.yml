@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    if: github.repository == 'flidai/outback'
+    if: github.repository == 'flidai/autback'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
-          source_version="$(go run ./cmd/outback version)"
+          source_version="$(go run ./cmd/autback version)"
           if [[ "${tag}" != "v${version}" || "${source_version}" != "${version}" ]]; then
             printf 'tag %s does not match source version %s\n' "${tag}" "${source_version}" >&2
             exit 1
@@ -45,12 +45,12 @@ jobs:
           mkdir -p dist
           for target in "${targets[@]}"; do
             read -r os arch <<< "${target}"
-            package="outback_${version}_${os}_${arch}"
+            package="autback_${version}_${os}_${arch}"
             stage="$(mktemp -d)"
             CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" \
-              go build -trimpath -ldflags='-s -w' -o "${stage}/outback" ./cmd/outback
+              go build -trimpath -ldflags='-s -w' -o "${stage}/autback" ./cmd/autback
             tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-              -czf "dist/${package}.tar.gz" -C "${stage}" outback
+              -czf "dist/${package}.tar.gz" -C "${stage}" autback
             rm -rf "${stage}"
           done
           (cd dist && sha256sum ./*.tar.gz > checksums.txt)

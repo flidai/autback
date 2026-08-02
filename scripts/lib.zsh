@@ -2,13 +2,13 @@
 
 set -euo pipefail
 
-OUTBACK_DIR="${0:A:h:h}"
-OUTBACK_REPO_ROOT="${OUTBACK_DIR:h}"
-OUTBACK_INFRA_DIR="${OUTBACK_DIR}/infra"
-OUTBACK_TMP_DIR="${OUTBACK_DIR}/.tmp"
-OUTBACK_SSH_KEY="${OUTBACK_SSH_KEY:-${HOME}/.ssh/outback-poc}"
+AUTBACK_DIR="${0:A:h:h}"
+AUTBACK_REPO_ROOT="${AUTBACK_DIR:h}"
+AUTBACK_INFRA_DIR="${AUTBACK_DIR}/infra"
+AUTBACK_TMP_DIR="${AUTBACK_DIR}/.tmp"
+AUTBACK_SSH_KEY="${AUTBACK_SSH_KEY:-${HOME}/.ssh/autback-poc}"
 
-mkdir -p "${OUTBACK_TMP_DIR}"
+mkdir -p "${AUTBACK_TMP_DIR}"
 
 load_secrets() {
   local secrets_file="${HOME}/.zshrc.secrets"
@@ -24,21 +24,21 @@ load_secrets() {
 }
 
 ensure_ssh_key() {
-  if [[ ! -f "${OUTBACK_SSH_KEY}" ]]; then
-    ssh-keygen -q -t ed25519 -N '' -C 'outback-poc' -f "${OUTBACK_SSH_KEY}"
+  if [[ ! -f "${AUTBACK_SSH_KEY}" ]]; then
+    ssh-keygen -q -t ed25519 -N '' -C 'autback-poc' -f "${AUTBACK_SSH_KEY}"
   fi
 }
 
 server_ip() {
-  if [[ -n "${OUTBACK_SERVER_IP:-}" ]]; then
-    print -r -- "${OUTBACK_SERVER_IP}"
+  if [[ -n "${AUTBACK_SERVER_IP:-}" ]]; then
+    print -r -- "${AUTBACK_SERVER_IP}"
     return
   fi
-  terraform -chdir="${OUTBACK_INFRA_DIR}" output -raw server_ipv4
+  terraform -chdir="${AUTBACK_INFRA_DIR}" output -raw server_ipv4
 }
 
 ssh_args() {
-  reply=(-i "${OUTBACK_SSH_KEY}" -o UseKeychain=yes -o AddKeysToAgent=yes -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
+  reply=(-i "${AUTBACK_SSH_KEY}" -o UseKeychain=yes -o AddKeysToAgent=yes -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 }
 
 wait_for_job_status() {
@@ -51,7 +51,7 @@ wait_for_job_status() {
   local attempt
 
   for attempt in {1..80}; do
-    OUTBACK_CONFIG="${config_file}" "${binary}" status --json "${job_id}" > "${evidence_file}"
+    AUTBACK_CONFIG="${config_file}" "${binary}" status --json "${job_id}" > "${evidence_file}"
     job_status="$(jq -r '.status' "${evidence_file}")"
     if [[ "${job_status}" == "${wanted}" ]]; then
       return 0

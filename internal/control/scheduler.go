@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 type Scheduler interface {

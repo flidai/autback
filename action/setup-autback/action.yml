@@ -1,20 +1,20 @@
-name: Set up outback
-description: Install a verified outback release and configure GitHub OIDC access to a shared service.
+name: Set up autback
+description: Install a verified autback release and configure GitHub OIDC access to a shared service.
 
 inputs:
   version:
-    description: Exact outback release version to install.
+    description: Exact autback release version to install.
     required: false
     default: "0.1.0"
   repository:
     description: GitHub repository that owns v* release assets.
     required: false
-    default: flidai/outback
+    default: flidai/autback
   service-url:
-    description: HTTPS URL of the outback control plane.
+    description: HTTPS URL of the autback control plane.
     required: true
   project:
-    description: outback project slug or ID authorized for this workflow.
+    description: autback project slug or ID authorized for this workflow.
     required: true
   image:
     description: Optional digest-pinned OCI image override; the project default is used when omitted.
@@ -42,30 +42,30 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Restore pinned outback CLI
+    - name: Restore pinned autback CLI
       id: cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/outback/bin
-        key: outback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+        path: ${{ runner.temp }}/autback/bin
+        key: autback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
 
-    - name: Install pinned outback CLI
+    - name: Install pinned autback CLI
       id: install
       shell: bash
       env:
-        OUTBACK_VERSION: ${{ inputs.version }}
-        OUTBACK_REPOSITORY: ${{ inputs.repository }}
-        OUTBACK_INSTALL_ROOT: ${{ runner.temp }}/outback
+        AUTBACK_VERSION: ${{ inputs.version }}
+        AUTBACK_REPOSITORY: ${{ inputs.repository }}
+        AUTBACK_INSTALL_ROOT: ${{ runner.temp }}/autback
       run: "${GITHUB_ACTION_PATH}/install-release.sh"
 
-    - name: Cache verified outback release
+    - name: Cache verified autback release
       if: steps.cache.outputs.cache-hit != 'true' && steps.install.outputs.source == 'release'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/outback/bin
-        key: outback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+        path: ${{ runner.temp }}/autback/bin
+        key: autback-cli-${{ inputs.repository }}-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
 
-    - name: Configure outback
+    - name: Configure autback
       shell: bash
       env:
         INPUT_SERVICE_URL: ${{ inputs.service-url }}
@@ -77,7 +77,7 @@ runs:
         INPUT_JOB_MEMORY: ${{ inputs.job-memory }}
       run: |
         set -euo pipefail
-        install_root="${RUNNER_TEMP}/outback"
+        install_root="${RUNNER_TEMP}/autback"
         bin_dir="${install_root}/bin"
         config_file="${install_root}/config.json"
         ca_file=""
@@ -107,5 +107,5 @@ runs:
         chmod 0600 "${config_file}"
 
         printf '%s\n' "${bin_dir}" >> "${GITHUB_PATH}"
-        printf 'OUTBACK_CONFIG=%s\n' "${config_file}" >> "${GITHUB_ENV}"
-        printf 'OUTBACK_PROJECT=%s\n' "${INPUT_PROJECT}" >> "${GITHUB_ENV}"
+        printf 'AUTBACK_CONFIG=%s\n' "${config_file}" >> "${GITHUB_ENV}"
+        printf 'AUTBACK_PROJECT=%s\n' "${INPUT_PROJECT}" >> "${GITHUB_ENV}"

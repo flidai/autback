@@ -3,27 +3,27 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Outback is self-hosted remote execution for small, trusted engineering teams—built on REAPI, OCI, Docker Buildx, and BuildKit.">
+    <meta name="description" content="Autback is self-hosted remote execution for small, trusted engineering teams—built on REAPI, OCI, Docker Buildx, and BuildKit.">
     <meta name="theme-color" content="#171613">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Outback — remote execution for trusted teams">
+    <meta property="og:title" content="Autback — remote execution for trusted teams">
     <meta property="og:description" content="Move heavy tests and image builds off laptops and hosted runners without adopting a proprietary pipeline language.">
-    <title>Outback — remote execution for trusted teams</title>
+    <title>Autback — remote execution for trusted teams</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
 
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="Outback home">
-        <span class="brand-mark" aria-hidden="true">O</span>
-        <span>outback</span>
+      <a class="brand" href="#top" aria-label="Autback home">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>autback</span>
       </a>
       <nav aria-label="Primary navigation">
         <a href="#architecture">Architecture</a>
         <a href="#benchmarks">Benchmarks</a>
-        <a href="https://github.com/flidai/outback/blob/main/docs/architecture.md">Docs</a>
-        <a class="nav-cta" href="https://github.com/flidai/outback">GitHub ↗</a>
+        <a href="https://github.com/flidai/autback/blob/main/docs/architecture.md">Docs</a>
+        <a class="nav-cta" href="https://github.com/flidai/autback">GitHub ↗</a>
       </nav>
     </header>
 
@@ -33,29 +33,29 @@
           <p class="eyebrow">Self-hosted remote execution</p>
           <h1>Remote compute for the work your laptop shouldn’t carry.</h1>
           <p class="hero-lede">
-            Outback runs heavy tests and native container builds on one shared Linux worker.
-            Your repository keeps its commands, OCI environment, and task graph. Outback
+            Autback runs heavy tests and native container builds on one shared Linux worker.
+            Your repository keeps its commands, OCI environment, and task graph. Autback
             supplies the remote execution boundary.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="https://github.com/flidai/outback">View on GitHub ↗</a>
+            <a class="button button-primary" href="https://github.com/flidai/autback">View on GitHub ↗</a>
             <a class="button button-secondary" href="#how-it-works">See how it works ↓</a>
           </div>
           <p class="hero-note">Apache-2.0 · For small, trusted engineering teams</p>
         </div>
 
-        <div class="terminal" aria-label="Example Outback commands">
+        <div class="terminal" aria-label="Example Autback commands">
           <div class="terminal-bar">
             <span>project shell</span>
-            <span>outback / connected</span>
+            <span>autback / connected</span>
           </div>
-          <pre><code><span class="prompt">$</span> outback exec -- task test
+          <pre><code><span class="prompt">$</span> autback exec -- task test
 <span class="muted">queue</span>    admitted job_01K...
 <span class="muted">source</span>   0 B uploaded · CAS warm
 <span class="muted">worker</span>   task test
 <span class="success">passed</span>   exit 0 · 3.89s
 
-<span class="prompt">$</span> outback build -- --push \
+<span class="prompt">$</span> autback build -- --push \
     -t ghcr.io/acme/app:sha .
 <span class="success">pushed</span>   sha256:9f34…</code></pre>
         </div>
@@ -69,9 +69,9 @@
         <span>FIFO admission</span>
       </section>
 
-      <section class="section problem-section" id="why-outback">
+      <section class="section problem-section" id="why-autback">
         <div class="section-heading">
-          <p class="eyebrow">Why Outback</p>
+          <p class="eyebrow">Why Autback</p>
           <h2>Your tools already know how to do the work.</h2>
           <p>
             The missing piece is a durable, authenticated path from a developer laptop or
@@ -102,10 +102,10 @@
         <div class="section-heading light">
           <p class="eyebrow">Architecture</p>
           <h2>A thin control plane around standards.</h2>
-          <p>Outback owns admission, identity, logs, and lifecycle. Upstream tools keep doing the actual work.</p>
+          <p>Autback owns admission, identity, logs, and lifecycle. Upstream tools keep doing the actual work.</p>
         </div>
 
-        <div class="architecture-map" aria-label="Outback service architecture">
+        <div class="architecture-map" aria-label="Autback service architecture">
           <div class="architecture-column">
             <p class="architecture-label">Dispatch</p>
             <div class="architecture-node">
@@ -145,7 +145,7 @@
 
         <div class="trust-note">
           <strong>Honest trust boundary.</strong>
-          <span>Jobs may use the worker Docker socket for Testcontainers. That is host control, not a sandbox. Outback is intentionally for trusted repositories and trusted pull requests.</span>
+          <span>Jobs may use the worker Docker socket for Testcontainers. That is host control, not a sandbox. Autback is intentionally for trusted repositories and trusted pull requests.</span>
         </div>
       </section>
 
@@ -169,9 +169,9 @@
             <div>
               <h3>Choose an OCI environment</h3>
               <p>Build a normal Dockerfile, capture the immutable digest, and activate it for the project.</p>
-              <pre><code>outback image build \
-  --tag ghcr.io/acme/ci:outback \
-  --file Dockerfile.outback</code></pre>
+              <pre><code>autback image build \
+  --tag ghcr.io/acme/ci:autback \
+  --file Dockerfile.autback</code></pre>
             </div>
           </li>
           <li>
@@ -179,7 +179,7 @@
             <div>
               <h3>Run the command you already own</h3>
               <p>Keep sequencing and parallelism in Task, Make, your test runner, or a script checked into the repository.</p>
-              <pre><code>outback exec \
+              <pre><code>autback exec \
   --cache go-build=/root/.cache/go-build \
   -- task test</code></pre>
             </div>
@@ -192,14 +192,14 @@
           <p class="eyebrow">Capacity model</p>
           <h2>One queue. One worker. The whole machine.</h2>
           <p>
-            Every dispatcher can submit work. Outback starts it in strict arrival order and
+            Every dispatcher can submit work. Autback starts it in strict arrival order and
             admits one operation at a time, so unrelated jobs do not turn a small worker into
             an oversubscribed scheduler.
           </p>
           <p>
             Need concurrency? Submit one command whose repository-owned task graph runs work
             in parallel. The active job can use the worker’s available CPU and memory without
-            Outback inventing resource profiles.
+            Autback inventing resource profiles.
           </p>
         </div>
         <div class="queue-visual" aria-label="FIFO queue leading to a single active worker">
@@ -253,7 +253,7 @@
         <p class="benchmark-footnote">
           These are workload-specific measurements, not universal claims. The full method,
           distributions, raw boundaries, and Depot comparison are committed as
-          <a href="https://github.com/flidai/outback/blob/main/docs/benchmarks.md">benchmark evidence ↗</a>.
+          <a href="https://github.com/flidai/autback/blob/main/docs/benchmarks.md">benchmark evidence ↗</a>.
         </p>
       </section>
 
@@ -268,7 +268,7 @@
           </ul>
         </div>
         <div class="ownership-panel inverse">
-          <p class="eyebrow">Outback owns</p>
+          <p class="eyebrow">Autback owns</p>
           <ul>
             <li>Project identity and authentication</li>
             <li>Incremental source transfer</li>
@@ -281,21 +281,21 @@
       <section class="section final-cta">
         <p class="eyebrow">Built for the trusted middle ground</p>
         <h2>More capable than local Docker.<br>Smaller than a CI platform.</h2>
-        <p>Read the architecture, inspect the proof, and deploy Outback to a Linux machine you control.</p>
+        <p>Read the architecture, inspect the proof, and deploy Autback to a Linux machine you control.</p>
         <div class="hero-actions centered">
-          <a class="button button-primary" href="https://github.com/flidai/outback">Explore the repository ↗</a>
-          <a class="button button-secondary dark" href="https://github.com/flidai/outback/blob/main/docs/operations.md">Read operations ↗</a>
+          <a class="button button-primary" href="https://github.com/flidai/autback">Explore the repository ↗</a>
+          <a class="button button-secondary dark" href="https://github.com/flidai/autback/blob/main/docs/operations.md">Read operations ↗</a>
         </div>
       </section>
     </main>
 
     <footer>
       <a class="brand footer-brand" href="#top">
-        <span class="brand-mark" aria-hidden="true">O</span>
-        <span>outback</span>
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>autback</span>
       </a>
       <p>Self-hosted remote execution for small, trusted teams.</p>
-      <p><a href="https://github.com/flidai/outback/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/flidai/outback">GitHub</a></p>
+      <p><a href="https://github.com/flidai/autback/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/flidai/autback">GitHub</a></p>
     </footer>
   </body>
 </html>

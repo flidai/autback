@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flidai/outback/internal/control"
+	"github.com/flidai/autback/internal/control"
 )
 
 func TestProjectCachesUseIndependentPrivateDirectories(t *testing.T) {

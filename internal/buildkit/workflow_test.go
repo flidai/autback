@@ -14,12 +14,12 @@ func TestBuildPushSmokeRecipeUsesStandardBuildxMetadataAndImmutableImage(t *test
 
 	document := string(contents)
 	for _, required := range []string{
-		"outback build --",
+		"autback build --",
 		"--push",
 		"--metadata-file",
 		`containerimage.digest`,
 		"@${digest}",
-		"outback exec",
+		"autback exec",
 	} {
 		if !strings.Contains(document, required) {
 			t.Errorf("recipe does not contain %q", required)
@@ -34,7 +34,7 @@ func TestBuildPushSmokeRecipeUsesStandardBuildxMetadataAndImmutableImage(t *test
 	if strings.Contains(trustedRecipe, "--load") {
 		t.Error("trusted CI recipe must not transfer the complete image back to the CI runner")
 	}
-	if !strings.Contains(trustedRecipe, "Never pass registry credentials through Outback command arguments or job environment variables") {
+	if !strings.Contains(trustedRecipe, "Never pass registry credentials through Autback command arguments or job environment variables") {
 		t.Error("recipe does not document the registry credential boundary")
 	}
 }

@@ -104,13 +104,13 @@ func (a *Authority) Issue(kind Operation, id string, ttl time.Duration) (Credent
 	if err != nil {
 		return Credential{}, err
 	}
-	identity, err := url.Parse("spiffe://outback/" + string(kind) + "/" + url.PathEscape(id))
+	identity, err := url.Parse("spiffe://autback/" + string(kind) + "/" + url.PathEscape(id))
 	if err != nil {
 		return Credential{}, err
 	}
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: string(kind) + ":" + id, Organization: []string{"outback"}},
+		Subject:      pkix.Name{CommonName: string(kind) + ":" + id, Organization: []string{"autback"}},
 		NotBefore:    now.Add(-time.Minute), NotAfter: expires,
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -144,12 +144,12 @@ func (a *Authority) ServerTLSConfig(expected Operation, active ActiveOperation) 
 		ClientCAs:    pool,
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.PeerCertificates) != 1 || len(state.PeerCertificates[0].URIs) != 1 {
-				return errors.New("exactly one outback operation identity is required")
+				return errors.New("exactly one autback operation identity is required")
 			}
 			identity := state.PeerCertificates[0].URIs[0]
 			parts := strings.Split(strings.TrimPrefix(identity.EscapedPath(), "/"), "/")
-			if identity.Scheme != "spiffe" || identity.Host != "outback" || len(parts) != 2 {
-				return errors.New("invalid outback operation identity")
+			if identity.Scheme != "spiffe" || identity.Host != "autback" || len(parts) != 2 {
+				return errors.New("invalid autback operation identity")
 			}
 			id, err := url.PathUnescape(parts[1])
 			if err != nil || Operation(parts[0]) != expected {
@@ -174,7 +174,7 @@ func createAuthority(certPath, keyPath string) error {
 		return err
 	}
 	template := &x509.Certificate{
-		SerialNumber: serial, Subject: pkix.Name{CommonName: "outback private CA", Organization: []string{"outback"}},
+		SerialNumber: serial, Subject: pkix.Name{CommonName: "autback private CA", Organization: []string{"autback"}},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(10, 0, 0),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true, IsCA: true, MaxPathLen: 0,
@@ -236,7 +236,7 @@ func createServerCertificate(ca *x509.Certificate, caKey *ecdsa.PrivateKey, cert
 		return err
 	}
 	template := &x509.Certificate{
-		SerialNumber: serial, Subject: pkix.Name{CommonName: names[0], Organization: []string{"outback"}},
+		SerialNumber: serial, Subject: pkix.Name{CommonName: names[0], Organization: []string{"autback"}},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.AddDate(2, 0, 0),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},

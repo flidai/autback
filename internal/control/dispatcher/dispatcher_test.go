@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/outback/internal/control"
-	"github.com/flidai/outback/internal/control/dispatcher"
-	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
+	"github.com/flidai/autback/internal/control"
+	"github.com/flidai/autback/internal/control/dispatcher"
+	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
 )
 
 func TestDispatcherAdmitsExactlyOneOperationInSharedFIFO(t *testing.T) {

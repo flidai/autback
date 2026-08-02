@@ -15,7 +15,7 @@
     "platform": "linux/amd64",
     "output": "buildx --push with containerimage.digest metadata",
     "worker": "existing Hetzner CPX32, 4 vCPU, 8 GiB",
-    "outback_cli_version": "0.1.0",
+    "autback_cli_version": "0.1.0",
     "service_compatibility_version": "0.7.0",
     "measured_runs": 1,
     "distribution_claimed": false
@@ -27,7 +27,7 @@
     "remote_smoke_seconds": 5.495,
     "source_upload_bytes": 0,
     "image": "ghcr.io/flidai/leapview-site@sha256:b959100f2c9af589ec42a80d6f6d25a417f27d4c08755880fe58dfe3b8feae46",
-    "outback_job": "jobff7a4310e98741e5185cddcb",
+    "autback_job": "jobff7a4310e98741e5185cddcb",
     "result": "succeeded"
   },
   "production": {
@@ -39,7 +39,7 @@
     "application_image": "ghcr.io/flidai/leapview@sha256:40cc79c76e485512cf06445416488b3d6e6e34238eef339f5bbea58ed6bba4d3",
     "remote_qualification_seconds": 56.108,
     "source_upload_bytes": 0,
-    "outback_job": "jobb600be0e84e907ae0b3b8d74",
+    "autback_job": "jobb600be0e84e907ae0b3b8d74",
     "result": "succeeded"
   },
   "activation": {

@@ -1,9 +1,9 @@
-# LeapView outback cutover
+# LeapView autback cutover
 
-LeapView uses the generic outback service for CPU-heavy repository gates and trusted image
-builds. The repository supplies a normal OCI image in `Dockerfile.outback`, selects the
-`leapview` project through `outback.json`, and keeps orchestration in the existing Taskfile.
-outback has no LeapView-specific runner, preparation hook, or task language.
+LeapView uses the generic autback service for CPU-heavy repository gates and trusted image
+builds. The repository supplies a normal OCI image in `Dockerfile.autback`, selects the
+`leapview` project through `autback.json`, and keeps orchestration in the existing Taskfile.
+autback has no LeapView-specific runner, preparation hook, or task language.
 
 ## Developer workflow
 
@@ -11,8 +11,8 @@ Run focused tests locally during the edit loop. An authenticated developer can s
 complete generated test suite or canonical CI contract to the shared worker:
 
 ```console
-task outback:test
-task outback:ci
+task autback:test
+task autback:ci
 ```
 
 Both commands execute the existing repository tasks inside the active project image. The
@@ -24,8 +24,8 @@ images.
 ## GitHub Actions
 
 Trusted same-repository image jobs exchange GitHub OIDC identity for a short-lived,
-project-scoped outback operation token. They use the same `outback build` command and project
-as developers. No long-lived outback credential is stored in GitHub.
+project-scoped autback operation token. They use the same `autback build` command and project
+as developers. No long-lived autback credential is stored in GitHub.
 
 Fork and Dependabot pull requests cannot receive the OIDC permission or shared worker.
 The `site-image-fork` and `production-image-fork` jobs retain equivalent GitHub-hosted
@@ -37,10 +37,10 @@ If a newly activated runner image is faulty, restore the immediately preceding i
 digest and verify the worker before retrying CI:
 
 ```console
-outback image history --project leapview
-outback image rollback --project leapview
-outback doctor
-task outback:ci
+autback image history --project leapview
+autback image rollback --project leapview
+autback doctor
+task autback:ci
 ```
 
 If the shared service itself is unavailable, run `task ci` on a capable machine. For a
@@ -48,9 +48,9 @@ GitHub-side service outage, temporarily route the trusted image jobs through the
 GitHub-hosted Buildx and smoke-test sequence already encoded by `site-image-fork` and
 `production-image-fork`. This preserves the build contract without restoring Depot.
 
-Revoke a compromised or obsolete GitHub trust with `outback trust github revoke <trust-id>`.
+Revoke a compromised or obsolete GitHub trust with `autback trust github revoke <trust-id>`.
 Changing or revoking a trust does not require changing repository credentials because the
 workflow stores none.
 
 The measured cutover result and immutable image references are recorded in
-`outback/evidence/service/leapview-cutover.json`.
+`autback/evidence/service/leapview-cutover.json`.

@@ -3,9 +3,9 @@
 source "${0:A:h}/lib.zsh"
 zmodload zsh/datetime
 
-proof_dir="${OUTBACK_DIR}/evidence/service-local"
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/outback-service-local-fixture.XXXXXX")"
-data_dir="$(mktemp -d "${TMPDIR:-/tmp}/outback-service-local-data.XXXXXX")"
+proof_dir="${AUTBACK_DIR}/evidence/service-local"
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/autback-service-local-fixture.XXXXXX")"
+data_dir="$(mktemp -d "${TMPDIR:-/tmp}/autback-service-local-data.XXXXXX")"
 server_pid=""
 keychain_enrolled=false
 service_containers=()
@@ -19,8 +19,8 @@ cleanup() {
       docker logs --tail 100 "${container}" >&2 || true
     done
   fi
-  if [[ "${keychain_enrolled}" == "true" && -x "${build_dir:-}/outback" && -n "${config_file:-}" ]]; then
-    env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" logout >/dev/null 2>&1 || true
+  if [[ "${keychain_enrolled}" == "true" && -x "${build_dir:-}/autback" && -n "${config_file:-}" ]]; then
+    env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" logout >/dev/null 2>&1 || true
   fi
   if [[ -n "${server_pid}" ]]; then
     kill "${server_pid}" >/dev/null 2>&1 || true
@@ -71,7 +71,7 @@ control_port="${ports[5]}"
 cas_gateway_port="${ports[6]}"
 buildkit_gateway_port="${ports[7]}"
 
-run_id="outback-service-local-$$"
+run_id="autback-service-local-$$"
 cas_container="${run_id}-cas"
 registry_container="${run_id}-registry"
 buildkit_container="${run_id}-buildkit"
@@ -83,15 +83,15 @@ start_container() {
   docker run --detach --name "${name}" "$@" >/dev/null
 }
 
-start_container "${cas_container}" --network host --volume outback-cas-service-local:/data \
+start_container "${cas_container}" --network host --volume autback-cas-service-local:/data \
   "${cas_image}" --dir /data --max_size 5 --grpc_address "127.0.0.1:${cas_internal_port}" \
   --http_address "127.0.0.1:${cas_http_port}" --profile_address none --access_log_level none
-start_container "${registry_container}" --network host --volume outback-registry-service-local:/var/lib/registry \
+start_container "${registry_container}" --network host --volume autback-registry-service-local:/var/lib/registry \
   --env "REGISTRY_HTTP_ADDR=0.0.0.0:${registry_port}" "${registry_image}"
-buildkit_config="${OUTBACK_TMP_DIR}/service-local-buildkitd.toml"
+buildkit_config="${AUTBACK_TMP_DIR}/service-local-buildkitd.toml"
 print "[registry.\"127.0.0.1:${registry_port}\"]\n  http = true" > "${buildkit_config}"
 start_container "${buildkit_container}" --privileged --network host \
-  --volume outback-buildkit-service-local-image-lifecycle:/var/lib/buildkit \
+  --volume autback-buildkit-service-local-image-lifecycle:/var/lib/buildkit \
   --volume "${buildkit_config}:/etc/buildkit/buildkitd.toml:ro" \
   "${buildkit_image}" --config /etc/buildkit/buildkitd.toml --addr "tcp://127.0.0.1:${buildkit_internal_port}"
 
@@ -116,22 +116,22 @@ case "${architecture}" in
   *) print -u2 "unsupported Docker architecture ${architecture}"; exit 1 ;;
 esac
 
-build_dir="${OUTBACK_TMP_DIR}/service-local-build"
+build_dir="${AUTBACK_TMP_DIR}/service-local-build"
 mkdir -p "${build_dir}" "${proof_dir}"
-go -C "${OUTBACK_DIR}" build -trimpath -o "${build_dir}/outback" ./cmd/outback
-go -C "${OUTBACK_DIR}" build -trimpath -o "${build_dir}/outback-server" ./cmd/outback-server
-env CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" go -C "${OUTBACK_DIR}" build -trimpath \
-  -o "${build_dir}/outback-job-entrypoint" ./cmd/outback-job-entrypoint
+go -C "${AUTBACK_DIR}" build -trimpath -o "${build_dir}/autback" ./cmd/autback
+go -C "${AUTBACK_DIR}" build -trimpath -o "${build_dir}/autback-server" ./cmd/autback-server
+env CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" go -C "${AUTBACK_DIR}" build -trimpath \
+  -o "${build_dir}/autback-job-entrypoint" ./cmd/autback-job-entrypoint
 
 # Docker Swarm bind mounts are resolved by the daemon. Install the static helper
-# into a daemon-host path so the project image does not need any outback content.
+# into a daemon-host path so the project image does not need any autback content.
 docker run --rm \
-  --volume "${build_dir}/outback-job-entrypoint:/source/outback-job-entrypoint:ro" \
-  --volume /var/lib/outback:/target \
+  --volume "${build_dir}/autback-job-entrypoint:/source/autback-job-entrypoint:ro" \
+  --volume /var/lib/autback:/target \
   alpine:3.22.1 sh -eu -c \
-  'mkdir -p /target/bin /target/jobs; cp /source/outback-job-entrypoint /target/bin/outback-job-entrypoint; chmod 0755 /target/bin/outback-job-entrypoint'
+  'mkdir -p /target/bin /target/jobs; cp /source/autback-job-entrypoint /target/bin/autback-job-entrypoint; chmod 0755 /target/bin/autback-job-entrypoint'
 
-bootstrap_output="$("${build_dir}/outback-server" bootstrap \
+bootstrap_output="$("${build_dir}/autback-server" bootstrap \
   --data-dir "${data_dir}" --user owner --project example --project-name 'Service E2E' --token-name local-e2e)"
 device_token="$(print -r -- "${bootstrap_output}" | sed -n 's/^Token: //p')"
 if [[ -z "${device_token}" ]]; then
@@ -139,18 +139,18 @@ if [[ -z "${device_token}" ]]; then
   exit 1
 fi
 
-OUTBACK_DATA_DIR="${data_dir}" \
-OUTBACK_SERVER_NAMES='localhost,127.0.0.1' \
-OUTBACK_LISTEN="127.0.0.1:${control_port}" \
-OUTBACK_CAS_LISTEN="127.0.0.1:${cas_gateway_port}" \
-OUTBACK_CAS_ENDPOINT="localhost:${cas_gateway_port}" \
-OUTBACK_CAS_INTERNAL="127.0.0.1:${cas_internal_port}" \
-OUTBACK_BUILDKIT_LISTEN="127.0.0.1:${buildkit_gateway_port}" \
-OUTBACK_BUILDKIT_ENDPOINT="localhost:${buildkit_gateway_port}" \
-OUTBACK_BUILDKIT_INTERNAL="127.0.0.1:${buildkit_internal_port}" \
-OUTBACK_CACHE_ROOT="${data_dir}/cache" \
-OUTBACK_JOB_ENTRYPOINT='/var/lib/outback/bin/outback-job-entrypoint' \
-"${build_dir}/outback-server" > "${proof_dir}/server.log" 2>&1 &
+AUTBACK_DATA_DIR="${data_dir}" \
+AUTBACK_SERVER_NAMES='localhost,127.0.0.1' \
+AUTBACK_LISTEN="127.0.0.1:${control_port}" \
+AUTBACK_CAS_LISTEN="127.0.0.1:${cas_gateway_port}" \
+AUTBACK_CAS_ENDPOINT="localhost:${cas_gateway_port}" \
+AUTBACK_CAS_INTERNAL="127.0.0.1:${cas_internal_port}" \
+AUTBACK_BUILDKIT_LISTEN="127.0.0.1:${buildkit_gateway_port}" \
+AUTBACK_BUILDKIT_ENDPOINT="localhost:${buildkit_gateway_port}" \
+AUTBACK_BUILDKIT_INTERNAL="127.0.0.1:${buildkit_internal_port}" \
+AUTBACK_CACHE_ROOT="${data_dir}/cache" \
+AUTBACK_JOB_ENTRYPOINT='/var/lib/autback/bin/autback-job-entrypoint' \
+"${build_dir}/autback-server" > "${proof_dir}/server.log" 2>&1 &
 server_pid=$!
 
 for attempt in {1..80}; do
@@ -158,22 +158,22 @@ for attempt in {1..80}; do
     break
   fi
   if ! kill -0 "${server_pid}" >/dev/null 2>&1; then
-    print -u2 'outback-server stopped during startup'
+    print -u2 'autback-server stopped during startup'
     tail -100 "${proof_dir}/server.log" >&2
     exit 1
   fi
   if [[ ${attempt} -eq 80 ]]; then
-    print -u2 'outback-server did not become healthy'
+    print -u2 'autback-server did not become healthy'
     exit 1
   fi
   sleep 0.25
 done
 
-cp -R "${OUTBACK_DIR}/examples/go-redis/." "${fixture}/"
+cp -R "${AUTBACK_DIR}/examples/go-redis/." "${fixture}/"
 git -C "${fixture}" init -q
-git -C "${fixture}" config user.name 'outback proof'
-git -C "${fixture}" config user.email 'outback@example.invalid'
-jq -n --arg project "example" '{project:$project}' > "${fixture}/outback.json"
+git -C "${fixture}" config user.name 'autback proof'
+git -C "${fixture}" config user.email 'autback@example.invalid'
+jq -n --arg project "example" '{project:$project}' > "${fixture}/autback.json"
 git -C "${fixture}" add .
 git -C "${fixture}" commit -qm 'committed baseline'
 print 'dirty worktree reached remote worker' > "${fixture}/proof.txt"
@@ -190,49 +190,49 @@ jq -n \
 	'{url:$url,service:{ca_cert_file:$ca,oidc_audience:$url}}' \
   > "${config_file}"
 chmod 0600 "${config_file}"
-export OUTBACK_CONFIG="${config_file}"
-export OUTBACK_TOKEN="${device_token}"
+export AUTBACK_CONFIG="${config_file}"
+export AUTBACK_TOKEN="${device_token}"
 
-"${build_dir}/outback" doctor | tee "${proof_dir}/doctor.log"
-"${build_dir}/outback" admin project create --slug second --name 'Second E2E Project' > "${proof_dir}/second-project.json"
-coworker_json="$("${build_dir}/outback" admin user create --name coworker)"
+"${build_dir}/autback" doctor | tee "${proof_dir}/doctor.log"
+"${build_dir}/autback" admin project create --slug second --name 'Second E2E Project' > "${proof_dir}/second-project.json"
+coworker_json="$("${build_dir}/autback" admin user create --name coworker)"
 print -r -- "${coworker_json}" > "${proof_dir}/coworker.json"
 coworker_id="$(print -r -- "${coworker_json}" | jq -r '.id')"
-"${build_dir}/outback" admin member add --project example --user "${coworker_id}" > "${proof_dir}/coworker-member.log"
-enrollment_code="$("${build_dir}/outback" admin enrollment create --user "${coworker_id}" --device coworker-laptop --expires 10m 2> "${proof_dir}/enrollment-create.log")"
-print -r -- "${enrollment_code}" | env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" \
-  "${build_dir}/outback" login > "${proof_dir}/enrollment-login.log" 2>&1
+"${build_dir}/autback" admin member add --project example --user "${coworker_id}" > "${proof_dir}/coworker-member.log"
+enrollment_code="$("${build_dir}/autback" admin enrollment create --user "${coworker_id}" --device coworker-laptop --expires 10m 2> "${proof_dir}/enrollment-create.log")"
+print -r -- "${enrollment_code}" | env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" \
+  "${build_dir}/autback" login > "${proof_dir}/enrollment-login.log" 2>&1
 keychain_enrolled=true
-env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" doctor > "${proof_dir}/coworker-doctor.log"
+env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" doctor > "${proof_dir}/coworker-doctor.log"
 set +e
-print -r -- "${enrollment_code}" | env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" \
-  "${build_dir}/outback" login > "${proof_dir}/enrollment-reuse.log" 2>&1
+print -r -- "${enrollment_code}" | env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" \
+  "${build_dir}/autback" login > "${proof_dir}/enrollment-reuse.log" 2>&1
 enrollment_reuse_exit=$?
 set -e
 [[ ${enrollment_reuse_exit} -ne 0 ]] || { print -u2 'single-use enrollment code was accepted twice'; exit 1; }
-env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" token list > "${proof_dir}/coworker-tokens.json"
+env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" token list > "${proof_dir}/coworker-tokens.json"
 coworker_token_id="$(jq -r '.[] | select(.name == "coworker-laptop") | .id' "${proof_dir}/coworker-tokens.json")"
 [[ -n "${coworker_token_id}" ]] || { print -u2 'enrolled device token was not listed'; exit 1; }
-env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" token revoke "${coworker_token_id}" > "${proof_dir}/coworker-revoke.log"
+env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" token revoke "${coworker_token_id}" > "${proof_dir}/coworker-revoke.log"
 set +e
-env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" token list > "${proof_dir}/coworker-revoked-token-list.log" 2>&1
+env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" token list > "${proof_dir}/coworker-revoked-token-list.log" 2>&1
 revoked_exit=$?
 set -e
 [[ ${revoked_exit} -ne 0 ]] || { print -u2 'revoked enrolled device remained authenticated'; exit 1; }
-env -u OUTBACK_TOKEN OUTBACK_CONFIG="${config_file}" "${build_dir}/outback" logout > "${proof_dir}/coworker-logout.log"
+env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" logout > "${proof_dir}/coworker-logout.log"
 keychain_enrolled=false
-"${build_dir}/outback" image activate --project example --image "${project_image}" | tee "${proof_dir}/image-activate.log"
-"${build_dir}/outback" image activate --project second --image "${project_image}" > "${proof_dir}/second-image-activate.log"
-"${build_dir}/outback" image activate --project example --image "${cas_image}" | tee "${proof_dir}/image-second-activate.log"
-"${build_dir}/outback" image rollback --project example | tee "${proof_dir}/image-rollback.log"
-"${build_dir}/outback" image history --project example > "${proof_dir}/image-history.json"
+"${build_dir}/autback" image activate --project example --image "${project_image}" | tee "${proof_dir}/image-activate.log"
+"${build_dir}/autback" image activate --project second --image "${project_image}" > "${proof_dir}/second-image-activate.log"
+"${build_dir}/autback" image activate --project example --image "${cas_image}" | tee "${proof_dir}/image-second-activate.log"
+"${build_dir}/autback" image rollback --project example | tee "${proof_dir}/image-rollback.log"
+"${build_dir}/autback" image history --project example > "${proof_dir}/image-history.json"
 jq -e --arg image "${project_image}" 'length == 3 and .[0].action == "rollback" and .[0].image == $image' "${proof_dir}/image-history.json" >/dev/null
-"${build_dir}/outback" image overrides --project example deny | tee "${proof_dir}/image-policy.log"
+"${build_dir}/autback" image overrides --project example deny | tee "${proof_dir}/image-policy.log"
 
 set +e
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec --image "${cas_image}" -- true
+  "${build_dir}/autback" exec --image "${cas_image}" -- true
 ) > "${proof_dir}/image-override-denied.log" 2>&1
 override_exit=$?
 set -e
@@ -241,14 +241,14 @@ grep -q 'project image overrides are disabled' "${proof_dir}/image-override-deni
 
 runner_fixture="${fixture}/runner-image"
 mkdir -p "${runner_fixture}"
-print "FROM ${project_image}\nLABEL org.opencontainers.image.source=outback-e2e" > "${runner_fixture}/Dockerfile"
+print "FROM ${project_image}\nLABEL org.opencontainers.image.source=autback-e2e" > "${runner_fixture}/Dockerfile"
 (
   cd "${runner_fixture}"
-  "${build_dir}/outback" image build --tag "127.0.0.1:${registry_port}/outback/e2e:latest" -- --progress plain
+  "${build_dir}/autback" image build --tag "127.0.0.1:${registry_port}/autback/e2e:latest" -- --progress plain
 ) 2>&1 | tee "${proof_dir}/image-build.log"
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec -- go version
+  "${build_dir}/autback" exec -- go version
 ) 2>&1 | tee "${proof_dir}/image-build-exec.log"
 grep -q '^go version ' "${proof_dir}/image-build-exec.log"
 
@@ -257,7 +257,7 @@ run_remote_test() {
   local start_time="${EPOCHREALTIME}"
   (
     cd "${fixture}"
-    "${build_dir}/outback" exec \
+    "${build_dir}/autback" exec \
       --cache go-build=/root/.cache/go-build \
       --cache go-mod=/go/pkg/mod \
       -- go test -count=1 -v ./...
@@ -267,55 +267,55 @@ run_remote_test() {
 }
 
 first_seconds="$(run_remote_test "${proof_dir}/first-run.log")"
-first_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/first-run.log" | tail -1 | awk '{print $2}')"
+first_job="$(grep -E '^Job: (job|autback-)' "${proof_dir}/first-run.log" | tail -1 | awk '{print $2}')"
 cached_seconds="$(run_remote_test "${proof_dir}/cached-run.log")"
-cached_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/cached-run.log" | tail -1 | awk '{print $2}')"
+cached_job="$(grep -E '^Job: (job|autback-)' "${proof_dir}/cached-run.log" | tail -1 | awk '{print $2}')"
 grep -q 'Transfer: 0 B uploaded' "${proof_dir}/cached-run.log"
 grep -q 'REMOTE_E2E_PROOF' "${proof_dir}/cached-run.log"
 
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec --project second -- go version
+  "${build_dir}/autback" exec --project second -- go version
 ) 2>&1 | tee "${proof_dir}/second-project-cas.log"
 grep -q 'Transfer: 0 B uploaded' "${proof_dir}/second-project-cas.log"
 
 set +e
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec --timeout 1s -- sh -c 'echo REMOTE_TIMEOUT_PROOF_STARTED; sleep 60'
+  "${build_dir}/autback" exec --timeout 1s -- sh -c 'echo REMOTE_TIMEOUT_PROOF_STARTED; sleep 60'
 ) > "${proof_dir}/timeout.log" 2>&1
 timeout_exit=$?
 set -e
-timeout_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/timeout.log" | tail -1 | awk '{print $2}')"
+timeout_job="$(grep -E '^Job: (job|autback-)' "${proof_dir}/timeout.log" | tail -1 | awk '{print $2}')"
 [[ ${timeout_exit} -ne 0 ]] || { print -u2 'timeout proof unexpectedly succeeded'; exit 1; }
-"${build_dir}/outback" status --json "${timeout_job}" > "${proof_dir}/timeout-job.json"
+"${build_dir}/autback" status --json "${timeout_job}" > "${proof_dir}/timeout-job.json"
 jq -e '.status == "timed_out"' "${proof_dir}/timeout-job.json" >/dev/null
 
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec --detach --timeout 1m -- sh -c 'echo REMOTE_CANCEL_PROOF_STARTED; sleep 60'
+  "${build_dir}/autback" exec --detach --timeout 1m -- sh -c 'echo REMOTE_CANCEL_PROOF_STARTED; sleep 60'
 ) > "${proof_dir}/cancel-submit.log" 2>&1
-cancel_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/cancel-submit.log" | tail -1 | awk '{print $2}')"
-wait_for_job_status "${config_file}" "${build_dir}/outback" "${cancel_job}" running "${proof_dir}/cancel-running.json"
-"${build_dir}/outback" cancel "${cancel_job}" | tee "${proof_dir}/cancel.log"
-wait_for_job_status "${config_file}" "${build_dir}/outback" "${cancel_job}" cancelled "${proof_dir}/cancel-job.json"
+cancel_job="$(grep -E '^Job: (job|autback-)' "${proof_dir}/cancel-submit.log" | tail -1 | awk '{print $2}')"
+wait_for_job_status "${config_file}" "${build_dir}/autback" "${cancel_job}" running "${proof_dir}/cancel-running.json"
+"${build_dir}/autback" cancel "${cancel_job}" | tee "${proof_dir}/cancel.log"
+wait_for_job_status "${config_file}" "${build_dir}/autback" "${cancel_job}" cancelled "${proof_dir}/cancel-job.json"
 
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_ONE_STARTED; sleep 60'
+  "${build_dir}/autback" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_ONE_STARTED; sleep 60'
 ) > "${proof_dir}/queue-first-submit.log" 2>&1
-queue_first_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/queue-first-submit.log" | tail -1 | awk '{print $2}')"
-wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_first_job}" running "${proof_dir}/queue-first.json"
+queue_first_job="$(grep -E '^Job: (job|autback-)' "${proof_dir}/queue-first-submit.log" | tail -1 | awk '{print $2}')"
+wait_for_job_status "${config_file}" "${build_dir}/autback" "${queue_first_job}" running "${proof_dir}/queue-first.json"
 (
   cd "${fixture}"
-  "${build_dir}/outback" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_TWO_STARTED; sleep 60'
+  "${build_dir}/autback" exec --detach --timeout 1m -- sh -c 'echo QUEUE_JOB_TWO_STARTED; sleep 60'
 ) > "${proof_dir}/queue-second-submit.log" 2>&1
-queue_second_job="$(grep -E '^Job: (job|outback-)' "${proof_dir}/queue-second-submit.log" | tail -1 | awk '{print $2}')"
-wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_second_job}" queued "${proof_dir}/queue-second.json"
-"${build_dir}/outback" cancel "${queue_second_job}" >/dev/null
-"${build_dir}/outback" cancel "${queue_first_job}" >/dev/null
-wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_second_job}" cancelled "${proof_dir}/queue-second-cancelled.json"
-wait_for_job_status "${config_file}" "${build_dir}/outback" "${queue_first_job}" cancelled "${proof_dir}/queue-first-cancelled.json"
+queue_second_job="$(grep -E '^Job: (job|autback-)' "${proof_dir}/queue-second-submit.log" | tail -1 | awk '{print $2}')"
+wait_for_job_status "${config_file}" "${build_dir}/autback" "${queue_second_job}" queued "${proof_dir}/queue-second.json"
+"${build_dir}/autback" cancel "${queue_second_job}" >/dev/null
+"${build_dir}/autback" cancel "${queue_first_job}" >/dev/null
+wait_for_job_status "${config_file}" "${build_dir}/autback" "${queue_second_job}" cancelled "${proof_dir}/queue-second-cancelled.json"
+wait_for_job_status "${config_file}" "${build_dir}/autback" "${queue_first_job}" cancelled "${proof_dir}/queue-first-cancelled.json"
 
 build_fixture="${fixture}/build-proof"
 build_output="${fixture}/build-output"
@@ -324,14 +324,14 @@ print 'remote BuildKit reached through build-scoped mTLS' > "${build_fixture}/pr
 print 'FROM scratch\nCOPY proof.txt /proof.txt' > "${build_fixture}/Dockerfile"
 (
   cd "${build_fixture}"
-  "${build_dir}/outback" build -- --progress plain --output "type=local,dest=${build_output}" .
+  "${build_dir}/autback" build -- --progress plain --output "type=local,dest=${build_output}" .
 ) 2>&1 | tee "${proof_dir}/build.log"
 cmp "${build_fixture}/proof.txt" "${build_output}/proof.txt"
 second_build_output="${fixture}/second-build-output"
 mkdir -p "${second_build_output}"
 (
   cd "${build_fixture}"
-  "${build_dir}/outback" build --project second -- --progress plain --output "type=local,dest=${second_build_output}" .
+  "${build_dir}/autback" build --project second -- --progress plain --output "type=local,dest=${second_build_output}" .
 ) 2>&1 | tee "${proof_dir}/second-project-build.log"
 cmp "${build_fixture}/proof.txt" "${second_build_output}/proof.txt"
 grep -q 'CACHED' "${proof_dir}/second-project-build.log"
@@ -341,7 +341,7 @@ mkdir -p "${cancel_build_fixture}"
 print 'FROM alpine:3.22.1\nRUN echo BUILD_CANCEL_PROOF_STARTED; sleep 60' > "${cancel_build_fixture}/Dockerfile"
 (
   cd "${cancel_build_fixture}"
-  exec "${build_dir}/outback" build -- --progress plain .
+  exec "${build_dir}/autback" build -- --progress plain .
 ) > "${proof_dir}/cancel-build.log" 2>&1 &
 cancel_build_pid=$!
 for attempt in {1..120}; do
@@ -379,7 +379,7 @@ for attempt in {1..40}; do
   sleep 0.25
 done
 
-"${build_dir}/outback" list --project example --json > "${proof_dir}/list.json"
+"${build_dir}/autback" list --project example --json > "${proof_dir}/list.json"
 for attempt in {1..80}; do
   docker ps --format '{{.Names}} {{.Labels}}' > "${proof_dir}/docker-containers.txt"
   if ! grep -Eq 'reaper_|org.testcontainers=true' "${proof_dir}/docker-containers.txt"; then

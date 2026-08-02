@@ -17,7 +17,7 @@ func Write(ca, certificate, key []byte) (Files, error) {
 	if len(ca) == 0 || len(certificate) == 0 || len(key) == 0 {
 		return Files{}, errors.New("CA, certificate, and private key are required")
 	}
-	root, err := os.MkdirTemp("", "outback-credentials-*")
+	root, err := os.MkdirTemp("", "autback-credentials-*")
 	if err != nil {
 		return Files{}, err
 	}

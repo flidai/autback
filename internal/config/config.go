@@ -28,11 +28,11 @@ func Load() (Config, error) {
 	if fileErr != nil && !errors.Is(fileErr, os.ErrNotExist) {
 		return Config{}, fileErr
 	}
-	if value := os.Getenv("OUTBACK_URL"); value != "" {
+	if value := os.Getenv("AUTBACK_URL"); value != "" {
 		config.URL = value
 	}
 	if config.URL == "" {
-		return Config{}, fmt.Errorf("url is required in %s or OUTBACK_URL", path)
+		return Config{}, fmt.Errorf("url is required in %s or AUTBACK_URL", path)
 	}
 	if config.Service == nil {
 		config.Service = &Service{}
@@ -44,7 +44,7 @@ func Load() (Config, error) {
 }
 
 func Path() (string, error) {
-	if value := os.Getenv("OUTBACK_CONFIG"); value != "" {
+	if value := os.Getenv("AUTBACK_CONFIG"); value != "" {
 		return value, nil
 	}
 	root := os.Getenv("XDG_CONFIG_HOME")
@@ -55,7 +55,7 @@ func Path() (string, error) {
 		}
 		root = filepath.Join(home, ".config")
 	}
-	return filepath.Join(root, "outback", "config.json"), nil
+	return filepath.Join(root, "autback", "config.json"), nil
 }
 
 func read(path string) (Config, error) {

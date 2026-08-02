@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flidai/outback/internal/cas"
+	"github.com/flidai/autback/internal/cas"
 )
 
 type result struct {
@@ -30,12 +30,12 @@ func main() {
 
 func run() int {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "outback-job-entrypoint: command is required")
+		fmt.Fprintln(os.Stderr, "autback-job-entrypoint: command is required")
 		return 2
 	}
-	workspace := os.Getenv("OUTBACK_WORKSPACE")
+	workspace := os.Getenv("AUTBACK_WORKSPACE")
 	if workspace == "" {
-		fmt.Fprintln(os.Stderr, "outback-job-entrypoint: OUTBACK_WORKSPACE is required")
+		fmt.Fprintln(os.Stderr, "autback-job-entrypoint: AUTBACK_WORKSPACE is required")
 		return 2
 	}
 	hostUID, hostGID, err := hostIdentityFromEnvironment()
@@ -73,7 +73,7 @@ func run() int {
 		fmt.Fprintln(stderr, err)
 		return finish(jobDirectory, "failed", 1)
 	}
-	if err := cas.Materialize(ctx, required("OUTBACK_CAS_ADDRESS"), fallback(os.Getenv("OUTBACK_CAS_INSTANCE"), "outback"), required("OUTBACK_ROOT_DIGEST"), workspace); err != nil {
+	if err := cas.Materialize(ctx, required("AUTBACK_CAS_ADDRESS"), fallback(os.Getenv("AUTBACK_CAS_INSTANCE"), "autback"), required("AUTBACK_ROOT_DIGEST"), workspace); err != nil {
 		fmt.Fprintln(stderr, err)
 		return finish(jobDirectory, "failed", 1)
 	}
@@ -81,14 +81,14 @@ func run() int {
 		fmt.Fprintln(stderr, err)
 		return finish(jobDirectory, "failed", 1)
 	}
-	for _, directory := range []string{filepath.Join(workspace, ".outback", "tmp"), filepath.Join(workspace, ".outback", "data")} {
+	for _, directory := range []string{filepath.Join(workspace, ".autback", "tmp"), filepath.Join(workspace, ".autback", "data")} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			fmt.Fprintln(stderr, err)
 			return finish(jobDirectory, "failed", 1)
 		}
 	}
 	command := exec.CommandContext(ctx, os.Args[1], os.Args[2:]...)
-	workingDirectory, err := resolveWorkingDirectory(workspace, os.Getenv("OUTBACK_WORKING_DIRECTORY"))
+	workingDirectory, err := resolveWorkingDirectory(workspace, os.Getenv("AUTBACK_WORKING_DIRECTORY"))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return finish(jobDirectory, "failed", 2)
@@ -138,7 +138,7 @@ func initializeGitBaseline(ctx context.Context, workspace string, output io.Writ
 	commands := [][]string{
 		{"init", "--quiet"},
 		{"add", "--all", "--force"},
-		{"-c", "user.name=outback", "-c", "user.email=outback@localhost", "commit", "--quiet", "--allow-empty", "--no-gpg-sign", "--no-verify", "-m", "outback source snapshot"},
+		{"-c", "user.name=autback", "-c", "user.email=autback@localhost", "commit", "--quiet", "--allow-empty", "--no-gpg-sign", "--no-verify", "-m", "autback source snapshot"},
 	}
 	for _, arguments := range commands {
 		command := exec.CommandContext(ctx, git, arguments...)
@@ -166,13 +166,13 @@ func prepareJobDirectory(jobDirectory string, hostUID, hostGID int) error {
 }
 
 func hostIdentityFromEnvironment() (int, int, error) {
-	uid, err := strconv.Atoi(os.Getenv("OUTBACK_HOST_UID"))
+	uid, err := strconv.Atoi(os.Getenv("AUTBACK_HOST_UID"))
 	if err != nil || uid < 0 {
-		return 0, 0, errors.New("OUTBACK_HOST_UID must be a non-negative integer")
+		return 0, 0, errors.New("AUTBACK_HOST_UID must be a non-negative integer")
 	}
-	gid, err := strconv.Atoi(os.Getenv("OUTBACK_HOST_GID"))
+	gid, err := strconv.Atoi(os.Getenv("AUTBACK_HOST_GID"))
 	if err != nil || gid < 0 {
-		return 0, 0, errors.New("OUTBACK_HOST_GID must be a non-negative integer")
+		return 0, 0, errors.New("AUTBACK_HOST_GID must be a non-negative integer")
 	}
 	return uid, gid, nil
 }
@@ -182,17 +182,17 @@ func resolveWorkingDirectory(workspace, relative string) (string, error) {
 		return workspace, nil
 	}
 	if filepath.IsAbs(relative) {
-		return "", errors.New("OUTBACK_WORKING_DIRECTORY must be relative to the workspace")
+		return "", errors.New("AUTBACK_WORKING_DIRECTORY must be relative to the workspace")
 	}
 	clean := filepath.Clean(relative)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", errors.New("OUTBACK_WORKING_DIRECTORY escapes the workspace")
+		return "", errors.New("AUTBACK_WORKING_DIRECTORY escapes the workspace")
 	}
 	return filepath.Join(workspace, clean), nil
 }
 
 func timeoutFromEnvironment() time.Duration {
-	millis, err := strconv.ParseInt(os.Getenv("OUTBACK_TIMEOUT_MILLIS"), 10, 64)
+	millis, err := strconv.ParseInt(os.Getenv("AUTBACK_TIMEOUT_MILLIS"), 10, 64)
 	if err != nil || millis < 1 {
 		return 0
 	}
@@ -212,7 +212,7 @@ func finish(jobDirectory, status string, exitCode int) int {
 func required(name string) string {
 	value := os.Getenv(name)
 	if value == "" {
-		fmt.Fprintf(os.Stderr, "outback-job-entrypoint: %s is required\n", name)
+		fmt.Fprintf(os.Stderr, "autback-job-entrypoint: %s is required\n", name)
 	}
 	return value
 }

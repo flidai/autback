@@ -9,7 +9,7 @@ import (
 )
 
 func installerCommand(environment map[string]string) *exec.Cmd {
-	path := filepath.Join("..", "..", "action", "setup-outback", "install-release.sh")
+	path := filepath.Join("..", "..", "action", "setup-autback", "install-release.sh")
 	command := exec.Command("bash", path)
 	command.Env = os.Environ()
 	for key, value := range environment {

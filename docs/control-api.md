@@ -1,11 +1,9 @@
 # Control API v1
 
-The Outback control plane exposes `rtest.v1.ControlService` with Connect over HTTPS. The
-protobuf schema in `api/rtest/v1/control.proto` is the source of truth. Outback retains
-that v1 wire name so the renamed client and already deployed clients can share one control
-plane during migration. Generated Go
-clients and handlers are committed so the CLI and server compile against the same wire
-contract.
+The Autback control plane exposes `rtest.v1.ControlService` with Connect over HTTPS. The
+protobuf schema in `api/rtest/v1/control.proto` is the source of truth. `rtest.v1` is the
+stable v1 wire route; it is not a product alias or CLI name. Generated Go clients and
+handlers are committed so the CLI and server compile against the same wire contract.
 
 ## Compatibility
 
@@ -13,7 +11,7 @@ The v1 package is additive: existing field numbers, enum values, messages, and R
 not be removed or changed incompatibly. `task proto:check` compares the current schema
 with the committed v1 descriptor using Buf's `WIRE_JSON` breaking-change policy. A deliberate
 compatible addition updates generated Go code but does not require replacing the baseline.
-A future incompatible contract must use a new protobuf package such as `outback.v2`.
+A future incompatible contract must use a new protobuf package such as `autback.v2`.
 
 ## Project authorization
 

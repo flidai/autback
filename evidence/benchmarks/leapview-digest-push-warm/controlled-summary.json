@@ -16,7 +16,7 @@
     "platform": "linux/amd64",
     "output": "buildx --push with containerimage.digest metadata",
     "worker": "existing Hetzner CPX32, 4 vCPU, 8 GiB",
-    "boundary": "Outback CLI build plus a separate exact-digest Outback exec",
+    "boundary": "Autback CLI build plus a separate exact-digest Autback exec",
     "percentile": "nearest-rank p95"
   },
   "production": {

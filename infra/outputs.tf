@@ -1,5 +1,5 @@
 output "server_ipv4" {
-  description = "Public IPv4 for the outback HTTPS and mTLS service endpoints."
+  description = "Public IPv4 for the autback HTTPS and mTLS service endpoints."
   value       = hcloud_server.runner.ipv4_address
 }
 

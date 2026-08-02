@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flidai/outback/internal/swarm"
+	"github.com/flidai/autback/internal/swarm"
 )
 
 func TestCompletedLogsPreferDurableJobFile(t *testing.T) {

@@ -1,10 +1,10 @@
 resource "hcloud_ssh_key" "operator" {
-  name       = "outback-poc"
+  name       = "autback-poc"
   public_key = file(var.ssh_public_key_path)
 }
 
 resource "hcloud_firewall" "runner" {
-  name = "outback-poc"
+  name = "autback-poc"
 
   rule {
     direction  = "in"
@@ -36,7 +36,7 @@ resource "hcloud_firewall" "runner" {
 }
 
 resource "hcloud_server" "runner" {
-  name         = "outback-poc"
+  name         = "autback-poc"
   image        = "ubuntu-24.04"
   server_type  = var.server_type
   location     = var.location
@@ -50,7 +50,7 @@ resource "hcloud_server" "runner" {
   }
 
   labels = {
-    project     = "outback"
+    project     = "autback"
     environment = "poc"
     managed_by  = "terraform"
   }

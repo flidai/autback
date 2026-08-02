@@ -39,7 +39,7 @@ func Create(ctx context.Context, snapshotter Snapshotter, dataDir, output string
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.MkdirTemp(parent, ".outback-backup-")
+	temporary, err := os.MkdirTemp(parent, ".autback-backup-")
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func Restore(input, dataDir string) error {
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.MkdirTemp(parent, ".outback-restore-")
+	temporary, err := os.MkdirTemp(parent, ".autback-restore-")
 	if err != nil {
 		return err
 	}

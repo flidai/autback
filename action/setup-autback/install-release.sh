@@ -2,16 +2,16 @@
 
 set -euo pipefail
 
-: "${OUTBACK_VERSION:?OUTBACK_VERSION is required}"
-: "${OUTBACK_REPOSITORY:?OUTBACK_REPOSITORY is required}"
-: "${OUTBACK_INSTALL_ROOT:?OUTBACK_INSTALL_ROOT is required}"
+: "${AUTBACK_VERSION:?AUTBACK_VERSION is required}"
+: "${AUTBACK_REPOSITORY:?AUTBACK_REPOSITORY is required}"
+: "${AUTBACK_INSTALL_ROOT:?AUTBACK_INSTALL_ROOT is required}"
 
-if [[ ! "${OUTBACK_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-  printf 'invalid outback version: %s\n' "${OUTBACK_VERSION}" >&2
+if [[ ! "${AUTBACK_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+  printf 'invalid autback version: %s\n' "${AUTBACK_VERSION}" >&2
   exit 2
 fi
-if [[ ! "${OUTBACK_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-  printf 'invalid outback release repository: %s\n' "${OUTBACK_REPOSITORY}" >&2
+if [[ ! "${AUTBACK_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  printf 'invalid autback release repository: %s\n' "${AUTBACK_REPOSITORY}" >&2
   exit 2
 fi
 
@@ -19,18 +19,18 @@ runner_os="${RUNNER_OS:-$(uname -s)}"
 case "${runner_os}" in
   Linux) os=linux ;;
   macOS|Darwin) os=darwin ;;
-  *) printf 'unsupported outback release OS: %s\n' "${runner_os}" >&2; exit 2 ;;
+  *) printf 'unsupported autback release OS: %s\n' "${runner_os}" >&2; exit 2 ;;
 esac
 
 runner_arch="${RUNNER_ARCH:-$(uname -m)}"
 case "${runner_arch}" in
   X64|x86_64|amd64) arch=amd64 ;;
   ARM64|aarch64|arm64) arch=arm64 ;;
-  *) printf 'unsupported outback release architecture: %s\n' "${runner_arch}" >&2; exit 2 ;;
+  *) printf 'unsupported autback release architecture: %s\n' "${runner_arch}" >&2; exit 2 ;;
 esac
 
-bin_dir="${OUTBACK_INSTALL_ROOT}/bin"
-binary="${bin_dir}/outback"
+bin_dir="${AUTBACK_INSTALL_ROOT}/bin"
+binary="${bin_dir}/autback"
 output_file="${GITHUB_OUTPUT:-}"
 install -d -m 0755 "${bin_dir}"
 
@@ -41,15 +41,15 @@ record_source() {
   fi
 }
 
-if [[ -x "${binary}" ]] && [[ "$("${binary}" version 2>/dev/null)" == "${OUTBACK_VERSION}" ]]; then
+if [[ -x "${binary}" ]] && [[ "$("${binary}" version 2>/dev/null)" == "${AUTBACK_VERSION}" ]]; then
   record_source cache
   exit 0
 fi
 rm -f "${binary}"
 
-asset="outback_${OUTBACK_VERSION}_${os}_${arch}.tar.gz"
-release_base="${OUTBACK_RELEASE_BASE_URL:-https://github.com/${OUTBACK_REPOSITORY}/releases/download}"
-release_url="${release_base}/v${OUTBACK_VERSION}"
+asset="autback_${AUTBACK_VERSION}_${os}_${arch}.tar.gz"
+release_base="${AUTBACK_RELEASE_BASE_URL:-https://github.com/${AUTBACK_REPOSITORY}/releases/download}"
+release_url="${release_base}/v${AUTBACK_VERSION}"
 temporary="$(mktemp -d)"
 trap 'rm -rf "${temporary}"' EXIT
 
@@ -64,7 +64,7 @@ fi
 if [[ "${downloaded}" == true ]]; then
   expected="$(awk -v asset="${asset}" '$2 == asset || $2 == "*" asset {print $1; exit}' "${temporary}/checksums.txt")"
   if [[ ! "${expected}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    printf 'outback release checksum is missing for %s\n' "${asset}" >&2
+    printf 'autback release checksum is missing for %s\n' "${asset}" >&2
     exit 1
   fi
   if command -v sha256sum >/dev/null 2>&1; then
@@ -73,18 +73,18 @@ if [[ "${downloaded}" == true ]]; then
     actual="$(shasum -a 256 "${temporary}/${asset}" | awk '{print $1}')"
   fi
   if [[ "${actual}" != "${expected}" ]]; then
-    printf 'outback release checksum verification failed for %s\n' "${asset}" >&2
+    printf 'autback release checksum verification failed for %s\n' "${asset}" >&2
     exit 1
   fi
-  tar -xzf "${temporary}/${asset}" -C "${temporary}" outback
-  if [[ "$("${temporary}/outback" version)" != "${OUTBACK_VERSION}" ]]; then
-    printf 'outback release binary does not report version %s\n' "${OUTBACK_VERSION}" >&2
+  tar -xzf "${temporary}/${asset}" -C "${temporary}" autback
+  if [[ "$("${temporary}/autback" version)" != "${AUTBACK_VERSION}" ]]; then
+    printf 'autback release binary does not report version %s\n' "${AUTBACK_VERSION}" >&2
     exit 1
   fi
-  install -m 0755 "${temporary}/outback" "${binary}"
+  install -m 0755 "${temporary}/autback" "${binary}"
   record_source release
   exit 0
 fi
 
-printf 'outback release %s is unavailable\n' "${OUTBACK_VERSION}" >&2
+printf 'autback release %s is unavailable\n' "${AUTBACK_VERSION}" >&2
 exit 1

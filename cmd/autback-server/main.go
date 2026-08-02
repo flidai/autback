@@ -17,18 +17,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flidai/outback/internal/control"
-	"github.com/flidai/outback/internal/control/controlapi"
-	"github.com/flidai/outback/internal/control/dispatcher"
-	"github.com/flidai/outback/internal/control/githuboidc"
-	"github.com/flidai/outback/internal/control/mtlsproxy"
-	"github.com/flidai/outback/internal/control/pki"
-	"github.com/flidai/outback/internal/control/reconciler"
-	"github.com/flidai/outback/internal/control/recovery"
-	"github.com/flidai/outback/internal/control/secret"
-	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
-	"github.com/flidai/outback/internal/control/swarmscheduler"
-	"github.com/flidai/outback/internal/swarm"
+	"github.com/flidai/autback/internal/control"
+	"github.com/flidai/autback/internal/control/controlapi"
+	"github.com/flidai/autback/internal/control/dispatcher"
+	"github.com/flidai/autback/internal/control/githuboidc"
+	"github.com/flidai/autback/internal/control/mtlsproxy"
+	"github.com/flidai/autback/internal/control/pki"
+	"github.com/flidai/autback/internal/control/reconciler"
+	"github.com/flidai/autback/internal/control/recovery"
+	"github.com/flidai/autback/internal/control/secret"
+	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
+	"github.com/flidai/autback/internal/control/swarmscheduler"
+	"github.com/flidai/autback/internal/swarm"
 )
 
 func main() {
@@ -51,7 +51,7 @@ func main() {
 func serve() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	dataDir := env("OUTBACK_DATA_DIR", "/var/lib/outback")
+	dataDir := env("AUTBACK_DATA_DIR", "/var/lib/autback")
 	store := openStore(dataDir)
 	defer store.Close()
 	initialized, err := store.Initialized(ctx)
@@ -59,28 +59,28 @@ func serve() {
 		log.Fatal(err)
 	}
 	if !initialized {
-		log.Fatal("outback is not bootstrapped; run outback-server bootstrap before starting the service")
+		log.Fatal("autback is not bootstrapped; run autback-server bootstrap before starting the service")
 	}
-	names := splitNames(env("OUTBACK_SERVER_NAMES", "localhost,127.0.0.1"))
-	pkiDir := env("OUTBACK_PKI_DIR", filepath.Join(dataDir, "pki"))
+	names := splitNames(env("AUTBACK_SERVER_NAMES", "localhost,127.0.0.1"))
+	pkiDir := env("AUTBACK_PKI_DIR", filepath.Join(dataDir, "pki"))
 	authority, err := pki.Ensure(pkiDir, names)
 	if err != nil {
 		log.Fatal(err)
 	}
-	docker := swarm.New(swarm.Config{Binary: os.Getenv("OUTBACK_DOCKER"), Host: env("OUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
+	docker := swarm.New(swarm.Config{Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
 	if err := docker.Check(ctx); err != nil {
 		log.Fatal(err)
 	}
-	casInternal := env("OUTBACK_CAS_INTERNAL", "127.0.0.1:50051")
-	casListen := env("OUTBACK_CAS_LISTEN", ":50052")
-	buildKitInternal := env("OUTBACK_BUILDKIT_INTERNAL", "127.0.0.1:1234")
-	buildKitListen := env("OUTBACK_BUILDKIT_LISTEN", ":1235")
-	casInstance := env("OUTBACK_CAS_INSTANCE", "outback")
+	casInternal := env("AUTBACK_CAS_INTERNAL", "127.0.0.1:50051")
+	casListen := env("AUTBACK_CAS_LISTEN", ":50052")
+	buildKitInternal := env("AUTBACK_BUILDKIT_INTERNAL", "127.0.0.1:1234")
+	buildKitListen := env("AUTBACK_BUILDKIT_LISTEN", ":1235")
+	casInstance := env("AUTBACK_CAS_INSTANCE", "autback")
 	serverName := names[0]
 	scheduler := swarmscheduler.New(swarmscheduler.Config{
-		Client: docker, CASAddress: casInternal, CASInstance: casInstance, JobsRoot: env("OUTBACK_JOBS_ROOT", "/var/lib/outback/jobs"),
-		EntrypointHostPath: env("OUTBACK_JOB_ENTRYPOINT", "/usr/local/lib/outback/outback-job-entrypoint"),
-		CacheRoot:          env("OUTBACK_CACHE_ROOT", "/var/lib/outback/cache"),
+		Client: docker, CASAddress: casInternal, CASInstance: casInstance, JobsRoot: env("AUTBACK_JOBS_ROOT", "/var/lib/autback/jobs"),
+		EntrypointHostPath: env("AUTBACK_JOB_ENTRYPOINT", "/usr/local/lib/autback/autback-job-entrypoint"),
+		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
 	dispatch := dispatcher.New(store, scheduler)
@@ -89,24 +89,24 @@ func serve() {
 	}
 	reconcile := reconciler.New(reconciler.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch,
-		ServiceRetention:  durationEnv("OUTBACK_SERVICE_RETENTION", time.Hour),
-		AdmissionGrace:    durationEnv("OUTBACK_ADMISSION_GRACE", 15*time.Second),
-		BuildLeaseTimeout: durationEnv("OUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Hour),
+		ServiceRetention:  durationEnv("AUTBACK_SERVICE_RETENTION", time.Hour),
+		AdmissionGrace:    durationEnv("AUTBACK_ADMISSION_GRACE", 15*time.Second),
+		BuildLeaseTimeout: durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Hour),
 	})
-	go runReconciler(ctx, reconcile, durationEnv("OUTBACK_RECONCILE_INTERVAL", time.Second))
+	go runReconciler(ctx, reconcile, durationEnv("AUTBACK_RECONCILE_INTERVAL", time.Second))
 	var verifier controlapi.OIDCVerifier
-	if audience := os.Getenv("OUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
-		verifier, err = githuboidc.New(ctx, env("OUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
+	if audience := os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
+		verifier, err = githuboidc.New(ctx, env("AUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
 	handler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority, OIDCVerifier: verifier,
-		CASEndpoint: env("OUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
-		BuildKitEndpoint:    env("OUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
-		CredentialTTL:       durationEnv("OUTBACK_CREDENTIAL_TTL", 15*time.Minute),
-		AllowUnpinnedImages: os.Getenv("OUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
+		CASEndpoint: env("AUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
+		BuildKitEndpoint:    env("AUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
+		CredentialTTL:       durationEnv("AUTBACK_CREDENTIAL_TTL", 15*time.Minute),
+		AllowUnpinnedImages: os.Getenv("AUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -122,13 +122,13 @@ func serve() {
 		errorsChannel <- mtlsproxy.ListenAndServe(ctx, buildKitListen, buildKitInternal, authority.ServerTLSConfig(pki.OperationBuild, active))
 	}()
 	server := &http.Server{
-		Addr: env("OUTBACK_LISTEN", ":8443"), Handler: handler, ReadHeaderTimeout: 10 * time.Second,
+		Addr: env("AUTBACK_LISTEN", ":8443"), Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: 2 * time.Minute, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
 	}
 	go func() {
 		errorsChannel <- server.ListenAndServeTLS(filepath.Join(pkiDir, "server.pem"), filepath.Join(pkiDir, "server-key.pem"))
 	}()
-	log.Printf("outback control plane listening on %s; CAS mTLS on %s; BuildKit mTLS on %s", server.Addr, casListen, buildKitListen)
+	log.Printf("autback control plane listening on %s; CAS mTLS on %s; BuildKit mTLS on %s", server.Addr, casListen, buildKitListen)
 	select {
 	case err := <-errorsChannel:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && ctx.Err() == nil {
@@ -169,8 +169,8 @@ func runReconciler(ctx context.Context, runner reconciliationRunner, interval ti
 }
 
 func bootstrap(args []string) {
-	flags := flag.NewFlagSet("outback-server bootstrap", flag.ExitOnError)
-	dataDir := flags.String("data-dir", env("OUTBACK_DATA_DIR", "/var/lib/outback"), "persistent outback data directory")
+	flags := flag.NewFlagSet("autback-server bootstrap", flag.ExitOnError)
+	dataDir := flags.String("data-dir", env("AUTBACK_DATA_DIR", "/var/lib/autback"), "persistent autback data directory")
 	user := flags.String("user", "owner", "initial administrator name")
 	project := flags.String("project", "default", "initial project slug")
 	projectName := flags.String("project-name", "", "initial project display name")
@@ -183,7 +183,7 @@ func bootstrap(args []string) {
 	})
 	if err != nil {
 		if errors.Is(err, control.ErrAlreadyExists) {
-			log.Fatal("outback is already bootstrapped; create another device token through the authenticated API")
+			log.Fatal("autback is already bootstrapped; create another device token through the authenticated API")
 		}
 		log.Fatal(err)
 	}
@@ -191,8 +191,8 @@ func bootstrap(args []string) {
 }
 
 func backupState(args []string) {
-	flags := flag.NewFlagSet("outback-server backup", flag.ExitOnError)
-	dataDir := flags.String("data-dir", env("OUTBACK_DATA_DIR", "/var/lib/outback"), "persistent outback data directory")
+	flags := flag.NewFlagSet("autback-server backup", flag.ExitOnError)
+	dataDir := flags.String("data-dir", env("AUTBACK_DATA_DIR", "/var/lib/autback"), "persistent autback data directory")
 	output := flags.String("output", "", "new private backup directory")
 	_ = flags.Parse(args)
 	if *output == "" {
@@ -207,9 +207,9 @@ func backupState(args []string) {
 }
 
 func restoreState(args []string) {
-	flags := flag.NewFlagSet("outback-server restore", flag.ExitOnError)
-	input := flags.String("input", "", "validated outback backup directory")
-	dataDir := flags.String("data-dir", env("OUTBACK_DATA_DIR", "/var/lib/outback"), "new persistent outback data directory")
+	flags := flag.NewFlagSet("autback-server restore", flag.ExitOnError)
+	input := flags.String("input", "", "validated autback backup directory")
+	dataDir := flags.String("data-dir", env("AUTBACK_DATA_DIR", "/var/lib/autback"), "new persistent autback data directory")
 	_ = flags.Parse(args)
 	if *input == "" {
 		log.Fatal("--input is required")
@@ -240,7 +240,7 @@ func splitNames(value string) []string {
 		}
 	}
 	if len(names) == 0 {
-		log.Fatal("OUTBACK_SERVER_NAMES must contain at least one DNS name or IP address")
+		log.Fatal("AUTBACK_SERVER_NAMES must contain at least one DNS name or IP address")
 	}
 	return names
 }

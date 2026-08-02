@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 type commander interface {
@@ -94,11 +94,11 @@ func (c *Client) Status(ctx context.Context, id string) (protocol.Job, error) {
 	service := services[0]
 	labels := service.Spec.Labels
 	job := protocol.Job{
-		ID: id, ProjectID: labels["outback.project"], Image: decodeLabel(labels["outback.image"]), RootDigest: labels["outback.root_digest"],
+		ID: id, ProjectID: labels["autback.project"], Image: decodeLabel(labels["autback.image"]), RootDigest: labels["autback.root_digest"],
 		Command: append([]string(nil), service.Spec.TaskTemplate.ContainerSpec.Args...), CreatedAt: service.CreatedAt,
 		Status: protocol.StatusQueued, CancelRequested: labels[cancelledLabel] == "true",
 	}
-	job.TimeoutSeconds, _ = strconv.Atoi(labels["outback.timeout_seconds"])
+	job.TimeoutSeconds, _ = strconv.Atoi(labels["autback.timeout_seconds"])
 	if job.CancelRequested {
 		job.Status = protocol.StatusCancelled
 		finished := service.UpdatedAt

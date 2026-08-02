@@ -20,7 +20,7 @@ func TestRunMeasuresAvailableCandidatesAndLabelsMissingOnes(t *testing.T) {
 		Arguments:     []string{"measured"},
 		Candidates: []Candidate{
 			{Name: "local", Prefix: []string{"sh", "-c", "printf '%s\\n' \"$1\"", "benchmark"}},
-			{Name: "missing", Prefix: []string{"outback-benchmark-command-that-does-not-exist"}},
+			{Name: "missing", Prefix: []string{"autback-benchmark-command-that-does-not-exist"}},
 		},
 	}
 

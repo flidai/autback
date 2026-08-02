@@ -1,4 +1,4 @@
-module example.test/outback-go-redis
+module example.test/autback-go-redis
 
 go 1.25.0
 

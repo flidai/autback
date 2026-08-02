@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
-	"github.com/flidai/outback/internal/benchmark"
+	"github.com/flidai/autback/internal/benchmark"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func run() error {
 	flag.StringVar(&outputPath, "output", "", "directory for raw logs and summary.json")
 	flag.Parse()
 	if specPath == "" || outputPath == "" || flag.NArg() != 0 {
-		return fmt.Errorf("usage: outback-benchmark --spec <file.json> --output <directory>")
+		return fmt.Errorf("usage: autback-benchmark --spec <file.json> --output <directory>")
 	}
 
 	file, err := os.Open(specPath)

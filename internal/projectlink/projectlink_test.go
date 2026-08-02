@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/outback/internal/projectlink"
+	"github.com/flidai/autback/internal/projectlink"
 )
 
 func TestResolveUsesNearestRepositoryLink(t *testing.T) {

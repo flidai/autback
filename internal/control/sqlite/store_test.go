@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/outback/internal/control"
-	controlsqlite "github.com/flidai/outback/internal/control/sqlite"
+	"github.com/flidai/autback/internal/control"
+	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
 )
 
 func TestOperationsShareOneDurableFIFO(t *testing.T) {
@@ -422,7 +422,7 @@ func TestProjectMembershipAndGitHubTrustAreScoped(t *testing.T) {
 	trust, err := store.CreateGitHubTrust(ctx, owner, control.GitHubTrust{
 		ProjectID: bootstrap.Project.ID, RepositoryOwnerID: "100", RepositoryID: "200",
 		WorkflowRef: "flidai/leapview/.github/workflows/ci.yml@refs/heads/*", Ref: "refs/heads/*",
-		Environment: "outback", Events: []string{"push", "workflow_dispatch"},
+		Environment: "autback", Events: []string{"push", "workflow_dispatch"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -431,7 +431,7 @@ func TestProjectMembershipAndGitHubTrustAreScoped(t *testing.T) {
 		RepositoryOwnerID: "100", RepositoryID: "200",
 		Repository:  "renamed-owner/renamed-repository",
 		WorkflowRef: "flidai/leapview/.github/workflows/ci.yml@refs/heads/main", Ref: "refs/heads/main",
-		Environment: "outback", EventName: "push",
+		Environment: "autback", EventName: "push",
 	}
 	matched, err := store.MatchGitHubTrust(ctx, bootstrap.Project.ID, validClaims)
 	if err != nil || matched.ID != trust.ID {
@@ -478,7 +478,7 @@ func TestProjectMembershipAndGitHubTrustAreScoped(t *testing.T) {
 	if _, err := store.CreateGitHubTrust(ctx, owner, control.GitHubTrust{
 		ProjectID: bootstrap.Project.ID, RepositoryOwnerID: "100", RepositoryID: "200",
 		WorkflowRef: "flidai/leapview/.github/workflows/ci.yml@refs/pull/*/merge", Ref: "refs/pull/*/merge",
-		Environment: "outback-pr", Events: []string{"pull_request"},
+		Environment: "autback-pr", Events: []string{"pull_request"},
 	}); err != nil {
 		t.Fatalf("protected pull_request trust: %v", err)
 	}

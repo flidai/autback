@@ -8,7 +8,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const serviceName = "outback"
+const serviceName = "autback"
 
 type Keyring interface {
 	Get(service, user string) (string, error)
@@ -54,7 +54,7 @@ func DeleteToken(store Keyring, serviceURL string) error {
 func account(serviceURL string) (string, error) {
 	parsed, err := url.Parse(strings.TrimRight(serviceURL, "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", errors.New("outback service URL must be absolute")
+		return "", errors.New("autback service URL must be absolute")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }

@@ -7,12 +7,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 const (
-	managedLabel             = "outback.managed"
-	cancelledLabel           = "outback.cancelled"
+	managedLabel             = "autback.managed"
+	cancelledLabel           = "autback.cancelled"
 	defaultSharedMemoryBytes = "1073741824"
 )
 
@@ -45,11 +45,11 @@ func CreateArgs(spec Spec) []string {
 	args := []string{
 		"service", "create", "--detach", "--quiet", "--name", spec.ID, "--init",
 		"--label", managedLabel + "=true",
-		"--label", "outback.project=" + spec.ProjectID,
-		"--label", "outback.job=" + spec.ID,
-		"--label", "outback.image=" + encodeLabel(spec.Image),
-		"--label", "outback.timeout_seconds=" + strconv.Itoa(int(spec.Timeout.Seconds())),
-		"--label", "outback.root_digest=" + spec.RootDigest,
+		"--label", "autback.project=" + spec.ProjectID,
+		"--label", "autback.job=" + spec.ID,
+		"--label", "autback.image=" + encodeLabel(spec.Image),
+		"--label", "autback.timeout_seconds=" + strconv.Itoa(int(spec.Timeout.Seconds())),
+		"--label", "autback.root_digest=" + spec.RootDigest,
 		"--mode", "replicated-job", "--replicas", "1", "--max-concurrent", "1",
 		"--restart-condition", "none", "--stop-grace-period", "15s",
 		"--network", "host",
@@ -57,21 +57,21 @@ func CreateArgs(spec Spec) []string {
 		"--mount", "type=bind,src=" + spec.JobsRoot + ",dst=" + spec.JobsRoot,
 		"--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock",
 		"--mount", "type=tmpfs,dst=/dev/shm,tmpfs-size=" + defaultSharedMemoryBytes,
-		"--env", "OUTBACK_JOB_ID=" + spec.ID,
-		"--env", "OUTBACK_WORKSPACE=" + workspace,
-		"--env", "OUTBACK_HOST_UID=" + spec.HostUID,
-		"--env", "OUTBACK_HOST_GID=" + spec.HostGID,
-		"--env", "OUTBACK_CAS_ADDRESS=" + spec.CASAddress,
-		"--env", "OUTBACK_CAS_INSTANCE=" + fallback(spec.CASInstance, "outback"),
-		"--env", "OUTBACK_ROOT_DIGEST=" + spec.RootDigest,
-		"--env", "OUTBACK_TIMEOUT_MILLIS=" + strconv.FormatInt(spec.Timeout.Milliseconds(), 10),
-		"--env", "OUTBACK_WORKING_DIRECTORY=" + fallback(spec.WorkingDirectory, "."),
+		"--env", "AUTBACK_JOB_ID=" + spec.ID,
+		"--env", "AUTBACK_WORKSPACE=" + workspace,
+		"--env", "AUTBACK_HOST_UID=" + spec.HostUID,
+		"--env", "AUTBACK_HOST_GID=" + spec.HostGID,
+		"--env", "AUTBACK_CAS_ADDRESS=" + spec.CASAddress,
+		"--env", "AUTBACK_CAS_INSTANCE=" + fallback(spec.CASInstance, "autback"),
+		"--env", "AUTBACK_ROOT_DIGEST=" + spec.RootDigest,
+		"--env", "AUTBACK_TIMEOUT_MILLIS=" + strconv.FormatInt(spec.Timeout.Milliseconds(), 10),
+		"--env", "AUTBACK_WORKING_DIRECTORY=" + fallback(spec.WorkingDirectory, "."),
 		"--env", "TESTCONTAINERS_HOST_OVERRIDE=localhost",
 		"--env", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock",
 		"--env", "RYUK_RECONNECTION_TIMEOUT=5s",
 		"--env", "TMPDIR=/tmp",
-		"--env", "TEST_DATA_DIR=" + filepath.Join(workspace, ".outback", "data"),
-		"--entrypoint", "/usr/local/bin/outback-job-entrypoint",
+		"--env", "TEST_DATA_DIR=" + filepath.Join(workspace, ".autback", "data"),
+		"--entrypoint", "/usr/local/bin/autback-job-entrypoint",
 	}
 	caches := append([]CacheMount(nil), spec.Caches...)
 	sort.Slice(caches, func(i, j int) bool {
@@ -85,7 +85,7 @@ func CreateArgs(spec Spec) []string {
 		args = append(args, "--mount", "type=bind,src="+source+",dst="+cache.Target)
 	}
 	if spec.EntrypointHostPath != "" {
-		args = append(args, "--mount", "type=bind,src="+spec.EntrypointHostPath+",dst=/usr/local/bin/outback-job-entrypoint,readonly")
+		args = append(args, "--mount", "type=bind,src="+spec.EntrypointHostPath+",dst=/usr/local/bin/autback-job-entrypoint,readonly")
 	}
 	keys := make([]string, 0, len(spec.Environment))
 	for key := range spec.Environment {

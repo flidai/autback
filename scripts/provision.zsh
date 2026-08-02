@@ -7,8 +7,8 @@ ensure_ssh_key
 public_ip="$(curl -fsS --max-time 10 https://api.ipify.org)"
 [[ "${public_ip}" == <->.<->.<->.<-> ]] || { print -u2 'could not determine operator IPv4'; exit 1; }
 
-workspace_url="https://app.terraform.io/api/v2/organizations/Flid/workspaces/outback-poc"
-response="${OUTBACK_TMP_DIR}/hcp-workspace.json"
+workspace_url="https://app.terraform.io/api/v2/organizations/Flid/workspaces/autback-poc"
+response="${AUTBACK_TMP_DIR}/hcp-workspace.json"
 http_status="$(curl -sS -o "${response}" -w '%{http_code}' \
   -H "Authorization: Bearer ${HCP_API_TOKEN}" \
   -H 'Content-Type: application/vnd.api+json' \
@@ -17,7 +17,7 @@ if [[ "${http_status}" == 404 ]]; then
   http_status="$(curl -sS -o "${response}" -w '%{http_code}' -X POST \
     -H "Authorization: Bearer ${HCP_API_TOKEN}" \
     -H 'Content-Type: application/vnd.api+json' \
-    --data '{"data":{"type":"workspaces","attributes":{"name":"outback-poc","execution-mode":"local","auto-apply":false}}}' \
+    --data '{"data":{"type":"workspaces","attributes":{"name":"autback-poc","execution-mode":"local","auto-apply":false}}}' \
     'https://app.terraform.io/api/v2/organizations/Flid/workspaces')"
 fi
 [[ "${http_status}" == 2* ]] || { print -u2 "HCP workspace request failed with HTTP ${http_status}"; exit 1; }
@@ -28,13 +28,13 @@ curl -fsS -o /dev/null -X PATCH \
   --data "{\"data\":{\"type\":\"workspaces\",\"id\":\"${workspace_id}\",\"attributes\":{\"execution-mode\":\"local\"}}}" \
   "https://app.terraform.io/api/v2/workspaces/${workspace_id}"
 
-jq -n --arg key "${OUTBACK_SSH_KEY}.pub" --arg cidr "${public_ip}/32" \
-  '{ssh_public_key_path:$key,ssh_allowed_cidrs:[$cidr]}' > "${OUTBACK_TMP_DIR}/terraform.auto.tfvars.json"
+jq -n --arg key "${AUTBACK_SSH_KEY}.pub" --arg cidr "${public_ip}/32" \
+  '{ssh_public_key_path:$key,ssh_allowed_cidrs:[$cidr]}' > "${AUTBACK_TMP_DIR}/terraform.auto.tfvars.json"
 
-terraform -chdir="${OUTBACK_INFRA_DIR}" init \
+terraform -chdir="${AUTBACK_INFRA_DIR}" init \
   -backend-config='organization=Flid' \
-  -backend-config='workspaces.name=outback-poc'
-terraform -chdir="${OUTBACK_INFRA_DIR}" apply -auto-approve \
-  -var-file="${OUTBACK_TMP_DIR}/terraform.auto.tfvars.json"
+  -backend-config='workspaces.name=autback-poc'
+terraform -chdir="${AUTBACK_INFRA_DIR}" apply -auto-approve \
+  -var-file="${AUTBACK_TMP_DIR}/terraform.auto.tfvars.json"
 
 print "provisioned $(server_ip); SSH is restricted to ${public_ip}/32"

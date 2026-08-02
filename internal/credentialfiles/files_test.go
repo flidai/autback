@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/flidai/outback/internal/credentialfiles"
+	"github.com/flidai/autback/internal/credentialfiles"
 )
 
 func TestWriteUsesPrivateTemporaryFilesAndCleanup(t *testing.T) {

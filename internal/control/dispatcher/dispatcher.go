@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/flidai/outback/internal/control"
+	"github.com/flidai/autback/internal/control"
 )
 
 type Store interface {

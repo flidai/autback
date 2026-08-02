@@ -44,7 +44,7 @@ func TestDirtyWorktreeRunsWithRedis(t *testing.T) {
 		testcontainers.WithWaitStrategy(wait.ForLog("Ready to accept connections").WithStartupTimeout(60*time.Second)),
 		testcontainers.WithHostConfigModifier(func(config *containertypes.HostConfig) {
 			config.Mounts = append(config.Mounts, mount.Mount{
-				Type: mount.TypeBind, Source: untrackedPath, Target: "/outback-proof/untracked.txt", ReadOnly: true,
+				Type: mount.TypeBind, Source: untrackedPath, Target: "/autback-proof/untracked.txt", ReadOnly: true,
 			})
 		}),
 	)
@@ -56,7 +56,7 @@ func TestDirtyWorktreeRunsWithRedis(t *testing.T) {
 			t.Errorf("terminate Redis: %v", err)
 		}
 	})
-	exitCode, mounted, err := redis.Exec(ctx, []string{"cat", "/outback-proof/untracked.txt"}, tcexec.Multiplexed())
+	exitCode, mounted, err := redis.Exec(ctx, []string{"cat", "/autback-proof/untracked.txt"}, tcexec.Multiplexed())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,5 +90,5 @@ func TestDirtyWorktreeRunsWithRedis(t *testing.T) {
 	if line != "+PONG\r\n" {
 		t.Fatalf("Redis PING response = %q", line)
 	}
-	t.Logf("REMOTE_E2E_PROOF job=%s redis=%s response=PONG bind_mount=ok", os.Getenv("OUTBACK_JOB_ID"), redisImage)
+	t.Logf("REMOTE_E2E_PROOF job=%s redis=%s response=PONG bind_mount=ok", os.Getenv("AUTBACK_JOB_ID"), redisImage)
 }

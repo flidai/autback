@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flidai/outback/internal/control"
-	"github.com/flidai/outback/internal/protocol"
+	"github.com/flidai/autback/internal/control"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 type Store interface {

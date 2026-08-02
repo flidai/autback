@@ -1,12 +1,12 @@
 # Architecture
 
-This document describes the implemented shared-service architecture for outback.
+This document describes the implemented shared-service architecture for autback.
 The binding decision and its consequences are recorded in
 [ADR 0001](decisions/0001-shared-service-architecture.md).
 
 ## Product boundary
 
-outback moves trusted, resource-heavy commands and Docker image builds away from developer
+autback moves trusted, resource-heavy commands and Docker image builds away from developer
 laptops and GitHub-hosted runners. It is project-aware, but it does not define a project
 task language: repositories continue to own commands in Taskfiles, scripts, Makefiles, or
 their CI configuration.
@@ -24,12 +24,12 @@ The core contract is deliberately small:
 - OpenTelemetry and JUnit are optional standard observability and test-result formats.
 
 There are no language-specific runner types, generated preparation hooks, or
-`.outback.json` suite definitions. A Dev Container adapter can be
+`.autback.json` suite definitions. A Dev Container adapter can be
 added later if real consumers need it, but the Dev Container specification is not a CI
 or remote-execution dependency.
 
-Repository identity uses one deliberately small, non-secret `outback.json` containing only
-the outback project slug. The CLI resolves an explicit flag, `OUTBACK_PROJECT`, or the nearest
+Repository identity uses one deliberately small, non-secret `autback.json` containing only
+the autback project slug. The CLI resolves an explicit flag, `AUTBACK_PROJECT`, or the nearest
 link between the working directory and Git root, in that order. This supports nested
 monorepos without turning the file into a task or environment specification.
 
@@ -37,7 +37,7 @@ monorepos without turning the file into a task or environment specification.
 
 ```mermaid
 flowchart LR
-    L["Local outback CLI\nper-device token"] -->|"Connect RPC over HTTPS :443"| C["outback control plane"]
+    L["Local autback CLI\nper-device token"] -->|"Connect RPC over HTTPS :443"| C["autback control plane"]
     G["GitHub Actions\nOIDC JWT"] -->|"OIDC exchange over HTTPS :443"| C
     C --> A["Projects, memberships, policy, audit"]
     C --> J["Job admission, status, logs, cancellation"]
@@ -76,7 +76,7 @@ an expiry and are stored server-side only as a keyed digest. Compromise of one l
 not require rotating every user or CI credential.
 
 An administrator enrolls a new laptop with a high-entropy code that expires within 30
-minutes and locks after five failed attempts. `outback login` reads the code from a hidden
+minutes and locks after five failed attempts. `autback login` reads the code from a hidden
 terminal prompt or stdin, exchanges it once for the ordinary per-device token, and stores
 that durable token in the operating-system credential store. The durable token is never
 placed in a command argument, repository file, or enrollment message. Browser OAuth can
@@ -85,8 +85,8 @@ be added later without changing the resulting device-token model.
 Credential resolution is deterministic:
 
 1. `--token`, for explicit automation and diagnostics;
-2. `OUTBACK_TOKEN`;
-3. the operating-system credential store populated by `outback login`;
+2. `AUTBACK_TOKEN`;
+3. the operating-system credential store populated by `autback login`;
 4. GitHub OIDC exchange when the Actions identity variables are present.
 
 A static token may authenticate a person to the control plane. It is never forwarded to
@@ -94,7 +94,7 @@ CAS, BuildKit, Docker, Swarm, or a worker.
 
 ### GitHub Actions
 
-GitHub Actions presents its OIDC JWT to an outback exchange endpoint with an exact outback
+GitHub Actions presents its OIDC JWT to an autback exchange endpoint with an exact autback
 audience. The control plane validates the issuer, signature through GitHub's JWKS, audience,
 expiry, not-before time, and an enabled project trust relationship.
 
@@ -103,7 +103,7 @@ configured workflow, ref, environment, and event policy. Repository names are me
 not identity. A successful exchange returns a short-lived project credential bounded to
 the workflow job. A `pull_request` trust must name a protected GitHub environment because
 the OIDC JWT does not contain an immutable head-repository ID. Environment approval is the
-explicit trust gate; unapproved forks and other untrusted PRs never receive an outback
+explicit trust gate; unapproved forks and other untrusted PRs never receive an autback
 project session.
 
 ### Jobs and builds
@@ -173,7 +173,7 @@ estimates. Queue and lease state survive a control-plane restart.
 Active build leases have a configurable two-hour safety timeout so a client killed without
 a cancellation request cannot block every later operation indefinitely.
 
-The admitted operation receives the VM's available CPU and memory: Outback does not set
+The admitted operation receives the VM's available CPU and memory: Autback does not set
 per-job Swarm reservations or limits, and BuildKit is not capped separately. A repository
 that wants parallel work submits one command whose own Taskfile, Makefile, test runner, or
 script runs tasks concurrently. This keeps project orchestration in the repository while

@@ -215,7 +215,7 @@ func prepareRunDirectory(ctx context.Context, project, commit string, isolate bo
 	if !isolate {
 		return project, func() error { return nil }, nil
 	}
-	root, err := os.MkdirTemp("", "outback-benchmark-worktree-")
+	root, err := os.MkdirTemp("", "autback-benchmark-worktree-")
 	if err != nil {
 		return "", nil, err
 	}

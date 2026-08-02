@@ -42,7 +42,11 @@ func TestRunOnceConvergesTerminalOrphanAndMissingJobs(t *testing.T) {
 	if len(scheduler.removed) != 2 || scheduler.removed[0] != "job-finished" || scheduler.removed[1] != "orphan" {
 		t.Fatalf("removed = %#v", scheduler.removed)
 	}
-	if len(dispatcher.released) != 2 || dispatcher.released[0].ID != "job-finished" || dispatcher.released[1].ID != "job-missing" {
+	released := map[string]bool{}
+	for _, operation := range dispatcher.released {
+		released[operation.ID] = operation.Kind == control.OperationJob
+	}
+	if len(dispatcher.released) != 2 || !released["job-finished"] || !released["job-missing"] {
 		t.Fatalf("released = %#v", dispatcher.released)
 	}
 }

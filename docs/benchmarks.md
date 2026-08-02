@@ -116,6 +116,32 @@ for one-command rollback.
 The machine-readable evidence is
 [`leapview-digest-push-warm/summary.json`](../evidence/benchmarks/leapview-digest-push-warm/summary.json).
 
+### Controlled warm distribution
+
+A dedicated, isolated workflow dispatch then ran one excluded warmup followed by five
+serial samples per workload. GitHub Actions run
+[30743918183](https://github.com/flidai/leapview/actions/runs/30743918183) used commit
+`ae2380d02832968842eff6d6fd6c972a855cb4fb`. Each sample measured the complete Outback
+CLI boundary: project-scoped OIDC authentication, scoped BuildKit mTLS setup, native
+`buildx --push`, immutable digest capture, and a second remote job exercising that exact
+digest.
+
+| Workload | Build + push median | Build + push p95 | Exact-digest check median | Exact-digest check p95 | Total median | Total p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Public site image | 13.31 s | 13.51 s | 8.77 s | 51.67 s | 22.10 s | 65.18 s |
+| Production image | 13.68 s | 13.94 s | 13.54 s | 13.94 s | 27.46 s | 27.69 s |
+
+The production samples are tightly clustered. Four of five site checks completed in
+8.76–9.19 seconds; the first measured site check took 51.67 seconds while other work was
+active on the single CPX32. The table intentionally retains that contention tail. It
+shows that cached builds are stable while exact-digest execution latency still depends
+on shared-worker capacity and should be protected with queueing or concurrency limits.
+
+The full sorted distributions and every digest are in
+[`controlled-summary.json`](../evidence/benchmarks/leapview-digest-push-warm/controlled-summary.json),
+with per-run boundaries in
+[`controlled-results.ndjson`](../evidence/benchmarks/leapview-digest-push-warm/controlled-results.ndjson).
+
 ## Shared-service local proof
 
 The generic service E2E on 2026-08-01 ran a project-selected pinned Go image through

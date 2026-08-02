@@ -6,9 +6,26 @@ vars:
 tasks:
   test:
     cmds:
+      - task: console:check
       - go test ./...
       - task: proto:check
       - task: terraform:check
+
+  generate:
+    desc: Regenerate typed console contracts and embedded browser assets
+    cmds:
+      - go generate ./internal/console
+      - bun install --frozen-lockfile
+      - bun run build:console
+
+  console:check:
+    desc: Generate, typecheck, test, and build the read-only governance console
+    cmds:
+      - bun install --frozen-lockfile
+      - go generate ./internal/console
+      - bun run test:console
+      - bun run typecheck:console
+      - bun run build:console
 
   proto:check:
     desc: Lint protobufs, reject v1 breakage, and verify committed generated clients

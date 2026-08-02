@@ -41,6 +41,8 @@ func runService(ctx context.Context, settings config.Config, explicitToken strin
 		return serviceLogin(ctx, settings, explicitToken, args[1:], streams)
 	case "logout":
 		return serviceLogout(settings, streams)
+	case "console":
+		return serviceConsole(ctx, settings, explicitToken, args[1:], streams)
 	}
 	// Commands such as doctor do not otherwise need a project, but an Actions
 	// workload identity must select one before it can exchange its OIDC token.

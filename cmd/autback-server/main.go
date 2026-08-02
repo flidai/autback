@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flidai/autback/internal/console"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/controlapi"
 	"github.com/flidai/autback/internal/control/dispatcher"
@@ -49,6 +50,7 @@ func main() {
 }
 
 func serve() {
+	startedAt := time.Now().UTC()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	dataDir := env("AUTBACK_DATA_DIR", "/var/lib/autback")
@@ -101,7 +103,7 @@ func serve() {
 			log.Fatal(err)
 		}
 	}
-	handler, err := controlapi.New(controlapi.Config{
+	controlHandler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority, OIDCVerifier: verifier,
 		CASEndpoint: env("AUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
 		BuildKitEndpoint:    env("AUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
@@ -111,6 +113,17 @@ func serve() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	consoleSource, err := console.NewSQLiteSource(console.SQLiteSourceConfig{
+		Store: store, Scheduler: scheduler, Version: controlapi.Version, StartedAt: startedAt,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	consoleHandler, err := console.New(console.Config{Source: consoleSource})
+	if err != nil {
+		log.Fatal(err)
+	}
+	handler := serviceHandler(controlHandler, consoleHandler)
 	errorsChannel := make(chan error, 3)
 	active := func(kind pki.Operation, id string) bool {
 		return store.OperationActive(context.Background(), string(kind), id)
@@ -141,6 +154,14 @@ func serve() {
 	if err := server.Shutdown(shutdown); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+func serviceHandler(controlHandler, consoleHandler http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/app", consoleHandler)
+	mux.Handle("/app/", consoleHandler)
+	mux.Handle("/", controlHandler)
+	return mux
 }
 
 type reconciliationRunner interface {

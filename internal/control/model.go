@@ -216,6 +216,33 @@ type Operation struct {
 	LeasedAt   *time.Time
 }
 
+type QueueOperation struct {
+	Operation
+	ProjectID string
+}
+
+type AuditEvent struct {
+	ID        int64
+	ActorKind PrincipalKind
+	ActorID   string
+	ProjectID string
+	Action    string
+	TargetID  string
+	CreatedAt time.Time
+	Metadata  map[string]string
+}
+
+// ControlChange is durable sequencing and scope metadata for consumers that
+// project control-plane state. It deliberately contains no duplicated domain
+// state; readers re-query their authorized view after observing a change.
+type ControlChange struct {
+	Sequence   int64
+	ProjectID  string
+	EntityKind string
+	EntityID   string
+	CreatedAt  time.Time
+}
+
 type Build struct {
 	ID         string
 	ProjectID  string

@@ -138,6 +138,7 @@ func usage(output io.Writer) {
   autback [--token <token>] image build [--project <project>] --tag <registry/repository:tag> [--file Dockerfile] [-- <buildx arguments...>]
   autback login
   autback logout
+  autback console
   autback token create --name <device> [--user <id>] [--expires 720h]
   autback token list
   autback token revoke <token-id>

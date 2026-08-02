@@ -19,13 +19,13 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
-	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	db     *sql.DB
-	root   string
-	pepper []byte
+	db      *sql.DB
+	root    string
+	pepper  []byte
+	changes *changeNotifier
 }
 
 func Open(root string, pepper []byte) (*Store, error) {
@@ -36,12 +36,13 @@ func Open(root string, pepper []byte) (*Store, error) {
 		return nil, err
 	}
 	databasePath := filepath.Join(root, "control.db")
-	db, err := sql.Open("sqlite", databasePath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+	changes := newChangeNotifier()
+	db, err := openDatabase(databasePath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", changes)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, root: root, pepper: append([]byte(nil), pepper...)}
+	store := &Store{db: db, root: root, pepper: append([]byte(nil), pepper...), changes: changes}
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -242,7 +243,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(
 CREATE UNIQUE INDEX IF NOT EXISTS control_jobs_idempotency_idx ON control_jobs(project_id,idempotency_key) WHERE idempotency_key <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS control_builds_idempotency_idx ON control_builds(project_id,idempotency_key) WHERE idempotency_key <> '';
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateControlChanges(ctx)
 }
 
 func (s *Store) ensureTextColumn(ctx context.Context, table, column string) error {

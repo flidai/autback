@@ -13,12 +13,23 @@ import (
 )
 
 func New(baseURL, token, caCertFile string) (autbackv1connect.ControlServiceClient, error) {
+	httpClient, parsed, err := NewHTTPClient(baseURL, token, caCertFile)
+	if err != nil {
+		return nil, err
+	}
+	return autbackv1connect.NewControlServiceClient(httpClient, parsed.String()), nil
+}
+
+// NewHTTPClient returns the same validated, CA-aware HTTP client used by the
+// Connect client. It is used by the CLI's loopback console proxy so browser
+// requests can reach the read-only console without exposing device tokens.
+func NewHTTPClient(baseURL, token, caCertFile string) (*http.Client, *url.URL, error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("autback service URL must be absolute")
+		return nil, nil, errors.New("autback service URL must be absolute")
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return nil, errors.New("autback service URL must use HTTPS or local HTTP")
+		return nil, nil, errors.New("autback service URL must use HTTPS or local HTTP")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -29,10 +40,10 @@ func New(baseURL, token, caCertFile string) (autbackv1connect.ControlServiceClie
 		}
 		data, err := os.ReadFile(caCertFile)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !roots.AppendCertsFromPEM(data) {
-			return nil, errors.New("autback control CA file contains no certificates")
+			return nil, nil, errors.New("autback control CA file contains no certificates")
 		}
 		transport.TLSClientConfig.RootCAs = roots
 	}
@@ -41,7 +52,7 @@ func New(baseURL, token, caCertFile string) (autbackv1connect.ControlServiceClie
 		roundTripper = authorizationTransport{token: token, next: transport}
 	}
 	httpClient := &http.Client{Transport: roundTripper}
-	return autbackv1connect.NewControlServiceClient(httpClient, parsed.String()), nil
+	return httpClient, parsed, nil
 }
 
 type authorizationTransport struct {

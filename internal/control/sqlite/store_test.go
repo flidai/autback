@@ -326,6 +326,13 @@ func TestProjectMembershipAndGitHubTrustAreScoped(t *testing.T) {
 	if err != nil || matched.ID != trust.ID {
 		t.Fatalf("matched=%#v err=%v", matched, err)
 	}
+	nestedBranchClaims := validClaims
+	nestedBranchClaims.WorkflowRef = "flidai/leapview/.github/workflows/ci.yml@refs/heads/codex/benchmark"
+	nestedBranchClaims.Ref = "refs/heads/codex/benchmark"
+	matched, err = store.MatchGitHubTrust(ctx, bootstrap.Project.ID, nestedBranchClaims)
+	if err != nil || matched.ID != trust.ID {
+		t.Fatalf("nested branch matched=%#v err=%v", matched, err)
+	}
 	tests := []struct {
 		name   string
 		mutate func(*control.GitHubClaims)

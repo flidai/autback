@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -1309,8 +1308,30 @@ func randomID(prefix string) (string, error) {
 }
 
 func glob(pattern, value string) bool {
-	matched, err := path.Match(pattern, value)
-	return err == nil && matched
+	patternRunes, valueRunes := []rune(pattern), []rune(value)
+	patternIndex, valueIndex := 0, 0
+	starIndex, starValueIndex := -1, 0
+	for valueIndex < len(valueRunes) {
+		switch {
+		case patternIndex < len(patternRunes) && (patternRunes[patternIndex] == '?' || patternRunes[patternIndex] == valueRunes[valueIndex]):
+			patternIndex++
+			valueIndex++
+		case patternIndex < len(patternRunes) && patternRunes[patternIndex] == '*':
+			starIndex = patternIndex
+			starValueIndex = valueIndex
+			patternIndex++
+		case starIndex >= 0:
+			patternIndex = starIndex + 1
+			starValueIndex++
+			valueIndex = starValueIndex
+		default:
+			return false
+		}
+	}
+	for patternIndex < len(patternRunes) && patternRunes[patternIndex] == '*' {
+		patternIndex++
+	}
+	return patternIndex == len(patternRunes)
 }
 
 func exactOptional(pattern, value string) bool { return pattern == "" || pattern == value }

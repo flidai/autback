@@ -32,3 +32,5 @@ evidence/benchmarks/leapview-provider-comparison/**
 !evidence/benchmarks/leapview-digest-push-warm/
 evidence/benchmarks/leapview-digest-push-warm/**
 !evidence/benchmarks/leapview-digest-push-warm/summary.json
+!evidence/benchmarks/leapview-digest-push-warm/controlled-summary.json
+!evidence/benchmarks/leapview-digest-push-warm/controlled-results.ndjson

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "benchmark": "leapview-digest-push-controlled-warm",
+  "completed_at": "2026-08-02T10:42:33Z",
+  "classification": "one excluded warmup followed by five serial measured runs",
+  "source": {
+    "repository": "flidai/leapview",
+    "head_commit": "ae2380d02832968842eff6d6fd6c972a855cb4fb",
+    "workflow_run": "https://github.com/flidai/leapview/actions/runs/30743918183",
+    "workflow_job": "https://github.com/flidai/leapview/actions/runs/30743918183/job/91486107697"
+  },
+  "methodology": {
+    "warmup_runs": 1,
+    "measured_runs": 5,
+    "execution": "serial per workload",
+    "platform": "linux/amd64",
+    "output": "buildx --push with containerimage.digest metadata",
+    "worker": "existing Hetzner CPX32, 4 vCPU, 8 GiB",
+    "boundary": "Outback CLI build plus a separate exact-digest Outback exec",
+    "percentile": "nearest-rank p95"
+  },
+  "production": {
+    "build_push_seconds": {
+      "values": [13.557374075, 13.605176246, 13.676282331, 13.756746043, 13.936291396],
+      "min": 13.557374075,
+      "median": 13.676282331,
+      "p95": 13.936291396,
+      "max": 13.936291396
+    },
+    "remote_smoke_seconds": {
+      "values": [13.489125275, 13.520722726, 13.535118645, 13.935909654, 13.939584756],
+      "min": 13.489125275,
+      "median": 13.535118645,
+      "p95": 13.939584756,
+      "max": 13.939584756
+    },
+    "total_seconds": {
+      "values": [27.140294891, 27.165407606, 27.457014122, 27.496958831, 27.692655697],
+      "min": 27.140294891,
+      "median": 27.457014122,
+      "p95": 27.692655697,
+      "max": 27.692655697
+    },
+    "images": [
+      "ghcr.io/flidai/leapview@sha256:bb3d94872e0fcdec3fe95de5dfcfd9933c4b7c635c72ceb13c2eddad790981e3",
+      "ghcr.io/flidai/leapview@sha256:154d56c5cb4551568f52da845743bfe50749176ed7ec2c0484585f51f7f864e6",
+      "ghcr.io/flidai/leapview@sha256:9a491ad967c7b870dbc7f25ffeb7765f3ce7b4d2202f3d27d25bb4cb5c3c7f04",
+      "ghcr.io/flidai/leapview@sha256:a9cdad965a3b9335e60a6643f997d667b0c10f65ebb176e99691e7de619633fe",
+      "ghcr.io/flidai/leapview@sha256:a57fe4e516213a49a3182109001928260a2cc2e530ea866058ffffd3538f633f"
+    ]
+  },
+  "site": {
+    "build_push_seconds": {
+      "values": [13.195441256, 13.247768842, 13.306325348, 13.337307203, 13.508207433],
+      "min": 13.195441256,
+      "median": 13.306325348,
+      "p95": 13.508207433,
+      "max": 13.508207433
+    },
+    "remote_smoke_seconds": {
+      "values": [8.763404544, 8.76670077, 8.770919609, 9.190211156, 51.668759002],
+      "min": 8.763404544,
+      "median": 8.770919609,
+      "p95": 51.668759002,
+      "max": 51.668759002
+    },
+    "total_seconds": {
+      "values": [22.011173386, 22.077244957, 22.104007973, 22.385652412, 65.176966435],
+      "min": 22.011173386,
+      "median": 22.104007973,
+      "p95": 65.176966435,
+      "max": 65.176966435
+    },
+    "images": [
+      "ghcr.io/flidai/leapview-site@sha256:b44b9d0972e097b35b455352c52cf475b70aa1f6b8f1ec1f10a6bc53dffe1504",
+      "ghcr.io/flidai/leapview-site@sha256:45a3980a64f1d7c7d2651188387acad2a5347f0f466be0acc850c8da9a7b42c9",
+      "ghcr.io/flidai/leapview-site@sha256:710185f8bf5b12eb776c3cea4f3dff265814fa05bbea0bf2d67f3b36eb55b02e",
+      "ghcr.io/flidai/leapview-site@sha256:93066279076c1c57ca1d67839565a58e2963c808f4bac50fd114cab2e606a3a9",
+      "ghcr.io/flidai/leapview-site@sha256:f09b745401e9a0906eefd7cc25b01b6fc6ad60805143d2ef863bb7b92728b1df"
+    ]
+  },
+  "observation": "Four of five site smoke runs completed in 8.76-9.19 seconds; the retained 51.67-second tail was observed under shared-worker contention."
+}

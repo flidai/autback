@@ -97,15 +97,18 @@ func TestInternalLinksAndAssetsResolve(t *testing.T) {
 	}
 }
 
-func TestLandscapeIsVendored(t *testing.T) {
+func TestBackgroundArtworkIsVendoredAndOptimized(t *testing.T) {
 	t.Parallel()
 
-	info, err := os.Stat(sitePath("assets", "landscape.jpg"))
+	info, err := os.Stat(sitePath("assets", "background.webp"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Size() < 100_000 {
-		t.Fatalf("landscape image is unexpectedly small: %d bytes", info.Size())
+		t.Fatalf("background artwork is unexpectedly small: %d bytes", info.Size())
+	}
+	if info.Size() > 2_000_000 {
+		t.Fatalf("background artwork is too large for the landing page: %d bytes", info.Size())
 	}
 }
 

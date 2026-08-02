@@ -124,3 +124,18 @@ candidates while preserving raw logs and an exact source fingerprint.
 
 Outback is an independent service. LeapView remains its first production consumer and its
 checked-in benchmark evidence demonstrates the migration from Depot and laptop-bound Docker.
+
+## Project site
+
+The dependency-free static project site lives in [`site/`](site/). All asset references are
+relative so the same artifact works at a GitHub project Pages path or a custom domain.
+`go test ./internal/site` checks the page contract, local references, anchors, and Pages workflow.
+
+After the repository's Pages source is set to **GitHub Actions**, pushes to `main` that touch
+the site publish the directory through [the Pages workflow](.github/workflows/pages.yml).
+The workflow can also be started manually. Preview the exact artifact locally with any
+static file server, for example:
+
+```console
+python3 -m http.server --directory site 8000
+```

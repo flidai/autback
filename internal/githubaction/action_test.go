@@ -64,7 +64,9 @@ func TestReleaseInstallerDownloadsAndVerifiesPinnedArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(archive)
-	checksums := hex.EncodeToString(digest[:]) + "  " + asset + "\n"
+	// The release workflow runs sha256sum with paths relative to dist, which
+	// produces the same ./-prefixed filenames as the published checksum file.
+	checksums := hex.EncodeToString(digest[:]) + "  ./" + asset + "\n"
 	if err := os.WriteFile(filepath.Join(assetDir, "checksums.txt"), []byte(checksums), 0o644); err != nil {
 		t.Fatal(err)
 	}

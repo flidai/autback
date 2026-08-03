@@ -868,15 +868,14 @@ func (s *Server) refreshJob(ctx context.Context, job control.Job) (control.Job, 
 		return job, nil
 	}
 	state, err := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
-	if errors.Is(err, control.ErrNotFound) {
-		return job, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, control.ErrNotFound) {
 		return control.Job{}, err
 	}
-	if state == control.OperationQueued {
+	if err == nil && state == control.OperationQueued {
 		return job, nil
 	}
+	// A missing admission lease can race with a stale reconciler snapshot. The
+	// managed service remains authoritative until the durable status is terminal.
 	remote, err := s.config.Scheduler.Status(ctx, job.ID)
 	if err != nil {
 		return control.Job{}, err

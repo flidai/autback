@@ -1044,9 +1044,10 @@ func (s *Store) SyncJob(ctx context.Context, id string, remote protocol.Job) (co
 		return control.Job{}, err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,started_at=?,finished_at=?,exit_code=?,error_message=?,cancel_requested=?,worker_id=? WHERE id=?`,
+	_, err = tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,started_at=?,finished_at=?,exit_code=?,error_message=?,cancel_requested=?,worker_id=? WHERE id=? AND status NOT IN (?,?,?,?,?)`,
 		remote.Status, timeValue(remote.StartedAt), timeValue(remote.FinishedAt), intValue(remote.ExitCode), remote.ErrorMessage,
-		boolInt(remote.CancelRequested), remote.WorkerID, id)
+		boolInt(remote.CancelRequested), remote.WorkerID, id,
+		protocol.StatusSucceeded, protocol.StatusFailed, protocol.StatusCancelled, protocol.StatusTimedOut, protocol.StatusLost)
 	if err != nil {
 		return control.Job{}, err
 	}

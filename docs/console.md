@@ -31,14 +31,21 @@ control buttons, or client-side calls to Connect.
 
 ## Routes and signals
 
-- `/app`: worker lease, strict global FIFO, authorized projects, and recent operations.
-- `/app/projects/{project}`: project image/trust posture, global queue positions, and work.
-- `/app/operations/{kind}/{id}`: provenance, timing, command, and a bounded 64 KiB log tail.
+- `/app`: VM utilization, jobs with `queued` or `active` status, authorized projects, and recent runs.
+- `/app/projects/{project}`: project image/trust posture, utilization, jobs, and run history.
+- `/app/runs/{kind}/{id}`: provenance, timing, command, and a bounded 64 KiB log tail.
 - `/app/audit`: authorized governance events.
 
 Go console structs generate the TypeScript contracts used by Lit. The stable signal roots
-are `$session`, `$service`, `$worker`, `$queue`, `$operations`, `$operation`, `$log`, `$audit`,
+are `$session`, `$service`, `$worker`, `$resources`, `$queue`, `$operations`, `$operation`, `$log`, `$audit`,
 and `$status`. Canonical route identity remains in server URLs; Lit does not route or fetch.
+
+The server samples whole-VM CPU, memory, and disk capacity every two seconds by default,
+attributes occupied samples to the admitted run, and records the sample in the same SQLite
+store. Raw two-second samples are retained for 14 days, minute rollups for 180 days, and
+compact per-run averages and peaks permanently. The interval and retention windows can be
+set with `AUTBACK_METRICS_INTERVAL`, `AUTBACK_METRICS_RAW_RETENTION`, and
+`AUTBACK_METRICS_ROLLUP_RETENTION`.
 
 ## Development
 

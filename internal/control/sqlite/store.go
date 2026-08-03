@@ -246,7 +246,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_builds_idempotency_idx ON control_buil
 	if err != nil {
 		return err
 	}
-	return s.migrateControlChanges(ctx)
+	if err := s.migrateControlChanges(ctx); err != nil {
+		return err
+	}
+	return s.migrateResourceMetrics(ctx)
 }
 
 func (s *Store) ensureTextColumn(ctx context.Context, table, column string) error {

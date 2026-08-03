@@ -45,7 +45,7 @@ func New(config Config) (http.Handler, error) {
 	mux.HandleFunc("GET /app/projects/{project}", func(response http.ResponseWriter, request *http.Request) {
 		server.renderPage(response, request, Route{Kind: RouteProject, Project: request.PathValue("project")})
 	})
-	mux.HandleFunc("GET /app/operations/{kind}/{id}", func(response http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc("GET /app/runs/{kind}/{id}", func(response http.ResponseWriter, request *http.Request) {
 		server.renderPage(response, request, Route{Kind: RouteOperation, OperationKind: request.PathValue("kind"), OperationID: request.PathValue("id")})
 	})
 	mux.HandleFunc("GET /app/audit", server.page(Route{Kind: RouteAudit}))

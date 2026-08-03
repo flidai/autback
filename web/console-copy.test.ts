@@ -16,6 +16,7 @@ describe('console product language', () => {
       'wall-clock execution',
       'process result',
       '64 KiB',
+			'Strict FIFO',
     ]) {
       expect(source).not.toContain(phrase)
     }

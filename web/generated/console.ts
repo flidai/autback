@@ -31,6 +31,38 @@ export interface WorkerView {
   updatedAt: string
 }
 
+export interface ResourceView {
+  samples: ResourceSampleView[]
+  sampleCount: number
+  activeSampleCount: number
+  cpuCores: number
+  memoryTotalBytes: number
+  diskUsageBytes: number
+  diskTotalBytes: number
+  busyRatio: number
+  cpuAverage: number
+  cpuPeak: number
+  memoryAverage: number
+  memoryPeak: number
+  memoryBytesPeak: number
+  queueWaitP95Millis: number
+}
+
+export interface ResourceSampleView {
+  observedAt: string
+  cpuUtilization: number
+  memoryUtilization: number
+}
+
+export interface OperationResourceView {
+  sampleCount: number
+  cpuAverage: number
+  cpuPeak: number
+  memoryAverage: number
+  memoryPeak: number
+  memoryBytesPeak: number
+}
+
 export interface QueueView {
   position: number
   kind: string
@@ -54,6 +86,8 @@ export interface OperationView {
   startedAt: string | null | undefined
   finishedAt: string | null | undefined
   exitCode: number | null | undefined
+  queueWaitMillis: number | null | undefined
+  resources: OperationResourceView
 }
 
 export interface OperationDetailView extends OperationView {
@@ -96,6 +130,7 @@ export interface ConsoleSignals {
   session: SessionView
   service: ServiceView
   worker: WorkerView
+  resources: ResourceView
   queue: QueueView[]
   operations: OperationView[]
   operation: OperationDetailView | null

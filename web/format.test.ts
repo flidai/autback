@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { duration, relativeTime, shortDigest, shortID, successRate } from './format'
+import { duration, formatBytes, formatMilliseconds, formatPercent, relativeTime, shortDigest, shortID, successRate } from './format'
 
 describe('console formatting', () => {
   test('keeps operation identifiers recognizable', () => {
@@ -17,4 +17,11 @@ describe('console formatting', () => {
     expect(successRate(['succeeded', 'failed', 'running'])).toBe('50%')
     expect(successRate(['queued'])).toBe('—')
   })
+
+  test('formats capacity and resource values compactly', () => {
+		expect(formatBytes(8 * 1024 ** 3)).toBe('8 GB')
+		expect(formatBytes(1536 * 1024 ** 2)).toBe('1.5 GB')
+		expect(formatPercent(0.754)).toBe('75%')
+		expect(formatMilliseconds(65432)).toBe('1m 5s')
+	})
 })

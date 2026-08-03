@@ -23,6 +23,7 @@ type Snapshot struct {
 	Session    SessionView
 	Service    ServiceView
 	Worker     WorkerView
+	Resources  ResourceView
 	Queue      []QueueView
 	Operations []OperationView
 	Operation  *OperationDetailView
@@ -73,18 +74,55 @@ type QueueView struct {
 	LeasedAt    *time.Time `json:"leasedAt"`
 }
 
+// ResourceView describes the shared runner capacity for the selected route.
+// Samples are intentionally bounded and normalized so the browser only renders
+// an authorized read model, never raw host or database state.
+type ResourceView struct {
+	Samples            []ResourceSampleView `json:"samples"`
+	SampleCount        int                  `json:"sampleCount"`
+	ActiveSampleCount  int                  `json:"activeSampleCount"`
+	CPUCores           int                  `json:"cpuCores"`
+	MemoryTotalBytes   uint64               `json:"memoryTotalBytes"`
+	DiskUsageBytes     uint64               `json:"diskUsageBytes"`
+	DiskTotalBytes     uint64               `json:"diskTotalBytes"`
+	BusyRatio          float64              `json:"busyRatio"`
+	CPUAverage         float64              `json:"cpuAverage"`
+	CPUPeak            float64              `json:"cpuPeak"`
+	MemoryAverage      float64              `json:"memoryAverage"`
+	MemoryPeak         float64              `json:"memoryPeak"`
+	MemoryBytesPeak    uint64               `json:"memoryBytesPeak"`
+	QueueWaitP95Millis int64                `json:"queueWaitP95Millis"`
+}
+
+type ResourceSampleView struct {
+	ObservedAt        time.Time `json:"observedAt"`
+	CPUUtilization    float64   `json:"cpuUtilization"`
+	MemoryUtilization float64   `json:"memoryUtilization"`
+}
+
+type OperationResourceView struct {
+	SampleCount     int     `json:"sampleCount"`
+	CPUAverage      float64 `json:"cpuAverage"`
+	CPUPeak         float64 `json:"cpuPeak"`
+	MemoryAverage   float64 `json:"memoryAverage"`
+	MemoryPeak      float64 `json:"memoryPeak"`
+	MemoryBytesPeak uint64  `json:"memoryBytesPeak"`
+}
+
 type OperationView struct {
-	Kind        string     `json:"kind"`
-	ID          string     `json:"id"`
-	Project     string     `json:"project"`
-	ProjectName string     `json:"projectName"`
-	Status      string     `json:"status"`
-	Command     string     `json:"command"`
-	Image       string     `json:"image"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	StartedAt   *time.Time `json:"startedAt"`
-	FinishedAt  *time.Time `json:"finishedAt"`
-	ExitCode    *int       `json:"exitCode"`
+	Kind            string                `json:"kind"`
+	ID              string                `json:"id"`
+	Project         string                `json:"project"`
+	ProjectName     string                `json:"projectName"`
+	Status          string                `json:"status"`
+	Command         string                `json:"command"`
+	Image           string                `json:"image"`
+	CreatedAt       time.Time             `json:"createdAt"`
+	StartedAt       *time.Time            `json:"startedAt"`
+	FinishedAt      *time.Time            `json:"finishedAt"`
+	ExitCode        *int                  `json:"exitCode"`
+	QueueWaitMillis *int64                `json:"queueWaitMillis"`
+	Resources       OperationResourceView `json:"resources"`
 }
 
 type OperationDetailView struct {
@@ -127,7 +165,8 @@ type StatusView struct {
 func (s Snapshot) patch() map[string]any {
 	return map[string]any{
 		"session": s.Session, "service": s.Service, "worker": s.Worker,
-		"queue": s.Queue, "operations": s.Operations, "operation": s.Operation,
+		"resources": s.Resources,
+		"queue":     s.Queue, "operations": s.Operations, "operation": s.Operation,
 		"log": s.Log, "audit": s.Audit, "status": s.Status,
 	}
 }

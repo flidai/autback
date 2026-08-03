@@ -243,6 +243,63 @@ type ControlChange struct {
 	CreatedAt  time.Time
 }
 
+// ResourceScope identifies which admitted operation, if any, owned the host
+// while a resource sample was observed. Empty operation fields represent an
+// idle host sample.
+type ResourceScope struct {
+	ProjectID     string
+	OperationKind OperationKind
+	OperationID   string
+}
+
+// ResourceSample is a normalized observation of the entire Autback host. CPU
+// and memory utilization are ratios in the inclusive range [0, 1].
+type ResourceSample struct {
+	ResourceScope
+	ObservedAt        time.Time
+	CPUUtilization    float64
+	CPUCores          int
+	MemoryUtilization float64
+	MemoryUsageBytes  uint64
+	MemoryTotalBytes  uint64
+	DiskUsageBytes    uint64
+	DiskTotalBytes    uint64
+}
+
+type ResourceFilter struct {
+	ProjectID     string
+	OperationKind OperationKind
+	OperationID   string
+	From          time.Time
+	To            time.Time
+}
+
+type ResourceSummary struct {
+	ResourceScope
+	SampleCount        int
+	ObservedStartedAt  time.Time
+	ObservedFinishedAt time.Time
+	CPUAverage         float64
+	CPUPeak            float64
+	MemoryAverage      float64
+	MemoryPeak         float64
+	MemoryBytesPeak    uint64
+}
+
+type ResourceRollup struct {
+	ResourceScope
+	BucketAt        time.Time
+	SampleCount     int
+	CPUAverage      float64
+	CPUPeak         float64
+	MemoryAverage   float64
+	MemoryPeak      float64
+	MemoryBytesPeak uint64
+	DiskUsageBytes  uint64
+	DiskTotalBytes  uint64
+	CPUCores        int
+}
+
 type Build struct {
 	ID         string
 	ProjectID  string

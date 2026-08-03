@@ -54,16 +54,17 @@ func newFixtureSource() *fixtureSource {
 		{ID: "prj_toolbelt", Slug: "toolbelt", Name: "Toolbelt", ActiveImage: "ghcr.io/yacobolo/toolbelt-ci@sha256:7cb74bf60fd7f13daec6a88e84a61834eb44189451bed85770bc72899ce24933", Members: 2, Trusts: 1},
 	}
 	operations := []console.OperationView{
-		{Kind: "job", ID: "job_01K1QX7NWJ0M9C16G4G0S1VDFH", Project: "leapview", ProjectName: "LeapView", Status: "running", Command: "task ci", Image: projects[1].ActiveImage, CreatedAt: now.Add(-2 * time.Minute), StartedAt: pointer(now.Add(-95 * time.Second))},
+		{Kind: "job", ID: "job_01K1QX7NWJ0M9C16G4G0S1VDFH", Project: "leapview", ProjectName: "LeapView", Status: "running", Command: "task ci", Image: projects[1].ActiveImage, CreatedAt: now.Add(-2 * time.Minute), StartedAt: pointer(now.Add(-95 * time.Second)), QueueWaitMillis: int64Pointer(25000), Resources: resourceSummary(44, .38, .86, .51, .68, 5.4)},
 		{Kind: "build", ID: "bld_01K1QX2K48PXB34W8S6EYVQ00R", Project: "autback", ProjectName: "Autback", Status: "queued", Command: "", CreatedAt: now.Add(-7 * time.Minute)},
-		{Kind: "job", ID: "job_01K1QWJ38V21G68H58K1E9N3W4", Project: "toolbelt", ProjectName: "Toolbelt", Status: "succeeded", Command: "go test ./...", Image: projects[2].ActiveImage, CreatedAt: now.Add(-38 * time.Minute), StartedAt: pointer(now.Add(-37 * time.Minute)), FinishedAt: pointer(now.Add(-36*time.Minute - 48*time.Second)), ExitCode: intPointer(0)},
-		{Kind: "build", ID: "bld_01K1QVBWQJVV03W4P2C7MEW1B6", Project: "leapview", ProjectName: "LeapView", Status: "succeeded", CreatedAt: now.Add(-2 * time.Hour), FinishedAt: pointer(now.Add(-2*time.Hour + 14*time.Second)), ExitCode: intPointer(0)},
-		{Kind: "job", ID: "job_01K1QTYN9J4DGV7D0ZHRM8R84S", Project: "leapview", ProjectName: "LeapView", Status: "failed", Command: "task test", Image: projects[1].ActiveImage, CreatedAt: now.Add(-4 * time.Hour), StartedAt: pointer(now.Add(-4*time.Hour + time.Second)), FinishedAt: pointer(now.Add(-4*time.Hour + 18*time.Second)), ExitCode: intPointer(1)},
+		{Kind: "job", ID: "job_01K1QWJ38V21G68H58K1E9N3W4", Project: "toolbelt", ProjectName: "Toolbelt", Status: "succeeded", Command: "go test ./...", Image: projects[2].ActiveImage, CreatedAt: now.Add(-38 * time.Minute), StartedAt: pointer(now.Add(-37 * time.Minute)), FinishedAt: pointer(now.Add(-36*time.Minute - 48*time.Second)), ExitCode: intPointer(0), QueueWaitMillis: int64Pointer(60000), Resources: resourceSummary(6, .64, .91, .42, .55, 4.4)},
+		{Kind: "build", ID: "bld_01K1QVBWQJVV03W4P2C7MEW1B6", Project: "leapview", ProjectName: "LeapView", Status: "succeeded", CreatedAt: now.Add(-2 * time.Hour), FinishedAt: pointer(now.Add(-2*time.Hour + 14*time.Second)), ExitCode: intPointer(0), QueueWaitMillis: int64Pointer(12000), Resources: resourceSummary(7, .55, .78, .36, .48, 3.8)},
+		{Kind: "job", ID: "job_01K1QTYN9J4DGV7D0ZHRM8R84S", Project: "leapview", ProjectName: "LeapView", Status: "failed", Command: "task test", Image: projects[1].ActiveImage, CreatedAt: now.Add(-4 * time.Hour), StartedAt: pointer(now.Add(-4*time.Hour + time.Second)), FinishedAt: pointer(now.Add(-4*time.Hour + 18*time.Second)), ExitCode: intPointer(1), QueueWaitMillis: int64Pointer(1000), Resources: resourceSummary(8, .71, .96, .58, .72, 5.8)},
 	}
 	base := console.Snapshot{
-		Session: console.SessionView{User: "Jacob Østergaard", Admin: true, Projects: projects},
-		Service: console.ServiceView{Name: "Autback", Version: "0.1.0", Control: "CLI only", Admission: "Strict FIFO", StartedAt: now.Add(-31 * time.Hour)},
-		Worker:  console.WorkerView{Status: "online", Capacity: "1 operation", ActiveID: operations[0].ID, UpdatedAt: now},
+		Session:   console.SessionView{User: "Jacob Østergaard", Admin: true, Projects: projects},
+		Service:   console.ServiceView{Name: "Autback", Version: "0.1.0", Control: "CLI only", Admission: "One at a time", StartedAt: now.Add(-31 * time.Hour)},
+		Worker:    console.WorkerView{Status: "online", Capacity: "1 operation", ActiveID: operations[0].ID, UpdatedAt: now},
+		Resources: fixtureResources(now, operations[0].ID),
 		Queue: []console.QueueView{
 			{Position: 1, Kind: "job", ID: operations[0].ID, Project: "leapview", ProjectName: "LeapView", Status: "active", AcceptedAt: now.Add(-2 * time.Minute), LeasedAt: pointer(now.Add(-95 * time.Second))},
 			{Position: 2, Kind: "build", ID: operations[1].ID, Project: "autback", ProjectName: "Autback", Status: "queued", AcceptedAt: now.Add(-7 * time.Minute)},
@@ -112,6 +113,11 @@ func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route c
 			}
 		}
 		snapshot.Queue = queue
+		if route.Project != "leapview" {
+			snapshot.Resources.Samples = []console.ResourceSampleView{}
+			snapshot.Resources.SampleCount = 0
+			snapshot.Resources.ActiveSampleCount = 0
+		}
 	}
 	if route.Kind == console.RouteOperation {
 		for _, operation := range s.base.Operations {
@@ -122,6 +128,15 @@ func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route c
 					RootDigest: "bd76a4d3bd9ec8f076ad844fb3b1e1b39b12acbe2c1d2df5f68761ee7e758c9d/12786",
 				}
 				snapshot.Log = console.LogView{Available: operation.Kind == "job", Content: previewLog, Truncated: true}
+				snapshot.Resources.Samples = operationSamples(s.now, operation.ID)
+				snapshot.Resources.SampleCount = len(snapshot.Resources.Samples)
+				snapshot.Resources.ActiveSampleCount = len(snapshot.Resources.Samples)
+				snapshot.Resources.BusyRatio = 1
+				snapshot.Resources.CPUAverage = operation.Resources.CPUAverage
+				snapshot.Resources.CPUPeak = operation.Resources.CPUPeak
+				snapshot.Resources.MemoryAverage = operation.Resources.MemoryAverage
+				snapshot.Resources.MemoryPeak = operation.Resources.MemoryPeak
+				snapshot.Resources.MemoryBytesPeak = operation.Resources.MemoryBytesPeak
 				break
 			}
 		}
@@ -131,6 +146,38 @@ func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route c
 
 func pointer(value time.Time) *time.Time { return &value }
 func intPointer(value int) *int          { return &value }
+func int64Pointer(value int64) *int64    { return &value }
+
+func resourceSummary(samples int, cpuAverage, cpuPeak, memoryAverage, memoryPeak, memoryGB float64) console.OperationResourceView {
+	return console.OperationResourceView{SampleCount: samples, CPUAverage: cpuAverage, CPUPeak: cpuPeak, MemoryAverage: memoryAverage, MemoryPeak: memoryPeak, MemoryBytesPeak: uint64(memoryGB * float64(uint64(1)<<30))}
+}
+
+func fixtureResources(now time.Time, _ string) console.ResourceView {
+	samples := make([]console.ResourceSampleView, 0, 120)
+	active := 0
+	for index := 0; index < 120; index++ {
+		phase := index % 40
+		cpu, memory := .03, .21
+		if phase >= 12 && phase <= 30 {
+			cpu = .24 + float64((phase*17)%55)/100
+			memory = .36 + float64((phase*7)%24)/100
+			active++
+		}
+		samples = append(samples, console.ResourceSampleView{ObservedAt: now.Add(time.Duration(index-119) * 30 * time.Second), CPUUtilization: cpu, MemoryUtilization: memory})
+	}
+	return console.ResourceView{Samples: samples, SampleCount: len(samples), ActiveSampleCount: active, CPUCores: 4, MemoryTotalBytes: 8 << 30,
+		DiskUsageBytes: 53 << 30, DiskTotalBytes: 160 << 30, BusyRatio: float64(active) / float64(len(samples)), CPUAverage: .48, CPUPeak: .86,
+		MemoryAverage: .49, MemoryPeak: .68, MemoryBytesPeak: uint64(54) * (1 << 30) / 10, QueueWaitP95Millis: 60000}
+}
+
+func operationSamples(now time.Time, _ string) []console.ResourceSampleView {
+	samples := make([]console.ResourceSampleView, 0, 48)
+	for index := 0; index < 48; index++ {
+		samples = append(samples, console.ResourceSampleView{ObservedAt: now.Add(time.Duration(index-47) * 2 * time.Second), CPUUtilization: .18 + float64((index*13)%68)/100,
+			MemoryUtilization: .38 + float64(index%15)/50})
+	}
+	return samples
+}
 
 const previewLog = `:: preparing exact worktree
 source  bd76a4d3bd9e/12786  0 B uploaded (cache hit)

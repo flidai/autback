@@ -15,7 +15,8 @@ func main() {
 	types := []reflect.Type{
 		reflect.TypeOf(console.SessionView{}), reflect.TypeOf(console.ProjectView{}),
 		reflect.TypeOf(console.ServiceView{}), reflect.TypeOf(console.WorkerView{}),
-		reflect.TypeOf(console.QueueView{}), reflect.TypeOf(console.OperationView{}),
+		reflect.TypeOf(console.ResourceView{}), reflect.TypeOf(console.ResourceSampleView{}),
+		reflect.TypeOf(console.OperationResourceView{}), reflect.TypeOf(console.QueueView{}), reflect.TypeOf(console.OperationView{}),
 		reflect.TypeOf(console.OperationDetailView{}), reflect.TypeOf(console.CacheView{}),
 		reflect.TypeOf(console.LogView{}), reflect.TypeOf(console.AuditView{}),
 		reflect.TypeOf(console.StatusView{}),
@@ -29,6 +30,7 @@ func main() {
   session: SessionView
   service: ServiceView
   worker: WorkerView
+  resources: ResourceView
   queue: QueueView[]
   operations: OperationView[]
   operation: OperationDetailView | null

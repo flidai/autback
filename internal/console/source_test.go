@@ -33,6 +33,14 @@ func TestSQLiteSourceBuildsAnAuthorizedConsoleProjection(t *testing.T) {
 	if err := store.Audit(ctx, principal, bootstrap.Project.ID, "job.start", job.ID, map[string]string{"command": "task ci"}); err != nil {
 		t.Fatal(err)
 	}
+	observedAt := time.Now().UTC().Add(-time.Second)
+	if err := store.AppendResourceSample(ctx, control.ResourceSample{
+		ObservedAt: observedAt, ResourceScope: control.ResourceScope{ProjectID: bootstrap.Project.ID, OperationKind: control.OperationJob, OperationID: job.ID},
+		CPUUtilization: .75, CPUCores: 4, MemoryUtilization: .5, MemoryUsageBytes: 4 << 30, MemoryTotalBytes: 8 << 30,
+		DiskUsageBytes: 40 << 30, DiskTotalBytes: 80 << 30,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	source, err := NewSQLiteSource(SQLiteSourceConfig{
 		Store: store, Scheduler: &consoleScheduler{logs: "compile\ntest\nPASS\n"}, Version: "0.1.0", StartedAt: time.Now().Add(-time.Hour),
@@ -47,7 +55,7 @@ func TestSQLiteSourceBuildsAnAuthorizedConsoleProjection(t *testing.T) {
 	if snapshot.Revision == 0 || snapshot.Session.User != "Owner" || len(snapshot.Session.Projects) != 1 {
 		t.Fatalf("session snapshot = %#v", snapshot)
 	}
-	if snapshot.Service.Control != "CLI only" || snapshot.Service.Admission != "Strict FIFO" || snapshot.Worker.Status != "online" {
+	if snapshot.Service.Control != "CLI only" || snapshot.Service.Admission != "One at a time" || snapshot.Worker.Status != "online" {
 		t.Fatalf("service=%#v worker=%#v", snapshot.Service, snapshot.Worker)
 	}
 	if len(snapshot.Queue) != 1 || snapshot.Queue[0].ID != job.ID || snapshot.Queue[0].Position != 1 {
@@ -55,6 +63,9 @@ func TestSQLiteSourceBuildsAnAuthorizedConsoleProjection(t *testing.T) {
 	}
 	if len(snapshot.Operations) == 0 || snapshot.Operations[0].Command != "task ci" {
 		t.Fatalf("operations = %#v", snapshot.Operations)
+	}
+	if snapshot.Resources.CPUCores != 4 || snapshot.Resources.CPUPeak != .75 || len(snapshot.Resources.Samples) != 1 || snapshot.Operations[0].Resources.SampleCount != 1 {
+		t.Fatalf("resources=%#v operation=%#v", snapshot.Resources, snapshot.Operations[0])
 	}
 	if len(snapshot.Audit) == 0 || snapshot.Audit[0].Action != "job.start" {
 		t.Fatalf("audit = %#v", snapshot.Audit)
@@ -107,6 +118,17 @@ func TestSQLiteSourceRejectsAnOperationOutsideThePrincipalProjects(t *testing.T)
 	github := control.Principal{Kind: control.PrincipalGitHub, ProjectID: bootstrap.Project.ID, Subject: "repo:trusted"}
 	if _, err := source.Snapshot(ctx, github, Route{Kind: RouteOperation, OperationKind: "job", OperationID: job.ID}); err != control.ErrForbidden {
 		t.Fatalf("err=%v; want forbidden", err)
+	}
+}
+
+func TestResourceRollupViewKeepsHistoricalRunCharts(t *testing.T) {
+	now := time.Date(2026, time.August, 3, 8, 0, 0, 0, time.UTC)
+	view := resourceRollupView([]control.ResourceRollup{
+		{BucketAt: now.Add(time.Minute), SampleCount: 2, CPUAverage: .8, CPUPeak: .9, MemoryAverage: .6, MemoryPeak: .7, MemoryBytesPeak: 6 << 30, CPUCores: 4, DiskUsageBytes: 40 << 30, DiskTotalBytes: 80 << 30},
+		{BucketAt: now, SampleCount: 1, CPUAverage: .2, CPUPeak: .3, MemoryAverage: .3, MemoryPeak: .4, MemoryBytesPeak: 4 << 30, CPUCores: 4, DiskUsageBytes: 39 << 30, DiskTotalBytes: 80 << 30},
+	}, nil)
+	if view.SampleCount != 3 || len(view.Samples) != 2 || !view.Samples[0].ObservedAt.Equal(now) || view.CPUAverage != .6 || view.CPUPeak != .9 || view.MemoryBytesPeak != 6<<30 {
+		t.Fatalf("view=%#v", view)
 	}
 }
 

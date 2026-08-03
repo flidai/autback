@@ -29,6 +29,7 @@ import (
 	"github.com/flidai/autback/internal/control/secret"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
 	"github.com/flidai/autback/internal/control/swarmscheduler"
+	"github.com/flidai/autback/internal/hostmetrics"
 	"github.com/flidai/autback/internal/swarm"
 )
 
@@ -85,6 +86,21 @@ func serve() {
 		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
+	sampler, err := hostmetrics.NewLinuxSampler(hostmetrics.LinuxSamplerConfig{DiskPath: dataDir})
+	if err != nil {
+		log.Fatal(err)
+	}
+	resourceCollector, err := hostmetrics.NewCollector(hostmetrics.CollectorConfig{
+		Store: store, Sampler: sampler,
+		Interval:        durationEnv("AUTBACK_METRICS_INTERVAL", 2*time.Second),
+		RawRetention:    durationEnv("AUTBACK_METRICS_RAW_RETENTION", 14*24*time.Hour),
+		RollupRetention: durationEnv("AUTBACK_METRICS_ROLLUP_RETENTION", 180*24*time.Hour),
+		OnError:         func(err error) { log.Printf("resource metrics: %v", err) },
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	go resourceCollector.Run(ctx)
 	dispatch := dispatcher.New(store, scheduler)
 	if err := dispatch.RunOnce(ctx); err != nil {
 		log.Printf("initial dispatch: %v", err)

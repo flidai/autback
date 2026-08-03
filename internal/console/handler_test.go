@@ -142,7 +142,7 @@ func TestCanonicalRoutesSelectTheirOwnReadModel(t *testing.T) {
 	}{
 		{"/app", "overview", "", "", ""},
 		{"/app/projects/example", "project", "example", "", ""},
-		{"/app/operations/job/job_example", "operation", "", "job", "job_example"},
+		{"/app/runs/job/job_example", "operation", "", "job", "job_example"},
 		{"/app/audit", "audit", "", "", ""},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -157,6 +157,20 @@ func TestCanonicalRoutesSelectTheirOwnReadModel(t *testing.T) {
 				t.Fatalf("route=%#v", source.lastRoute)
 			}
 		})
+	}
+}
+
+func TestLegacyOperationRouteIsNotExposed(t *testing.T) {
+	handler, err := New(Config{Source: &fakeSource{snapshot: exampleSnapshot()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/app/operations/job/job_example", nil)
+	request.Header.Set("Authorization", "Bearer device-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 
@@ -203,7 +217,7 @@ func exampleSnapshot() Snapshot {
 	return Snapshot{
 		Revision:   42,
 		Session:    SessionView{User: "Jacob", Admin: true, Projects: []ProjectView{{ID: "prj_example", Slug: "example", Name: "Example Service"}}},
-		Service:    ServiceView{Name: "Autback", Version: "0.1.0", Control: "CLI only", Admission: "Strict FIFO"},
+		Service:    ServiceView{Name: "Autback", Version: "0.1.0", Control: "CLI only", Admission: "One at a time"},
 		Worker:     WorkerView{Status: "online", Capacity: "1 operation", UpdatedAt: now},
 		Queue:      []QueueView{{Position: 1, Kind: "job", ID: "job_example", Project: "example", Status: "active", AcceptedAt: now}},
 		Operations: []OperationView{{Kind: "job", ID: "job_example", Project: "example", ProjectName: "Example Service", Status: "running", Command: "task ci", CreatedAt: now}},

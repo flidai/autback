@@ -29,4 +29,22 @@ describe('runs table web component contract', () => {
     expect(styles).toContain('.badge.running::before')
     expect(styles).toContain('@keyframes status-spin')
   })
+
+  test('uses semantic colors for every run status', async () => {
+    const tableStyles = await Bun.file(new URL('./runs-table-styles.ts', import.meta.url)).text()
+    const consoleStyles = await Bun.file(new URL('./console-styles.ts', import.meta.url)).text()
+
+    for (const styles of [tableStyles, consoleStyles]) {
+      expect(styles).toContain('.badge.running, .badge.active {')
+      expect(styles).toContain('background: var(--blue-soft); color: var(--blue);')
+      expect(styles).toContain('.badge.succeeded, .badge.success, .badge.online {')
+      expect(styles).toContain('background: var(--green-soft); color: var(--green);')
+      expect(styles).toContain('.badge.queued, .badge.preparing {')
+      expect(styles).toContain('background: var(--yellow-soft); color: var(--yellow);')
+      expect(styles).toContain('.badge.failed, .badge.timed_out, .badge.lost {')
+      expect(styles).toContain('background: var(--red-soft); color: var(--red);')
+      expect(styles).toContain('.badge.cancelled, .badge.canceled {')
+      expect(styles).toContain('background: var(--neutral-soft); color: var(--text-soft);')
+    }
+  })
 })

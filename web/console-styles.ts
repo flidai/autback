@@ -13,6 +13,7 @@ export const consoleStyles = css`
     --text: #f5f3ed;
     --text-soft: #aaa7af;
     --text-faint: #74727a;
+    --neutral-soft: rgba(170, 167, 175, 0.09);
     --ember: #e38242;
     --ember-soft: rgba(227, 130, 66, 0.12);
     --violet: #a99af8;
@@ -215,9 +216,12 @@ export const consoleStyles = css`
 
   .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); font-size: 10px; font-weight: 560; white-space: nowrap; }
   .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-  .badge.success, .badge.running, .badge.active, .badge.online { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
+  .badge.running, .badge.active { border-color: rgba(123,184,240,.2); background: var(--blue-soft); color: var(--blue); }
+  .badge.succeeded, .badge.success, .badge.online { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
   .badge.queued, .badge.preparing { border-color: rgba(231,198,109,.18); background: var(--yellow-soft); color: var(--yellow); }
-  .badge.failed, .badge.cancelled, .badge.degraded { border-color: rgba(240,130,130,.18); background: var(--red-soft); color: var(--red); }
+  .badge.degraded { border-color: rgba(231,198,109,.18); background: var(--yellow-soft); color: var(--yellow); }
+  .badge.failed, .badge.timed_out, .badge.lost { border-color: rgba(240,130,130,.18); background: var(--red-soft); color: var(--red); }
+  .badge.cancelled, .badge.canceled { border-color: var(--line); background: var(--neutral-soft); color: var(--text-soft); }
   .badge.build { border-color: rgba(169,154,248,.18); background: var(--violet-soft); color: var(--violet); }
 
   .table-wrap { overflow-x: auto; }

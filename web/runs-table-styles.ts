@@ -10,7 +10,10 @@ export const runsTableStyles = css`
     --text: #f5f3ed;
     --text-soft: #aaa7af;
     --text-faint: #74727a;
+    --neutral-soft: rgba(170,167,175,.09);
     --ember: #e38242;
+    --blue: #7bb8f0;
+    --blue-soft: rgba(123,184,240,.11);
     --green: #70d6a2;
     --green-soft: rgba(112,214,162,.11);
     --red: #f08282;
@@ -49,10 +52,12 @@ export const runsTableStyles = css`
   .muted { color: var(--text-faint); }
   .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); font-size: 10px; font-weight: 560; white-space: nowrap; }
   .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-  .badge.succeeded, .badge.success, .badge.running { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
+  .badge.running, .badge.active { border-color: rgba(123,184,240,.2); background: var(--blue-soft); color: var(--blue); }
+  .badge.succeeded, .badge.success, .badge.online { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
   .badge.running::before { width: 8px; height: 8px; border: 1.5px solid currentColor; border-right-color: transparent; background: transparent; animation: status-spin .75s linear infinite; }
   .badge.queued, .badge.preparing { border-color: rgba(231,198,109,.18); background: var(--yellow-soft); color: var(--yellow); }
-  .badge.failed, .badge.cancelled { border-color: rgba(240,130,130,.18); background: var(--red-soft); color: var(--red); }
+  .badge.failed, .badge.timed_out, .badge.lost { border-color: rgba(240,130,130,.18); background: var(--red-soft); color: var(--red); }
+  .badge.cancelled, .badge.canceled { border-color: var(--line); background: var(--neutral-soft); color: var(--text-soft); }
   .position { display: inline-grid; min-width: 20px; height: 20px; margin-left: 6px; place-items: center; border: 1px solid var(--line); border-radius: 5px; }
   .empty { display: grid; min-height: 180px; place-content: center; padding: 32px; text-align: center; }
   .empty strong { font-size: 12px; font-weight: 580; }

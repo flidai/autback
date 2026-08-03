@@ -45,6 +45,10 @@ Datastar Lit adapter. It presents active work first, queued work in FIFO order, 
 completed work newest first. TanStack Table owns the local search and status/kind filters;
 filtering does not introduce another data source or browser API.
 
+For an authorized job detail route, the same SSE connection follows scheduler output and
+patches a coalesced `$log` tail as new bytes arrive. The browser receives at most the latest
+64 KiB; reconnecting hydrates that tail again from the scheduler's durable job log.
+
 The SSE connection also publishes the server-owned `$clock` once per second. Running
 durations and relative timestamps derive from that signal, so they advance without browser
 timers, polling, or a full document refresh. Durable projections are still re-queried only

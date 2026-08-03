@@ -41,9 +41,10 @@ func main() {
 }
 
 type fixtureSource struct {
-	revision atomic.Int64
-	interval time.Duration
-	base     console.Snapshot
+	revision    atomic.Int64
+	interval    time.Duration
+	logInterval time.Duration
+	base        console.Snapshot
 }
 
 func newFixtureSource() *fixtureSource {
@@ -79,7 +80,7 @@ func newFixtureSource() *fixtureSource {
 		},
 		Status: console.StatusView{Ready: true, Route: "overview", Message: "Live", UpdatedAt: now},
 	}
-	source := &fixtureSource{base: base, interval: 2 * time.Second}
+	source := &fixtureSource{base: base, interval: 2 * time.Second, logInterval: 1500 * time.Millisecond}
 	source.revision.Store(190)
 	return source
 }
@@ -120,6 +121,47 @@ func (s *fixtureSource) SubscribeChanges() (<-chan struct{}, func()) {
 	return updates, func() { stop.Do(func() { close(done) }) }
 }
 
+func (s *fixtureSource) SubscribeLog(ctx context.Context, _ control.Principal, route console.Route) (<-chan console.LogView, error) {
+	updates := make(chan console.LogView, 1)
+	if route.Kind != console.RouteOperation || route.OperationKind != "job" {
+		close(updates)
+		return updates, nil
+	}
+	go func() {
+		defer close(updates)
+		lines := []string{
+			"task: [test:integration] go test ./internal/integration/...\n",
+			"ok  github.com/flidai/leapview/internal/integration  4.812s\n",
+			"task: [build] docker buildx build --push .\n",
+		}
+		content := previewLog
+		for index := 0; ; index++ {
+			view := console.LogView{Available: true, Content: content, Truncated: true}
+			select {
+			case <-ctx.Done():
+				return
+			case updates <- view:
+			}
+			interval := s.logInterval
+			if interval <= 0 {
+				interval = 1500 * time.Millisecond
+			}
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				content += lines[index%len(lines)]
+				if len(content) > 64*1024 {
+					content = content[len(content)-64*1024:]
+				}
+			}
+		}
+	}()
+	return updates, nil
+}
+
 func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route console.Route) (console.Snapshot, error) {
 	now := time.Now().UTC()
 	snapshot := s.base
@@ -158,7 +200,6 @@ func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route c
 					Caches:     []console.CacheView{{Name: "go-build", Target: "/root/.cache/go-build"}, {Name: "go-mod", Target: "/go/pkg/mod"}},
 					RootDigest: "bd76a4d3bd9ec8f076ad844fb3b1e1b39b12acbe2c1d2df5f68761ee7e758c9d/12786",
 				}
-				snapshot.Log = console.LogView{Available: operation.Kind == "job", Content: previewLog, Truncated: true}
 				snapshot.Resources.Samples = operationSamples(now, int(revision))
 				snapshot.Resources.SampleCount = len(snapshot.Resources.Samples)
 				snapshot.Resources.ActiveSampleCount = len(snapshot.Resources.Samples)

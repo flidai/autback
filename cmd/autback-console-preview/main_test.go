@@ -32,3 +32,21 @@ func TestFixtureSourcePublishesEvolvingRunnerUtilization(t *testing.T) {
 		t.Fatalf("before revision=%d CPU=%v; after revision=%d CPU=%v", before.Revision, before.Resources.Samples[0].CPUUtilization, after.Revision, after.Resources.Samples[0].CPUUtilization)
 	}
 }
+
+func TestFixtureSourcePublishesLiveJobLogs(t *testing.T) {
+	source := newFixtureSource()
+	source.logInterval = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logs, err := source.SubscribeLog(ctx, control.Principal{Kind: control.PrincipalDevice}, console.Route{
+		Kind: console.RouteOperation, OperationKind: "job", OperationID: "job_01K1QX7NWJ0M9C16G4G0S1VDFH",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := <-logs
+	second := <-logs
+	if first.Content == second.Content || len(second.Content) <= len(first.Content) {
+		t.Fatalf("live log did not advance: first=%d bytes second=%d bytes", len(first.Content), len(second.Content))
+	}
+}

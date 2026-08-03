@@ -25,6 +25,7 @@ type Source interface {
 	Authorize(context.Context, control.Principal, Route) error
 	Snapshot(context.Context, control.Principal, Route) (Snapshot, error)
 	SubscribeChanges() (<-chan struct{}, func())
+	SubscribeLog(context.Context, control.Principal, Route) (<-chan LogView, error)
 }
 
 type Config struct {
@@ -143,6 +144,10 @@ func (s *server) updates(response http.ResponseWriter, request *http.Request) {
 	if err := stream.Patch(snapshot.patch()); err != nil {
 		return
 	}
+	logUpdates, err := s.source.SubscribeLog(request.Context(), principal, route)
+	if err != nil {
+		return
+	}
 	revision := snapshot.Revision
 	clock := time.NewTicker(s.clockInterval)
 	defer clock.Stop()
@@ -152,6 +157,14 @@ func (s *server) updates(response http.ResponseWriter, request *http.Request) {
 			return
 		case <-clock.C:
 			if err := stream.Patch(map[string]any{"clock": ClockView{Now: s.now().UTC()}}); err != nil {
+				return
+			}
+		case log, open := <-logUpdates:
+			if !open {
+				logUpdates = nil
+				continue
+			}
+			if err := stream.Patch(map[string]any{"log": log}); err != nil {
 				return
 			}
 		case _, open := <-updates:

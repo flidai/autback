@@ -28,4 +28,10 @@ describe('console product language', () => {
     expect(source).toContain('Date.parse(signals.clock.now)')
     expect(source).not.toContain('Date.now()')
   })
+
+  test('describes the job output as live without exposing transport details', async () => {
+    const source = await Bun.file(new URL('./console.ts', import.meta.url)).text()
+    expect(source).toContain('Following live output.')
+    expect(source).not.toContain('Showing the latest output.')
+  })
 })

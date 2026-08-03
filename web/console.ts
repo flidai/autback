@@ -212,8 +212,10 @@ class AutbackConsole extends DatastarLit(LitElement) {
   }
 
   private logPanel(signals: ConsoleSignals, run: OperationDetailView): TemplateResult {
-    return html`<article class="panel"><header class="panel-head"><div class="panel-title">${icon('terminal')}Output</div><span class="panel-meta">${signals.log.available ? 'Following' : 'Unavailable'}</span></header>
-      ${signals.log.available ? html`<pre class="log">${signals.log.content || 'Waiting for output…'}</pre>${signals.log.truncated ? html`<div class="log-note">Showing the latest output. Use <span class="mono">autback logs ${run.id}</span> for the full log.</div>` : nothing}` : emptyState('terminal', 'No output available', run.kind === 'build' ? 'Build progress remains in the invoking terminal.' : 'The runner has not produced output yet.')}
+    const following = !run.finishedAt && !['succeeded', 'failed', 'cancelled', 'timed_out', 'lost'].includes(run.status)
+    const history = html`Older lines remain available with <span class="mono">autback logs ${run.id}</span>.`
+    return html`<article class="panel"><header class="panel-head"><div class="panel-title">${icon('terminal')}Output</div><span class="panel-meta">${signals.log.available ? following ? 'Following' : 'Complete' : 'Unavailable'}</span></header>
+      ${signals.log.available ? html`<pre class="log">${signals.log.content || 'Waiting for output…'}</pre>${signals.log.truncated ? html`<div class="log-note">${following ? html`Following live output. ${history}` : history}</div>` : nothing}` : emptyState('terminal', 'No output available', run.kind === 'build' ? 'Build progress remains in the invoking terminal.' : 'The runner has not produced output yet.')}
     </article>`
   }
 

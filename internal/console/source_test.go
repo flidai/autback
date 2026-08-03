@@ -72,7 +72,7 @@ func TestSQLiteSourceBuildsAnAuthorizedConsoleProjection(t *testing.T) {
 	}
 }
 
-func TestSQLiteSourceBuildsOperationDetailAndBoundedLogTail(t *testing.T) {
+func TestSQLiteSourceBuildsOperationDetailAndStreamsBoundedLogTail(t *testing.T) {
 	store, bootstrap, principal := consoleStore(t)
 	ctx := context.Background()
 	job, _, err := store.CreatePreparedJob(ctx, control.PrepareJob{
@@ -82,8 +82,11 @@ func TestSQLiteSourceBuildsOperationDetailAndBoundedLogTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logs := strings.Repeat("old output\n", 8000) + "last useful line\n"
-	source, err := NewSQLiteSource(SQLiteSourceConfig{Store: store, Scheduler: &consoleScheduler{logs: logs}, Version: "0.1.0"})
+	if _, err := store.FailJob(ctx, job.ID, "test failure"); err != nil {
+		t.Fatal(err)
+	}
+	logContent := strings.Repeat("old output\n", 8000) + "last useful line\n"
+	source, err := NewSQLiteSource(SQLiteSourceConfig{Store: store, Scheduler: &consoleScheduler{logs: logContent}, Version: "0.1.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +97,67 @@ func TestSQLiteSourceBuildsOperationDetailAndBoundedLogTail(t *testing.T) {
 	if snapshot.Operation == nil || snapshot.Operation.ID != job.ID || snapshot.Operation.WorkingDirectory != "/workspace" {
 		t.Fatalf("operation = %#v", snapshot.Operation)
 	}
-	if !snapshot.Log.Available || !snapshot.Log.Truncated || !strings.HasSuffix(snapshot.Log.Content, "last useful line\n") || len(snapshot.Log.Content) > maxLogTailBytes {
-		t.Fatalf("log = available:%v truncated:%v bytes:%d suffix:%q", snapshot.Log.Available, snapshot.Log.Truncated, len(snapshot.Log.Content), tail(snapshot.Log.Content, 32))
+	logs, err := source.SubscribeLog(ctx, principal, Route{Kind: RouteOperation, OperationKind: "job", OperationID: job.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view LogView
+	var open bool
+	select {
+	case view, open = <-logs:
+	case <-time.After(time.Second):
+		t.Fatal("durable log tail was not published")
+	}
+	if !open || !view.Available || !view.Truncated || !strings.HasSuffix(view.Content, "last useful line\n") || len(view.Content) > maxLogTailBytes {
+		t.Fatalf("log = open:%v available:%v truncated:%v bytes:%d suffix:%q", open, view.Available, view.Truncated, len(view.Content), tail(view.Content, 32))
+	}
+}
+
+func TestSQLiteSourceStreamsABoundedLiveJobLogTail(t *testing.T) {
+	store, bootstrap, principal := consoleStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	job, _, err := store.CreatePreparedJob(ctx, control.PrepareJob{
+		ProjectID: bootstrap.Project.ID, Image: "runner@test", Command: []string{"task", "ci"}, Timeout: time.Minute,
+	}, control.Idempotency{Key: "live-log", RequestHash: "live-log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueJob(ctx, job.ID, "root/42"); err != nil {
+		t.Fatal(err)
+	}
+	if operation, err := store.AcquireNextOperation(ctx); err != nil || operation == nil || operation.ID != job.ID {
+		t.Fatalf("acquire operation=%#v err=%v", operation, err)
+	}
+	chunks := make(chan string, 2)
+	source, err := NewSQLiteSource(SQLiteSourceConfig{Store: store, Scheduler: &consoleScheduler{follow: chunks}, Version: "0.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := source.SubscribeLog(ctx, principal, Route{Kind: RouteOperation, OperationKind: "job", OperationID: job.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks <- strings.Repeat("old output\n", 8000)
+	chunks <- "live useful line\n"
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case view, open := <-logs:
+			if !open {
+				t.Fatal("live log stream closed before publishing output")
+			}
+			if !strings.HasSuffix(view.Content, "live useful line\n") {
+				continue
+			}
+			if !view.Available || !view.Truncated || len(view.Content) > maxLogTailBytes {
+				t.Fatalf("log = available:%v truncated:%v bytes:%d", view.Available, view.Truncated, len(view.Content))
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("live log tail was not published")
+		}
 	}
 }
 
@@ -116,8 +178,12 @@ func TestSQLiteSourceRejectsAnOperationOutsideThePrincipalProjects(t *testing.T)
 		t.Fatal(err)
 	}
 	github := control.Principal{Kind: control.PrincipalGitHub, ProjectID: bootstrap.Project.ID, Subject: "repo:trusted"}
-	if _, err := source.Snapshot(ctx, github, Route{Kind: RouteOperation, OperationKind: "job", OperationID: job.ID}); err != control.ErrForbidden {
+	route := Route{Kind: RouteOperation, OperationKind: "job", OperationID: job.ID}
+	if _, err := source.Snapshot(ctx, github, route); err != control.ErrForbidden {
 		t.Fatalf("err=%v; want forbidden", err)
+	}
+	if _, err := source.SubscribeLog(ctx, github, route); err != control.ErrForbidden {
+		t.Fatalf("subscribe log err=%v; want forbidden", err)
 	}
 }
 
@@ -151,8 +217,9 @@ func consoleStore(t *testing.T) (*controlsqlite.Store, control.BootstrapResult, 
 }
 
 type consoleScheduler struct {
-	logs string
-	err  error
+	logs   string
+	err    error
+	follow <-chan string
 }
 
 func (s *consoleScheduler) Check(context.Context) error                 { return s.err }
@@ -162,9 +229,24 @@ func (s *consoleScheduler) Status(context.Context, string) (protocol.Job, error)
 	return protocol.Job{}, nil
 }
 func (s *consoleScheduler) Cancel(context.Context, string) error { return nil }
-func (s *consoleScheduler) Logs(_ context.Context, _ string, _ bool, output io.Writer) error {
-	_, err := io.WriteString(output, s.logs)
-	return err
+func (s *consoleScheduler) Logs(ctx context.Context, _ string, follow bool, output io.Writer) error {
+	if !follow || s.follow == nil {
+		_, err := io.WriteString(output, s.logs)
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case chunk, open := <-s.follow:
+			if !open {
+				return nil
+			}
+			if _, err := io.WriteString(output, chunk); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func tail(value string, size int) string {

@@ -208,7 +208,7 @@ func (s *SQLiteSource) readSnapshot(ctx context.Context, principal control.Princ
 	var detail *OperationDetailView
 	log := LogView{}
 	if route.Kind == RouteOperation {
-		detail, log, err = s.operation(ctx, principal, projectByID, route)
+		detail, err = s.operation(ctx, principal, projectByID, route)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -420,16 +420,16 @@ func (s *SQLiteSource) operations(ctx context.Context, projects []control.Projec
 	return operations, nil
 }
 
-func (s *SQLiteSource) operation(ctx context.Context, principal control.Principal, projects map[string]control.Project, route Route) (*OperationDetailView, LogView, error) {
+func (s *SQLiteSource) operation(ctx context.Context, principal control.Principal, projects map[string]control.Project, route Route) (*OperationDetailView, error) {
 	switch route.OperationKind {
 	case "job":
 		job, err := s.store.Job(ctx, route.OperationID)
 		if err != nil {
-			return nil, LogView{}, err
+			return nil, err
 		}
 		project, err := s.store.AuthorizeProject(ctx, principal, job.ProjectID)
 		if err != nil {
-			return nil, LogView{}, err
+			return nil, err
 		}
 		projects[project.ID] = project
 		environment := job.Environment
@@ -443,22 +443,20 @@ func (s *SQLiteSource) operation(ctx context.Context, principal control.Principa
 		for _, cache := range job.Caches {
 			view.Caches = append(view.Caches, CacheView{Name: cache.Name, Target: cache.Target})
 		}
-		writer := &tailWriter{limit: maxLogTailBytes}
-		err = s.scheduler.Logs(ctx, job.ID, false, writer)
-		return view, LogView{Available: err == nil, Truncated: writer.truncated, Content: string(writer.bytes)}, nil
+		return view, nil
 	case "build":
 		build, err := s.store.Build(ctx, route.OperationID)
 		if err != nil {
-			return nil, LogView{}, err
+			return nil, err
 		}
 		project, err := s.store.AuthorizeProject(ctx, principal, build.ProjectID)
 		if err != nil {
-			return nil, LogView{}, err
+			return nil, err
 		}
 		view := &OperationDetailView{OperationView: buildView(build, project), Environment: map[string]string{}, Caches: []CacheView{}}
-		return view, LogView{}, nil
+		return view, nil
 	default:
-		return nil, LogView{}, control.ErrNotFound
+		return nil, control.ErrNotFound
 	}
 }
 

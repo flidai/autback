@@ -127,6 +127,29 @@ func TestUpdatesStreamBackendClockWithoutControlChanges(t *testing.T) {
 	}
 }
 
+func TestUpdatesStreamLiveJobLogTailWithoutControlChanges(t *testing.T) {
+	changes := make(chan struct{})
+	logs := make(chan LogView, 1)
+	logs <- LogView{Available: true, Content: "initial-output\nlive-output\n"}
+	close(logs)
+	snapshot := exampleSnapshot()
+	snapshot.Log = LogView{Available: true, Content: "initial-output\n"}
+	source := &fakeSource{snapshot: snapshot, updates: changes, logs: logs}
+	handler, err := New(Config{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/app/updates?route=operation&kind=job&id=job_example", nil).WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer device-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if body := response.Body.String(); !strings.Contains(body, "live-output") {
+		t.Fatalf("stream did not publish the live log tail:\n%s", body)
+	}
+}
+
 func TestUpdatesRequeryAfterACommittedChangeNotification(t *testing.T) {
 	updates := make(chan struct{}, 1)
 	updates <- struct{}{}
@@ -202,6 +225,7 @@ type fakeSource struct {
 	snapshot  Snapshot
 	snapshots []Snapshot
 	updates   <-chan struct{}
+	logs      <-chan LogView
 	lastRoute Route
 }
 
@@ -234,6 +258,15 @@ func (f *fakeSource) SubscribeChanges() (<-chan struct{}, func()) {
 	updates := make(chan struct{})
 	close(updates)
 	return updates, func() {}
+}
+
+func (f *fakeSource) SubscribeLog(context.Context, control.Principal, Route) (<-chan LogView, error) {
+	if f.logs != nil {
+		return f.logs, nil
+	}
+	logs := make(chan LogView)
+	close(logs)
+	return logs, nil
 }
 
 func exampleSnapshot() Snapshot {

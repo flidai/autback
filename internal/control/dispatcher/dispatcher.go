@@ -10,6 +10,7 @@ import (
 
 type Store interface {
 	AcquireNextOperation(context.Context) (*control.Operation, error)
+	ActivateOperation(context.Context, control.OperationKind, string) error
 	ReleaseOperation(context.Context, control.OperationKind, string) error
 	Job(context.Context, string) (control.Job, error)
 	FailJob(context.Context, string, string) (control.Job, error)
@@ -17,6 +18,7 @@ type Store interface {
 
 type Scheduler interface {
 	Create(context.Context, control.Job) error
+	Cancel(context.Context, string) error
 }
 
 type Dispatcher struct {
@@ -28,9 +30,9 @@ func New(store Store, scheduler Scheduler) *Dispatcher {
 	return &Dispatcher{store: store, scheduler: scheduler}
 }
 
-// RunOnce admits the oldest operation only when the worker is idle. A build is
-// admitted by changing its durable state to running; a job additionally creates
-// its worker service. Failed job admission is terminal and does not block FIFO.
+// RunOnce reserves the oldest operation only when the worker is idle. The
+// operation becomes active after its runtime is ready. Failed job admission is
+// terminal and does not block FIFO.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
 	var admissionErrors []error
 	for {
@@ -38,23 +40,42 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 		if err != nil {
 			return errors.Join(append(admissionErrors, err)...)
 		}
-		if operation == nil || operation.Kind == control.OperationBuild {
+		if operation == nil {
+			return errors.Join(admissionErrors...)
+		}
+		if operation.Kind == control.OperationBuild {
+			if err := d.store.ActivateOperation(ctx, operation.Kind, operation.ID); err != nil {
+				return errors.Join(append(admissionErrors, fmt.Errorf("activate build %s: %w", operation.ID, err))...)
+			}
 			return errors.Join(admissionErrors...)
 		}
 		job, err := d.store.Job(ctx, operation.ID)
-		if err == nil {
-			err = d.scheduler.Create(ctx, job)
+		if err != nil {
+			return errors.Join(append(admissionErrors, fmt.Errorf("read admitted job %s: %w", operation.ID, err))...)
 		}
-		if err == nil {
-			return errors.Join(admissionErrors...)
+		if err := d.scheduler.Create(ctx, job); err != nil {
+			admissionErrors = append(admissionErrors, fmt.Errorf("admit job %s: %w", operation.ID, err))
+			if _, failErr := d.store.FailJob(ctx, operation.ID, err.Error()); failErr != nil {
+				return errors.Join(append(admissionErrors, failErr)...)
+			}
+			if releaseErr := d.store.ReleaseOperation(ctx, control.OperationJob, operation.ID); releaseErr != nil {
+				return errors.Join(append(admissionErrors, releaseErr)...)
+			}
+			continue
 		}
-		admissionErrors = append(admissionErrors, fmt.Errorf("admit job %s: %w", operation.ID, err))
-		if _, failErr := d.store.FailJob(ctx, operation.ID, err.Error()); failErr != nil {
-			return errors.Join(append(admissionErrors, failErr)...)
+		if err := d.store.ActivateOperation(ctx, operation.Kind, operation.ID); err != nil {
+			return errors.Join(append(admissionErrors, fmt.Errorf("activate job %s: %w", operation.ID, err))...)
 		}
-		if releaseErr := d.store.ReleaseOperation(ctx, control.OperationJob, operation.ID); releaseErr != nil {
-			return errors.Join(append(admissionErrors, releaseErr)...)
+		job, err = d.store.Job(ctx, operation.ID)
+		if err != nil {
+			return errors.Join(append(admissionErrors, fmt.Errorf("read active job %s: %w", operation.ID, err))...)
 		}
+		if job.CancelRequested {
+			if err := d.scheduler.Cancel(ctx, operation.ID); err != nil {
+				return errors.Join(append(admissionErrors, fmt.Errorf("cancel admitted job %s: %w", operation.ID, err))...)
+			}
+		}
+		return errors.Join(admissionErrors...)
 	}
 }
 

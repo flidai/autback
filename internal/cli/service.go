@@ -222,7 +222,12 @@ func renewServiceClient(ctx context.Context, api autbackv1connect.ControlService
 	if !ok {
 		return api, nil
 	}
-	return renewable.renew(ctx)
+	renewed, err := renewable.renew(ctx)
+	if err != nil {
+		return nil, err
+	}
+	renewable.ControlServiceClient = renewed
+	return renewable, nil
 }
 
 func serviceLogin(ctx context.Context, settings config.Config, explicitToken string, args []string, streams IO) int {
@@ -767,20 +772,14 @@ func serviceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient
 	fmt.Fprintf(streams.Stderr, "Backend: native Buildx via autback mTLS\nBuild: %s\n", prepared.Msg.Build.Id)
 	build, connection, err := waitForServiceBuild(ctx, api, prepared.Msg.Build, prepared.Msg.Buildkit)
 	if err != nil {
-		cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		_ = cancelServiceBuildRecord(cancelCtx, api, prepared.Msg.Build.Id)
-		cancel()
-		return fail(streams.Stderr, err)
+		return fail(streams.Stderr, cancelServiceBuildAfterError(api, prepared.Msg.Build.Id, err))
 	}
 	if build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil {
-		return fail(streams.Stderr, errors.New("remote build was admitted without a BuildKit connection"))
+		return fail(streams.Stderr, cancelServiceBuildAfterError(api, prepared.Msg.Build.Id, errors.New("remote build was admitted without a BuildKit connection")))
 	}
 	credentials, err := credentialfiles.Write(connection.CaPem, connection.CertificatePem, connection.PrivateKeyPem)
 	if err != nil {
-		cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		_ = cancelServiceBuildRecord(cancelCtx, api, prepared.Msg.Build.Id)
-		cancel()
-		return fail(streams.Stderr, err)
+		return fail(streams.Stderr, cancelServiceBuildAfterError(api, prepared.Msg.Build.Id, err))
 	}
 	defer credentials.Cleanup()
 	builderName := strings.Replace(random, "autback-", "autback-build-", 1)
@@ -789,10 +788,23 @@ func serviceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient
 		address = "tcp://" + address
 	}
 	fmt.Fprintf(streams.Stderr, "Builder: %s\n", address)
-	code, runErr := buildkit.RunWithTLS(ctx, os.Getenv("AUTBACK_DOCKER"), address, builderName, streams.Dir, args, buildkit.TLS{
+	buildCtx, stopBuild := context.WithCancel(ctx)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(buildCtx)
+	heartbeatDone := make(chan error, 1)
+	go func() {
+		err := heartbeatServiceBuild(heartbeatCtx, api, prepared.Msg.Build.Id, 30*time.Second)
+		if err != nil {
+			stopBuild()
+		}
+		heartbeatDone <- err
+	}()
+	code, runErr := buildkit.RunWithTLS(buildCtx, os.Getenv("AUTBACK_DOCKER"), address, builderName, streams.Dir, args, buildkit.TLS{
 		CA: credentials.CA, Certificate: credentials.Certificate, Key: credentials.Key, ServerName: connection.ServerName,
 	}, streams.Stdout, streams.Stderr)
-	cancelled := ctx.Err() != nil
+	stopHeartbeat()
+	heartbeatErr := <-heartbeatDone
+	stopBuild()
+	cancelled := ctx.Err() != nil || heartbeatErr != nil
 	finishCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	var finishErr error
 	if cancelled {
@@ -801,13 +813,56 @@ func serviceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient
 		finishErr = finishServiceBuildRecord(finishCtx, api, prepared.Msg.Build.Id, int32(code), false)
 	}
 	cancel()
+	if heartbeatErr != nil {
+		return fail(streams.Stderr, errors.Join(fmt.Errorf("renew remote build lease: %w", heartbeatErr), runErr, finishErr))
+	}
 	if runErr != nil {
-		return fail(streams.Stderr, fmt.Errorf("remote build: %w", runErr))
+		return fail(streams.Stderr, errors.Join(fmt.Errorf("remote build: %w", runErr), finishErr))
 	}
 	if finishErr != nil {
 		return fail(streams.Stderr, fmt.Errorf("finish build record: %w", finishErr))
 	}
 	return code
+}
+
+func cancelServiceBuildAfterError(api autbackv1connect.ControlServiceClient, id string, cause error) error {
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := cancelServiceBuildRecord(cancelCtx, api, id); err != nil {
+		return errors.Join(cause, fmt.Errorf("cancel abandoned build %s: %w", id, err))
+	}
+	return cause
+}
+
+func heartbeatServiceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, interval time.Duration) error {
+	if interval <= 0 {
+		return errors.New("build heartbeat interval must be positive")
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		response, err := api.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: id}))
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			api, err = renewServiceClient(ctx, api)
+			if err == nil {
+				response, err = api.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: id}))
+			}
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if response.Msg.Build == nil || response.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING {
+			return errors.New("remote build lease is no longer running")
+		}
+	}
 }
 
 func waitForServiceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient, build *autbackv1.Build, connection *autbackv1.DataPlaneConnection) (*autbackv1.Build, *autbackv1.DataPlaneConnection, error) {

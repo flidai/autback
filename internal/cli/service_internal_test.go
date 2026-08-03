@@ -299,6 +299,32 @@ func TestFinishBuildRecordRenewsGitHubOIDCSession(t *testing.T) {
 	}
 }
 
+func TestRenewServiceClientRemainsRenewableAcrossSessionExpirations(t *testing.T) {
+	base := &finishBuildService{}
+	baseClient, closeBase := testServiceClient(t, base)
+	defer closeBase()
+	renewals := 0
+	client := &renewableControlClient{
+		ControlServiceClient: baseClient,
+		renew: func(context.Context) (autbackv1connect.ControlServiceClient, error) {
+			renewals++
+			return baseClient, nil
+		},
+	}
+
+	first, err := renewServiceClient(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := renewServiceClient(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != client || renewals != 2 {
+		t.Fatalf("client=%T renewals=%d, want original renewable client and 2 renewals", second, renewals)
+	}
+}
+
 func TestWaitForServiceBuildPollsUntilBuildKitIsAdmitted(t *testing.T) {
 	service := &queuedBuildService{}
 	client, closeServer := testServiceClient(t, service)
@@ -311,6 +337,26 @@ func TestWaitForServiceBuildPollsUntilBuildKitIsAdmitted(t *testing.T) {
 	}
 	if service.polls != 1 || build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil || connection.Endpoint != "buildkit.example:1234" {
 		t.Fatalf("polls=%d build=%#v connection=%#v", service.polls, build, connection)
+	}
+}
+
+func TestHeartbeatServiceBuildKeepsRunningLeaseAlive(t *testing.T) {
+	service := &heartbeatBuildService{polled: make(chan struct{}, 1)}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- heartbeatServiceBuild(ctx, client, "bld-running", time.Millisecond)
+	}()
+	select {
+	case <-service.polled:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("build lease was not renewed")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -359,6 +405,19 @@ type finishBuildService struct {
 type queuedBuildService struct {
 	autbackv1connect.UnimplementedControlServiceHandler
 	polls int
+}
+
+type heartbeatBuildService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	polled chan struct{}
+}
+
+func (s *heartbeatBuildService) GetBuild(_ context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {
+	select {
+	case s.polled <- struct{}{}:
+	default:
+	}
+	return connect.NewResponse(&autbackv1.GetBuildResponse{Build: &autbackv1.Build{Id: request.Msg.Id, Status: autbackv1.BuildStatus_BUILD_STATUS_RUNNING}}), nil
 }
 
 func (s *queuedBuildService) GetBuild(_ context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {

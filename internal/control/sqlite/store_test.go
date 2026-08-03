@@ -42,10 +42,16 @@ func TestOperationsShareOneDurableFIFO(t *testing.T) {
 	if operation, err := store.AcquireNextOperation(ctx); err != nil || operation != nil {
 		t.Fatalf("second acquire = %#v, %v; want no operation while lease is active", operation, err)
 	}
+	if err := store.ActivateOperation(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.ReleaseOperation(ctx, control.OperationJob, first.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertNextOperation(t, store, control.OperationBuild, build.ID)
+	if err := store.ActivateOperation(ctx, control.OperationBuild, build.ID); err != nil {
+		t.Fatal(err)
+	}
 	storedBuild, err := store.Build(ctx, build.ID)
 	if err != nil || storedBuild.Status != control.BuildRunning {
 		t.Fatalf("build = %#v, %v; want running", storedBuild, err)
@@ -108,14 +114,48 @@ func TestActiveWorkerLeaseSurvivesStoreRestart(t *testing.T) {
 	assertNextOperation(t, store, control.OperationJob, second.ID)
 }
 
+func TestBuildLeaseHeartbeatCoversQueuedAndRunningBuilds(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, _, err := store.CreateBuild(ctx, bootstrap.Project.ID, control.Idempotency{Key: "build-heartbeat", RequestHash: "build-heartbeat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeHeartbeat := time.Now().UTC()
+	if err := store.RenewOperationLease(ctx, control.OperationBuild, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := store.StaleBuilds(ctx, beforeHeartbeat); err != nil || len(stale) != 0 {
+		t.Fatalf("queued stale builds = %#v, %v; want none after heartbeat", stale, err)
+	}
+	assertNextOperation(t, store, control.OperationBuild, build.ID)
+	if err := store.ActivateOperation(ctx, control.OperationBuild, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	beforeHeartbeat = time.Now().UTC()
+	if err := store.RenewOperationLease(ctx, control.OperationBuild, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := store.StaleBuilds(ctx, beforeHeartbeat); err != nil || len(stale) != 0 {
+		t.Fatalf("running stale builds = %#v, %v; want none after heartbeat", stale, err)
+	}
+	if stale, err := store.StaleBuilds(ctx, time.Now().Add(time.Second)); err != nil || len(stale) != 1 || stale[0].ID != build.ID {
+		t.Fatalf("expired stale builds = %#v, %v; want %s", stale, err, build.ID)
+	}
+}
+
 func assertNextOperation(t *testing.T, store *controlsqlite.Store, kind control.OperationKind, id string) {
 	t.Helper()
 	operation, err := store.AcquireNextOperation(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if operation == nil || operation.Kind != kind || operation.ID != id || operation.State != control.OperationActive {
-		t.Fatalf("operation = %#v, want %s %s active", operation, kind, id)
+	if operation == nil || operation.Kind != kind || operation.ID != id || operation.State != control.OperationAdmitting {
+		t.Fatalf("operation = %#v, want %s %s admitting", operation, kind, id)
 	}
 }
 

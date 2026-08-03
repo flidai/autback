@@ -589,6 +589,11 @@ func (s *Server) GetBuild(ctx context.Context, request *connect.Request[autbackv
 	if err != nil {
 		return nil, err
 	}
+	if build.Status == control.BuildQueued || build.Status == control.BuildRunning {
+		if err := s.config.Store.RenewOperationLease(ctx, control.OperationBuild, build.ID); err != nil {
+			return nil, connectError(err)
+		}
+	}
 	response := &autbackv1.GetBuildResponse{Build: buildProto(build)}
 	if build.Status == control.BuildRunning {
 		credential, issueErr := s.config.Authority.Issue(pki.OperationBuild, build.ID, s.config.CredentialTTL)
@@ -871,7 +876,7 @@ func (s *Server) refreshJob(ctx context.Context, job control.Job) (control.Job, 
 	if err != nil {
 		return control.Job{}, err
 	}
-	if state == control.OperationQueued {
+	if state != control.OperationActive {
 		return job, nil
 	}
 	remote, err := s.config.Scheduler.Status(ctx, job.ID)

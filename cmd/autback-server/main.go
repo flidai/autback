@@ -91,7 +91,7 @@ func serve() {
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch,
 		ServiceRetention:  durationEnv("AUTBACK_SERVICE_RETENTION", time.Hour),
 		AdmissionGrace:    durationEnv("AUTBACK_ADMISSION_GRACE", 15*time.Second),
-		BuildLeaseTimeout: durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Hour),
+		BuildLeaseTimeout: durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Minute),
 	})
 	go runReconciler(ctx, reconcile, durationEnv("AUTBACK_RECONCILE_INTERVAL", time.Second))
 	var verifier controlapi.OIDCVerifier

@@ -15,6 +15,7 @@ type Store interface {
 	Job(context.Context, string) (control.Job, error)
 	SyncJob(context.Context, string, protocol.Job) (control.Job, error)
 	Operation(context.Context, control.OperationKind, string) (control.Operation, error)
+	ActivateOperation(context.Context, control.OperationKind, string) error
 	StaleBuilds(context.Context, time.Time) ([]control.Build, error)
 	FinishBuild(context.Context, string, control.BuildStatus, int) (control.Build, error)
 }
@@ -50,7 +51,7 @@ func New(config Config) *Reconciler {
 		config.AdmissionGrace = 15 * time.Second
 	}
 	if config.BuildLeaseTimeout <= 0 {
-		config.BuildLeaseTimeout = 2 * time.Hour
+		config.BuildLeaseTimeout = 2 * time.Minute
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -98,6 +99,16 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 			}
 			finished, exitCode := now, 1
 			remote = protocol.Job{ID: job.ID, Status: protocol.StatusLost, FinishedAt: &finished, ExitCode: &exitCode, ErrorMessage: "managed Swarm service is missing"}
+		} else {
+			operation, operationErr := r.config.Store.Operation(ctx, control.OperationJob, job.ID)
+			if operationErr != nil && !errors.Is(operationErr, control.ErrNotFound) {
+				return fmt.Errorf("read operation for job %s: %w", job.ID, operationErr)
+			}
+			if operationErr == nil && operation.State == control.OperationAdmitting {
+				if err := r.config.Store.ActivateOperation(ctx, control.OperationJob, job.ID); err != nil {
+					return fmt.Errorf("activate admitted job %s: %w", job.ID, err)
+				}
+			}
 		}
 		stored, err := r.config.Store.SyncJob(ctx, job.ID, remote)
 		if err != nil {

@@ -39,9 +39,10 @@ Queued operations consume control-plane state only. Swarm services and BuildKit 
 are created only after admission. A one-second reconciliation loop releases completed or
 lost detached jobs and immediately admits the next FIFO entry. Queue state and the active
 lease are persisted in `/var/lib/autback/control.db` and survive a server restart.
-An active build lease has a configurable two-hour safety timeout so a killed client cannot
-block the FIFO indefinitely (`AUTBACK_BUILD_LEASE_TIMEOUT`). Repository builds that
-legitimately need longer must raise that worker setting explicitly.
+Queued and running builds use a renewable lease so a killed or disconnected client cannot
+block the FIFO indefinitely. The CLI renews the lease while waiting and while Buildx runs;
+the server cancels a build after two minutes without a heartbeat by default
+(`AUTBACK_BUILD_LEASE_TIMEOUT`).
 
 CAS data lives under `/var/lib/autback/cas`; workspaces live under `/var/lib/autback/jobs`;
 explicit project caches live under `/var/lib/autback/cache/<project-id>/<cache-name>`;

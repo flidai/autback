@@ -62,7 +62,7 @@ if [[ "${downloaded}" == true ]]; then
 fi
 
 if [[ "${downloaded}" == true ]]; then
-  expected="$(awk -v asset="${asset}" '$2 == asset || $2 == "*" asset {print $1; exit}' "${temporary}/checksums.txt")"
+  expected="$(awk -v asset="${asset}" '$2 == asset || $2 == "*" asset || $2 == "./" asset || $2 == "*./" asset {print $1; exit}' "${temporary}/checksums.txt")"
   if [[ ! "${expected}" =~ ^[0-9a-fA-F]{64}$ ]]; then
     printf 'autback release checksum is missing for %s\n' "${asset}" >&2
     exit 1

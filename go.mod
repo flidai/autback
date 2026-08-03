@@ -16,6 +16,9 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.8.0 // indirect
+	github.com/CAFxX/httpcompression v0.0.9 // indirect
+	github.com/Yacobolo/toolbelt/pagestream v0.0.0-20260802184245-b486599808d1 // indirect
+	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/bazelbuild/remote-apis v0.0.0-20260216160025-715b73f3f9e4 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -27,6 +30,8 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/starfederation/datastar-go v1.2.2 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
@@ -37,6 +42,8 @@ require (
 	google.golang.org/genproto/googleapis/bytestream v0.0.0-20260203192932-546029d2fa20 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260203192932-546029d2fa20 // indirect
 	google.golang.org/grpc v1.79.3 // indirect
+	maragu.dev/gomponents v1.3.0 // indirect
+	maragu.dev/gomponents-datastar v0.3.3 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

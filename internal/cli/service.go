@@ -41,6 +41,8 @@ func runService(ctx context.Context, settings config.Config, explicitToken strin
 		return serviceLogin(ctx, settings, explicitToken, args[1:], streams)
 	case "logout":
 		return serviceLogout(settings, streams)
+	case "console":
+		return serviceConsole(ctx, settings, explicitToken, args[1:], streams)
 	}
 	// Commands such as doctor do not otherwise need a project, but an Actions
 	// workload identity must select one before it can exchange its OIDC token.
@@ -222,11 +224,13 @@ func renewServiceClient(ctx context.Context, api autbackv1connect.ControlService
 	if !ok {
 		return api, nil
 	}
-	renewed, err := renewable.renew(ctx)
+	refreshed, err := renewable.renew(ctx)
 	if err != nil {
 		return nil, err
 	}
-	renewable.ControlServiceClient = renewed
+	// Keep the renewable wrapper so a long-running command can refresh more
+	// than once while it waits in FIFO or executes remotely.
+	renewable.ControlServiceClient = refreshed
 	return renewable, nil
 }
 
@@ -1003,7 +1007,7 @@ func serviceDoctor(ctx context.Context, api autbackv1connect.ControlServiceClien
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	fmt.Fprintf(streams.Stdout, "autback %s\nconnection: ok (Connect over HTTPS)\nserver: %s\n", version, info.Msg.Version)
+	fmt.Fprintf(streams.Stdout, "autback %s\nconnection: ok (Connect over HTTPS)\nserver: %s\n", currentVersion, info.Msg.Version)
 	return 0
 }
 

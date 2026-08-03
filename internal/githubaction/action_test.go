@@ -35,7 +35,18 @@ func TestSetupActionHasSecureProjectAwareContract(t *testing.T) {
 	if strings.Contains(data, "go build -trimpath -o \"${bin_dir}/autback\"") {
 		t.Fatal("action.yml must not unconditionally compile autback")
 	}
-	for _, removed := range []string{"allow-source-fallback", "AUTBACK_ALLOW_SOURCE_FALLBACK", "AUTBACK_ACTION_ROOT", "backend: \"service\""} {
+	for _, removed := range []string{
+		"allow-source-fallback",
+		"AUTBACK_ALLOW_SOURCE_FALLBACK",
+		"AUTBACK_ACTION_ROOT",
+		"backend: \"service\"",
+		"job-cpus",
+		"job-memory",
+		"INPUT_JOB_CPUS",
+		"INPUT_JOB_MEMORY",
+		"--arg cpus",
+		"--arg memory",
+	} {
 		if strings.Contains(data, removed) {
 			t.Fatalf("action.yml retains removed compatibility path %q", removed)
 		}
@@ -64,7 +75,9 @@ func TestReleaseInstallerDownloadsAndVerifiesPinnedArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(archive)
-	checksums := hex.EncodeToString(digest[:]) + "  " + asset + "\n"
+	// The release workflow runs sha256sum with paths relative to dist, which
+	// produces the same ./-prefixed filenames as the published checksum file.
+	checksums := hex.EncodeToString(digest[:]) + "  ./" + asset + "\n"
 	if err := os.WriteFile(filepath.Join(assetDir, "checksums.txt"), []byte(checksums), 0o644); err != nil {
 		t.Fatal(err)
 	}

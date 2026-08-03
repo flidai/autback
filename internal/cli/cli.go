@@ -15,9 +15,10 @@ import (
 	"github.com/flidai/autback/internal/authclient"
 	"github.com/flidai/autback/internal/config"
 	"github.com/flidai/autback/internal/protocol"
+	"github.com/flidai/autback/internal/version"
 )
 
-const version = "0.1.0"
+const currentVersion = version.Current
 
 type IO struct {
 	Stdin   io.Reader
@@ -38,7 +39,7 @@ func Run(ctx context.Context, args []string, streams IO) int {
 		return 0
 	}
 	if args[0] == "version" || args[0] == "--version" {
-		fmt.Fprintln(streams.Stdout, version)
+		fmt.Fprintln(streams.Stdout, currentVersion)
 		return 0
 	}
 	settings, err := config.Load()

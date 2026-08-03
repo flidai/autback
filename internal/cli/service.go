@@ -950,7 +950,7 @@ func serviceDoctor(ctx context.Context, api autbackv1connect.ControlServiceClien
 	if err != nil {
 		return fail(streams.Stderr, err)
 	}
-	fmt.Fprintf(streams.Stdout, "autback %s\nconnection: ok (Connect over HTTPS)\nserver: %s\n", version, info.Msg.Version)
+	fmt.Fprintf(streams.Stdout, "autback %s\nconnection: ok (Connect over HTTPS)\nserver: %s\n", currentVersion, info.Msg.Version)
 	return 0
 }
 

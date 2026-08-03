@@ -23,12 +23,13 @@ import (
 	autbackv1 "github.com/flidai/autback/internal/gen/rtest/v1"
 	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
 	"github.com/flidai/autback/internal/protocol"
+	"github.com/flidai/autback/internal/version"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const Version = "0.1.0"
+const Version = version.Current
 
 type OIDCVerifier interface {
 	Verify(context.Context, string) (control.GitHubClaims, error)

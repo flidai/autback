@@ -52,6 +52,7 @@ func CreateArgs(spec Spec) []string {
 		"--label", "autback.root_digest=" + spec.RootDigest,
 		"--mode", "replicated-job", "--replicas", "1", "--max-concurrent", "1",
 		"--restart-condition", "none", "--stop-grace-period", "15s",
+		"--log-driver", "local", "--log-opt", "max-size=10m", "--log-opt", "max-file=2",
 		"--network", "host",
 		"--user", "0:0",
 		"--mount", "type=bind,src=" + spec.JobsRoot + ",dst=" + spec.JobsRoot,

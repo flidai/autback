@@ -25,6 +25,7 @@ func TestCreateArgsUseReplicatedJobAndSamePathWorkspace(t *testing.T) {
 	for _, sequence := range [][]string{
 		{"--mode", "replicated-job"},
 		{"--restart-condition", "none"},
+		{"--log-driver", "local", "--log-opt", "max-size=10m", "--log-opt", "max-file=2"},
 		{"--network", "host"},
 		{"--mount", "type=tmpfs,dst=/dev/shm,tmpfs-size=1073741824"},
 		{"--mount", "type=bind,src=/var/lib/autback/jobs,dst=/var/lib/autback/jobs"},

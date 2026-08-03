@@ -24,6 +24,10 @@ type result struct {
 	FinishedAt time.Time `json:"finished_at"`
 }
 
+const defaultJobLogMaxBytes = int64(256 * 1024 * 1024)
+
+var logTruncationMarker = []byte("\n[autback: durable job log reached its configured limit]\n")
+
 func main() {
 	os.Exit(run())
 }
@@ -59,8 +63,13 @@ func run() int {
 		return 1
 	}
 	defer logFile.Close()
-	stdout := io.MultiWriter(os.Stdout, logFile)
-	stderr := io.MultiWriter(os.Stderr, logFile)
+	boundedLog, err := newBoundedLogWriter(logFile, jobLogMaxBytes())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	stdout := io.MultiWriter(os.Stdout, boundedLog)
+	stderr := io.MultiWriter(os.Stderr, boundedLog)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -120,6 +129,68 @@ func run() int {
 	}
 	fmt.Fprintln(stderr, err)
 	return finish(jobDirectory, "failed", 1)
+}
+
+type boundedLogWriter struct {
+	destination io.Writer
+	remaining   int64
+	truncated   bool
+}
+
+func newBoundedLogWriter(file *os.File, maximum int64) (*boundedLogWriter, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	remaining := maximum - info.Size()
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &boundedLogWriter{destination: file, remaining: remaining}, nil
+}
+
+func (w *boundedLogWriter) Write(data []byte) (int, error) {
+	original := len(data)
+	if w.truncated || w.remaining == 0 {
+		w.truncated = true
+		return original, nil
+	}
+	if int64(len(data)) <= w.remaining {
+		written, err := w.destination.Write(data)
+		w.remaining -= int64(written)
+		return written, err
+	}
+	w.truncated = true
+	payloadBytes := w.remaining - int64(len(logTruncationMarker))
+	if payloadBytes > 0 {
+		if _, err := w.destination.Write(data[:payloadBytes]); err != nil {
+			return 0, err
+		}
+		w.remaining -= payloadBytes
+	}
+	marker := logTruncationMarker
+	if int64(len(marker)) > w.remaining {
+		marker = marker[:w.remaining]
+	}
+	if len(marker) > 0 {
+		if _, err := w.destination.Write(marker); err != nil {
+			return 0, err
+		}
+		w.remaining -= int64(len(marker))
+	}
+	return original, nil
+}
+
+func jobLogMaxBytes() int64 {
+	value := os.Getenv("AUTBACK_JOB_LOG_MAX_BYTES")
+	if value == "" {
+		return defaultJobLogMaxBytes
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 1024 {
+		return defaultJobLogMaxBytes
+	}
+	return parsed
 }
 
 func initializeGitBaseline(ctx context.Context, workspace string, output io.Writer) error {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/pki"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
@@ -39,6 +40,11 @@ type Dispatcher interface {
 	Release(context.Context, control.OperationKind, string) error
 }
 
+type Capacity interface {
+	Ensure(context.Context) error
+	Check(context.Context) error
+}
+
 type Config struct {
 	Store               *controlsqlite.Store
 	Scheduler           control.Scheduler
@@ -50,6 +56,7 @@ type Config struct {
 	BuildKitEndpoint    string
 	CredentialTTL       time.Duration
 	AllowUnpinnedImages bool
+	Capacity            Capacity
 }
 
 type Server struct {
@@ -84,6 +91,12 @@ func New(config Config) (http.Handler, error) {
 		if err := config.Scheduler.Check(ctx); err != nil {
 			http.Error(response, "worker unavailable", http.StatusServiceUnavailable)
 			return
+		}
+		if config.Capacity != nil {
+			if err := config.Capacity.Check(ctx); err != nil {
+				http.Error(response, "worker capacity unavailable", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		response.WriteHeader(http.StatusNoContent)
 	})
@@ -285,6 +298,9 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[autbac
 	input, err := s.validateJob(project.ID, message)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := s.ensureCapacity(ctx); err != nil {
+		return nil, err
 	}
 	requestHash, err := admissionHash(input)
 	if err != nil {
@@ -548,6 +564,9 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 	if !idempotencyKeyPattern.MatchString(request.Msg.IdempotencyKey) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("idempotency key must contain 8 to 128 safe characters"))
 	}
+	if err := s.ensureCapacity(ctx); err != nil {
+		return nil, err
+	}
 	requestHash, err := admissionHash(struct{ ProjectID string }{ProjectID: project.ID})
 	if err != nil {
 		return nil, connectError(err)
@@ -578,6 +597,21 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 		response.Buildkit = connectionProto(s.config.BuildKitEndpoint, "", credential)
 	}
 	return connect.NewResponse(response), nil
+}
+
+func (s *Server) ensureCapacity(ctx context.Context) error {
+	if s.config.Capacity == nil {
+		return nil
+	}
+	err := s.config.Capacity.Ensure(ctx)
+	if err == nil {
+		return nil
+	}
+	var exhausted *capacity.ResourceExhaustedError
+	if errors.As(err, &exhausted) {
+		return connect.NewError(connect.CodeResourceExhausted, errors.New(exhausted.Error()))
+	}
+	return connect.NewError(connect.CodeUnavailable, errors.New("worker capacity check failed"))
 }
 
 func (s *Server) GetBuild(ctx context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {

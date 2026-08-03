@@ -23,17 +23,50 @@ install -o root -g root -m 0755 /tmp/autback-job-entrypoint /usr/local/lib/autba
 install -o root -g root -m 0644 /tmp/autback-server.service /etc/systemd/system/autback-server.service
 install -o root -g root -m 0644 /tmp/autback-cas.service /etc/systemd/system/autback-cas.service
 install -o root -g root -m 0644 /tmp/autback-buildkit.service /etc/systemd/system/autback-buildkit.service
-install -o root -g root -m 0755 /tmp/maintain.sh /usr/local/sbin/autback-maintain
 install -o root -g root -m 0644 /tmp/autback-maintenance.service /etc/systemd/system/autback-maintenance.service
 install -o root -g root -m 0644 /tmp/autback-maintenance.timer /etc/systemd/system/autback-maintenance.timer
 
 umask 077
+disk_bytes="$(df --output=size --block-size=1 /var/lib/autback | tail -1 | tr -d ' ')"
+gib=1073741824
+cas_max="$(( disk_bytes / 4 / gib ))"
+(( cas_max < 1 )) && cas_max=1
+(( cas_max > 40 )) && cas_max=40
+cas_hard="$(( cas_max + (cas_max + 19) / 20 ))"
+buildkit_max="$(( disk_bytes / 10 ))"
+(( buildkit_max > 10 * gib )) && buildkit_max="$(( 10 * gib ))"
+buildkit_reserved="$(( 2 * gib ))"
+(( buildkit_reserved >= buildkit_max )) && buildkit_reserved="$(( buildkit_max / 2 ))"
+cat >/etc/autback/buildkitd.toml <<EOF
+[worker.oci]
+  gc = true
+  reservedSpace = ${buildkit_reserved}
+  maxUsedSpace = ${buildkit_max}
+  minFreeSpace = "20%"
+
+  [[worker.oci.gcpolicy]]
+    reservedSpace = "512MB"
+    maxUsedSpace = ${buildkit_max}
+    minFreeSpace = "20%"
+    keepDuration = "48h"
+    filters = ["type==source.local", "type==exec.cachemount", "type==source.git.checkout"]
+
+  [[worker.oci.gcpolicy]]
+    all = true
+    reservedSpace = ${buildkit_reserved}
+    maxUsedSpace = ${buildkit_max}
+    minFreeSpace = "20%"
+EOF
+chmod 0600 /etc/autback/buildkitd.toml
 {
   printf 'AUTBACK_CAS_IMAGE=%s\n' "$cas_image"
+  printf 'AUTBACK_CAS_MAX_SIZE=%s\n' "$cas_max"
+  printf 'AUTBACK_CAS_HARD_LIMIT=%s\n' "$cas_hard"
   printf 'AUTBACK_BUILDKIT_IMAGE=%s\n' "$buildkit_image"
 } >/etc/autback/swarm.env
 {
   printf 'AUTBACK_DATA_DIR=/var/lib/autback\n'
+  printf 'AUTBACK_WORKER_OWNERSHIP=exclusive\n'
   printf 'AUTBACK_SERVER_NAMES=%s\n' "$server_names"
   printf 'AUTBACK_LISTEN=:443\n'
   printf 'AUTBACK_CAS_INTERNAL=127.0.0.1:50051\n'

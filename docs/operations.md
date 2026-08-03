@@ -51,18 +51,35 @@ shared by mutually trusted projects in the initial single-VM deployment. Control
 authorization and accounting remain project-scoped, but the service does not claim cache
 confidentiality between these projects.
 
-The hourly maintenance job keeps completed Swarm services for one hour and durable job
-logs/workspaces for seven days. Project caches use a 12 GiB high watermark and are pruned
-oldest-first to 8 GiB, but only while no managed job is active. At 85% filesystem
-use, the same cache pruning runs and BuildKit retention tightens from 10 GiB to 4 GiB.
-The host janitor removes only terminal services older than 24 hours. Its cutoff is
-independent because Swarm does not expose the task completion timestamp in `service ls`.
-It also removes unused anonymous Docker volumes and dangling images older than 24 hours.
-BuildKit pruning targets the dedicated `autback-buildkit` daemon rather than Docker's
-unrelated default builder.
-`AUTBACK_ORPHAN_RETENTION_SECONDS`, `AUTBACK_JOB_RETENTION_MINUTES`,
-`AUTBACK_CACHE_HIGH_BYTES`, `AUTBACK_CACHE_LOW_BYTES`, and `AUTBACK_DISK_HIGH_PERCENT` override
-these defaults for a larger worker.
+The Go capacity controller implements
+[Worker Capacity Contract v1](decisions/0002-worker-capacity-contract.md). It observes free
+bytes and inodes every five seconds, runs routine reconciliation every minute, and checks
+synchronously before upload/build credentials or a FIFO lease are issued. The soft floor
+is `max(20%, 20 GiB)`, collection targets another `max(5%, 5 GiB)` beyond that floor, and
+the hard emergency floor is `max(5%, 8 GiB)`. Capacity pressure therefore blocks new
+admission before it can threaten SQLite, the OS, or an in-flight source upload.
+The installer explicitly sets `AUTBACK_WORKER_OWNERSHIP=exclusive`. Without that ownership
+declaration the controller is observation-only, preventing local Autback development from
+pruning unrelated resources on a shared Docker Desktop or OrbStack daemon.
+
+The controller keeps terminal Swarm services for one hour through the ordinary reconciler
+and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
+rollback project images, applies recorded image last use, and reduces project caches from
+10% to 8% of the filesystem. CAS is capped at `min(25%, 40 GiB)` with a 5% hard write limit.
+BuildKit uses native reserved/max/min-free GC policies generated for the worker. Container
+logs rotate at 20 MiB and durable job logs are capped at 256 MiB.
+
+Inspect or exercise exactly the same implementation used by admission and background
+monitoring:
+
+```console
+sudo -u autback autback-server maintain --dry-run --json
+sudo -u autback autback-server maintain --json
+sudo cat /var/lib/autback/capacity.json
+```
+
+The hourly `autback-maintenance.timer` is a recovery invocation of the Go command, not an
+independent janitor. An inter-process lock serializes it with the resident controller.
 
 The CPX32 hardening exercise—including two projects, two device identities, hosted OIDC,
 cache isolation, serialized execution, restart convergence, durable logs, closed Docker

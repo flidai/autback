@@ -21,19 +21,39 @@ type Scheduler interface {
 	Cancel(context.Context, string) error
 }
 
+type Capacity interface {
+	Ensure(context.Context) error
+}
+
+type Option func(*Dispatcher)
+
+func WithCapacity(capacity Capacity) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.capacity = capacity }
+}
+
 type Dispatcher struct {
 	store     Store
 	scheduler Scheduler
+	capacity  Capacity
 }
 
-func New(store Store, scheduler Scheduler) *Dispatcher {
-	return &Dispatcher{store: store, scheduler: scheduler}
+func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
+	dispatcher := &Dispatcher{store: store, scheduler: scheduler}
+	for _, option := range options {
+		option(dispatcher)
+	}
+	return dispatcher
 }
 
 // RunOnce reserves the oldest operation only when the worker is idle. The
 // operation becomes active after its runtime is ready. Failed job admission is
 // terminal and does not block FIFO.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
+	if d.capacity != nil {
+		if err := d.capacity.Ensure(ctx); err != nil {
+			return fmt.Errorf("worker admission capacity: %w", err)
+		}
+	}
 	var admissionErrors []error
 	for {
 		operation, err := d.store.AcquireNextOperation(ctx)

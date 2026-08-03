@@ -22,7 +22,8 @@ Test action results are deliberately not cached because Testcontainers and other
 services make them non-hermetic. Projects may explicitly declare persistent OCI-directory
 caches with repeatable `--cache NAME=/absolute/container/path` flags. The server scopes
 each writable directory to the immutable project ID; cache names never imply a language
-or tool. Docker/BuildKit layers remain persistent on the worker.
+or tool. Docker/BuildKit layers remain persistent on the worker and are governed by the
+[worker capacity contract](docs/decisions/0002-worker-capacity-contract.md).
 
 The target service does not supply a language runner. Each project selects a
 digest-pinned OCI image, while autback injects only its static CAS/materialization
@@ -45,7 +46,8 @@ The committed `autback.json` contains only the autback project identifier. It is
 from the nearest directory up to the Git root and is safe to commit; flags and
 `AUTBACK_PROJECT` can override it. Autback accepts no suite/profile file and supplies no
 language runner: repositories own commands and project images. See [the architecture](docs/architecture.md) and
-[ADR 0001](docs/decisions/0001-shared-service-architecture.md). The versioned service
+[ADR 0001](docs/decisions/0001-shared-service-architecture.md) and
+[ADR 0002](docs/decisions/0002-worker-capacity-contract.md). The versioned service
 contract is documented in [Control API v1](docs/control-api.md).
 
 ## Existing-host deployment

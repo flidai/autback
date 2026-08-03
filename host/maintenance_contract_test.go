@@ -10,29 +10,38 @@ import (
 
 func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	root := repositoryRoot(t)
-	maintain := readFile(t, filepath.Join(root, "host", "maintain.sh"))
-	for _, required := range []string{
-		"docker volume prune --force",
-		"docker image prune --force --filter 'until=24h'",
-		"docker exec autback-buildkit buildctl --addr tcp://127.0.0.1:1234 prune",
-		"--keep-storage 4000",
-		"--keep-storage 10000",
-		"--all",
-	} {
-		if !strings.Contains(maintain, required) {
-			t.Errorf("host maintenance does not own %q", required)
+	if _, err := os.Stat(filepath.Join(root, "host", "maintain.sh")); !os.IsNotExist(err) {
+		t.Fatalf("legacy shell janitor still exists: %v", err)
+	}
+	maintenance := readFile(t, filepath.Join(root, "host", "autback-maintenance.service"))
+	for _, required := range []string{"User=autback", "SupplementaryGroups=docker", "autback-server maintain --json"} {
+		if !strings.Contains(maintenance, required) {
+			t.Errorf("maintenance service missing %q", required)
 		}
 	}
-	if strings.Contains(maintain, "docker builder prune") {
-		t.Fatal("host maintenance prunes Docker's default builder instead of the Autback BuildKit daemon")
+
+	buildkit := readFile(t, filepath.Join(root, "host", "autback-buildkit.service"))
+	for _, required := range []string{"/etc/autback/buildkitd.toml", "--config /etc/buildkit/buildkitd.toml", "--log-driver local"} {
+		if !strings.Contains(buildkit, required) {
+			t.Errorf("BuildKit service missing %q", required)
+		}
+	}
+	if strings.Contains(buildkit, "oci-worker-gc-keepstorage") {
+		t.Fatal("BuildKit still uses the legacy single keep-storage switch")
 	}
 
-	service := readFile(t, filepath.Join(root, "host", "autback-buildkit.service"))
-	if !strings.Contains(service, "--oci-worker-gc-keepstorage=10000") {
-		t.Fatal("Autback BuildKit must keep at most 10 GB before its internal garbage collector runs")
+	cas := readFile(t, filepath.Join(root, "host", "autback-cas.service"))
+	for _, required := range []string{"--max_size ${AUTBACK_CAS_MAX_SIZE}", "--max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT}", "--log-driver local"} {
+		if !strings.Contains(cas, required) {
+			t.Errorf("CAS service missing %q", required)
+		}
 	}
-	if strings.Contains(service, "--oci-worker-gc-keepstorage=30000") {
-		t.Fatal("Autback BuildKit retains 30 GB despite the documented 10 GB worker budget")
+
+	install := readFile(t, filepath.Join(root, "host", "install-swarm.sh"))
+	for _, required := range []string{"AUTBACK_WORKER_OWNERSHIP=exclusive", "disk_bytes=", "disk_bytes / 4", "disk_bytes / 10", "minFreeSpace = \"20%\"", "keepDuration = \"48h\""} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installer capacity policy missing %q", required)
+		}
 	}
 }
 

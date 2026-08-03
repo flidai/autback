@@ -179,7 +179,7 @@ func (s *server) updates(response http.ResponseWriter, request *http.Request) {
 				continue
 			}
 			next.Clock = ClockView{Now: s.now().UTC()}
-			if err := stream.Patch(next.patch()); err != nil {
+			if err := stream.Patch(next.refreshPatch()); err != nil {
 				return
 			}
 			revision = next.Revision

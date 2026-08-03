@@ -150,6 +150,40 @@ func TestUpdatesStreamLiveJobLogTailWithoutControlChanges(t *testing.T) {
 	}
 }
 
+func TestControlRefreshDoesNotOverwriteLiveJobLogTail(t *testing.T) {
+	changes := make(chan struct{}, 1)
+	logs := make(chan LogView, 1)
+	first := exampleSnapshot()
+	first.Revision = 42
+	second := exampleSnapshot()
+	second.Revision = 43
+	second.Status.Message = "State refreshed"
+	source := &fakeSource{snapshots: []Snapshot{first, second}, updates: changes, logs: logs}
+	handler, err := New(Config{Source: source, ClockInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		logs <- LogView{Available: true, Content: "live-output\n"}
+		close(logs)
+		time.Sleep(2 * time.Millisecond)
+		changes <- struct{}{}
+		close(changes)
+	}()
+	request := httptest.NewRequest(http.MethodGet, "/app/updates?route=operation&kind=job&id=job_example", nil)
+	request.Header.Set("Authorization", "Bearer device-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	live := strings.Index(body, "live-output")
+	if live < 0 || !strings.Contains(body[live:], "State refreshed") {
+		t.Fatalf("stream did not publish log before refreshed state:\n%s", body)
+	}
+	if strings.Contains(body[live+len("live-output"):], `"log"`) {
+		t.Fatalf("state refresh overwrote the live log signal:\n%s", body)
+	}
+}
+
 func TestUpdatesRequeryAfterACommittedChangeNotification(t *testing.T) {
 	updates := make(chan struct{}, 1)
 	updates <- struct{}{}

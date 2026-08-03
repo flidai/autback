@@ -176,3 +176,9 @@ func (s Snapshot) patch() map[string]any {
 		"log": s.Log, "audit": s.Audit, "status": s.Status,
 	}
 }
+
+func (s Snapshot) refreshPatch() map[string]any {
+	patch := s.patch()
+	delete(patch, "log")
+	return patch
+}

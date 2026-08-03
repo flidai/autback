@@ -21,13 +21,13 @@ import (
 	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
-	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	db     *sql.DB
-	root   string
-	pepper []byte
+	db      *sql.DB
+	root    string
+	pepper  []byte
+	changes *changeNotifier
 }
 
 func Open(root string, pepper []byte) (*Store, error) {
@@ -38,12 +38,13 @@ func Open(root string, pepper []byte) (*Store, error) {
 		return nil, err
 	}
 	databasePath := filepath.Join(root, "control.db")
-	db, err := sql.Open("sqlite", databasePath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+	changes := newChangeNotifier()
+	db, err := openDatabase(databasePath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", changes)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, root: root, pepper: append([]byte(nil), pepper...)}
+	store := &Store{db: db, root: root, pepper: append([]byte(nil), pepper...), changes: changes}
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -246,7 +247,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_builds_idempotency_idx ON control_buil
 DROP INDEX IF EXISTS control_queue_one_active_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_reserved_idx ON control_queue((1)) WHERE state IN ('admitting','active');
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := s.migrateControlChanges(ctx); err != nil {
+		return err
+	}
+	return s.migrateResourceMetrics(ctx)
 }
 
 func (s *Store) ensureTextColumn(ctx context.Context, table, column string) error {
@@ -1041,9 +1048,10 @@ func (s *Store) SyncJob(ctx context.Context, id string, remote protocol.Job) (co
 		return control.Job{}, err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,started_at=?,finished_at=?,exit_code=?,error_message=?,cancel_requested=?,worker_id=? WHERE id=?`,
+	_, err = tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,started_at=?,finished_at=?,exit_code=?,error_message=?,cancel_requested=?,worker_id=? WHERE id=? AND status NOT IN (?,?,?,?,?)`,
 		remote.Status, timeValue(remote.StartedAt), timeValue(remote.FinishedAt), intValue(remote.ExitCode), remote.ErrorMessage,
-		boolInt(remote.CancelRequested), remote.WorkerID, id)
+		boolInt(remote.CancelRequested), remote.WorkerID, id,
+		protocol.StatusSucceeded, protocol.StatusFailed, protocol.StatusCancelled, protocol.StatusTimedOut, protocol.StatusLost)
 	if err != nil {
 		return control.Job{}, err
 	}

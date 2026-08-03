@@ -89,6 +89,25 @@ func TestRunOnceDoesNotLoseJobWhileSchedulerIsCreatingService(t *testing.T) {
 	}
 }
 
+func TestRunOnceActivatesAdmittedJobWhenServiceExists(t *testing.T) {
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		jobs: map[string]control.Job{
+			"job-admitting": {ID: "job-admitting", Status: protocol.StatusQueued},
+		},
+		states: map[string]control.OperationState{"job-admitting": control.OperationAdmitting},
+	}
+	scheduler := &fakeScheduler{managed: []protocol.Job{{ID: "job-admitting", Status: protocol.StatusRunning, CreatedAt: now}}}
+	reconciler := New(Config{Store: store, Scheduler: scheduler, Dispatcher: &fakeDispatcher{}, Now: func() time.Time { return now }})
+
+	if err := reconciler.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.states["job-admitting"]; got != control.OperationActive {
+		t.Fatalf("operation state = %s, want active", got)
+	}
+}
+
 type fakeDispatcher struct{ released []control.Operation }
 
 func (f *fakeDispatcher) Release(_ context.Context, kind control.OperationKind, id string) error {
@@ -100,6 +119,15 @@ type fakeStore struct {
 	jobs     map[string]control.Job
 	builds   map[string]control.Build
 	leasedAt map[string]time.Time
+	states   map[string]control.OperationState
+}
+
+func (f *fakeStore) ActivateOperation(_ context.Context, kind control.OperationKind, id string) error {
+	if kind != control.OperationJob || f.states[id] != control.OperationAdmitting {
+		return control.ErrNotFound
+	}
+	f.states[id] = control.OperationActive
+	return nil
 }
 
 func (f *fakeStore) StaleBuilds(context.Context, time.Time) ([]control.Build, error) {
@@ -130,7 +158,11 @@ func (f *fakeStore) Operation(_ context.Context, kind control.OperationKind, id 
 	if leased.IsZero() {
 		leased = time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
 	}
-	return control.Operation{Kind: kind, ID: id, State: control.OperationActive, LeasedAt: &leased}, nil
+	state := f.states[id]
+	if state == "" {
+		state = control.OperationActive
+	}
+	return control.Operation{Kind: kind, ID: id, State: state, LeasedAt: &leased}, nil
 }
 
 func (f *fakeStore) ScheduledJobs(context.Context) ([]control.Job, error) {
@@ -184,6 +216,10 @@ func TestRunOnceReturnsDependencyErrors(t *testing.T) {
 }
 
 type errorStore struct{ err error }
+
+func (e errorStore) ActivateOperation(context.Context, control.OperationKind, string) error {
+	return e.err
+}
 
 func (e errorStore) ScheduledJobs(context.Context) ([]control.Job, error) { return nil, e.err }
 func (e errorStore) Job(context.Context, string) (control.Job, error)     { return control.Job{}, e.err }

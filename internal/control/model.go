@@ -204,8 +204,9 @@ const (
 type OperationState string
 
 const (
-	OperationQueued OperationState = "queued"
-	OperationActive OperationState = "active"
+	OperationQueued    OperationState = "queued"
+	OperationAdmitting OperationState = "admitting"
+	OperationActive    OperationState = "active"
 )
 
 type Operation struct {

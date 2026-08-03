@@ -31,6 +31,8 @@ import (
 
 const Version = version.Current
 
+const maximumJobTimeout = 24 * time.Hour
+
 type OIDCVerifier interface {
 	Verify(context.Context, string) (control.GitHubClaims, error)
 }
@@ -935,8 +937,8 @@ func (s *Server) validateJob(projectID string, message *autbackv1.PrepareJobRequ
 		}
 		timeout = message.Timeout.AsDuration()
 	}
-	if timeout < time.Second || timeout > time.Hour {
-		return control.PrepareJob{}, errors.New("timeout must be between 1 second and 1 hour")
+	if timeout < time.Second || timeout > maximumJobTimeout {
+		return control.PrepareJob{}, errors.New("timeout must be between 1 second and 24 hours")
 	}
 	if !idempotencyKeyPattern.MatchString(message.IdempotencyKey) {
 		return control.PrepareJob{}, errors.New("idempotency key must contain 8 to 128 safe characters")

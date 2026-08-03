@@ -274,6 +274,24 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 	}
 }
 
+func TestJobAdmissionAllowsLongRepositoryCIButBoundsRunawayJobs(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	request := &autbackv1.PrepareJobRequest{
+		IdempotencyKey: "long-repository-ci", Project: "example",
+		Image:   "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64),
+		Command: []string{"task", "ci"}, Timeout: durationpb.New(90 * time.Minute),
+	}
+	if _, err := client.PrepareJob(context.Background(), connect.NewRequest(request)); err != nil {
+		t.Fatalf("90-minute repository CI rejected: %v", err)
+	}
+	request.IdempotencyKey = "runaway-repository-ci"
+	request.Timeout = durationpb.New(24*time.Hour + time.Second)
+	if _, err := client.PrepareJob(context.Background(), connect.NewRequest(request)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("runaway timeout error = %v, want invalid argument", err)
+	}
+}
+
 func TestOneTimeEnrollmentExchangeNeedsNoExistingCredential(t *testing.T) {
 	fixture := newFixture(t)
 	admin := fixture.client(fixture.bootstrap.Token)

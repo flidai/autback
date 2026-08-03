@@ -68,7 +68,7 @@ class AutbackRunsTable extends DatastarLit(LitElement) {
           <div class="runs-tools">
             <label class="search"><span class="sr-only">Search runs</span><input type="search" placeholder="Search runs…" .value=${this.query} @input=${this.onSearch}></label>
             <label><span class="sr-only">Filter by status</span><select .value=${this.statusFilter} @change=${this.onStatusFilter}>
-              <option value="">All statuses</option><option value="active">Active</option><option value="queued">Queued</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option>
+              <option value="">All statuses</option><option value="running">Running</option><option value="queued">Queued</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option>
             </select></label>
             <label><span class="sr-only">Filter by kind</span><select .value=${this.kindFilter} @change=${this.onKindFilter}>
               <option value="">Jobs and builds</option><option value="job">Jobs</option><option value="build">Builds</option>

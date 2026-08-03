@@ -20,4 +20,13 @@ describe('runs table web component contract', () => {
     expect(source).not.toContain('jobsPanel(')
     expect(source).not.toContain('runsPanel(')
   })
+
+  test('presents an admitted operation as running with a spinner', async () => {
+    const component = await Bun.file(new URL('./runs-table.ts', import.meta.url)).text()
+    const styles = await Bun.file(new URL('./runs-table-styles.ts', import.meta.url)).text()
+    expect(component).toContain('<option value="running">Running</option>')
+    expect(component).not.toContain('<option value="active">Active</option>')
+    expect(styles).toContain('.badge.running::before')
+    expect(styles).toContain('@keyframes status-spin')
+  })
 })

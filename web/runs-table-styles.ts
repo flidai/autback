@@ -49,7 +49,8 @@ export const runsTableStyles = css`
   .muted { color: var(--text-faint); }
   .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); font-size: 10px; font-weight: 560; white-space: nowrap; }
   .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-  .badge.succeeded, .badge.success, .badge.running, .badge.active { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
+  .badge.succeeded, .badge.success, .badge.running { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
+  .badge.running::before { width: 8px; height: 8px; border: 1.5px solid currentColor; border-right-color: transparent; background: transparent; animation: status-spin .75s linear infinite; }
   .badge.queued, .badge.preparing { border-color: rgba(231,198,109,.18); background: var(--yellow-soft); color: var(--yellow); }
   .badge.failed, .badge.cancelled { border-color: rgba(240,130,130,.18); background: var(--red-soft); color: var(--red); }
   .position { display: inline-grid; min-width: 20px; height: 20px; margin-left: 6px; place-items: center; border: 1px solid var(--line); border-radius: 5px; }
@@ -57,6 +58,7 @@ export const runsTableStyles = css`
   .empty strong { font-size: 12px; font-weight: 580; }
   .empty span { display: block; margin-top: 4px; color: var(--text-faint); font-size: 10px; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  @keyframes status-spin { to { transform: rotate(360deg); } }
   @media (max-width: 900px) {
     .runs-head { align-items: stretch; flex-direction: column; padding: 14px 16px; }
     .runs-tools { width: 100%; justify-content: stretch; }
@@ -69,5 +71,8 @@ export const runsTableStyles = css`
     label:not(.search) { flex: 1; }
     select { min-width: 0; }
     th:nth-child(7), td:nth-child(7) { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .badge.running::before { border-right-color: currentColor; animation: none; }
   }
 `

@@ -28,7 +28,7 @@ describe('unified runs table model', () => {
     const rows = orderedRunRows(operations, queue)
 
     expect(rows.map((row) => row.id)).toEqual(['active', 'queued_first', 'queued_second', 'completed_new', 'completed_old'])
-    expect(rows.find((row) => row.id === 'active')?.status).toBe('active')
+    expect(rows.find((row) => row.id === 'active')?.status).toBe('running')
     expect(rows.filter((row) => row.id === 'queued_second')).toHaveLength(1)
   })
 })

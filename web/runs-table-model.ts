@@ -29,7 +29,7 @@ export function orderedRunRows(operations: OperationView[], queue: QueueView[]):
     const operation = rows.get(key)
     rows.set(key, {
       ...(operation ?? queueOperation(item)),
-      status: item.status,
+      status: item.status === 'active' ? 'running' : item.status,
       startedAt: item.leasedAt ?? operation?.startedAt,
       queuePosition: item.position,
       orderGroup: item.status === 'active' ? 0 : 1,

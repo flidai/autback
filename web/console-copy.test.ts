@@ -16,9 +16,16 @@ describe('console product language', () => {
       'wall-clock execution',
       'process result',
       '64 KiB',
-			'Strict FIFO',
+      'Strict FIFO',
     ]) {
       expect(source).not.toContain(phrase)
     }
+  })
+
+  test('renders elapsed values from the backend clock signal', async () => {
+    const source = await Bun.file(new URL('./console.ts', import.meta.url)).text()
+    expect(source).toContain("this.signal('clock', EMPTY.clock)")
+    expect(source).toContain('Date.parse(signals.clock.now)')
+    expect(source).not.toContain('Date.now()')
   })
 })

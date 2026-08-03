@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,7 +92,7 @@ func TestUpdatesHydrateDedicatedSignalRoots(t *testing.T) {
 		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	for _, root := range []string{`"session"`, `"service"`, `"worker"`, `"queue"`, `"operations"`, `"operation"`, `"log"`, `"audit"`, `"status"`} {
+	for _, root := range []string{`"session"`, `"service"`, `"worker"`, `"resources"`, `"queue"`, `"operations"`, `"operation"`, `"log"`, `"audit"`, `"status"`, `"clock"`} {
 		if !strings.Contains(body, root) {
 			t.Fatalf("signal stream missing %s:\n%s", root, body)
 		}
@@ -100,6 +101,29 @@ func TestUpdatesHydrateDedicatedSignalRoots(t *testing.T) {
 		if !strings.Contains(body, value) {
 			t.Fatalf("signal stream missing %q:\n%s", value, body)
 		}
+	}
+}
+
+func TestUpdatesStreamBackendClockWithoutControlChanges(t *testing.T) {
+	updates := make(chan struct{})
+	source := &fakeSource{snapshot: exampleSnapshot(), updates: updates}
+	var tick atomic.Int64
+	base := time.Date(2026, time.August, 3, 8, 0, 0, 0, time.UTC)
+	handler, err := New(Config{
+		Source: source, ClockInterval: time.Millisecond,
+		Now: func() time.Time { return base.Add(time.Duration(tick.Add(1)) * time.Second) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/app/updates?route=overview", nil).WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer device-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if count := strings.Count(response.Body.String(), `"clock"`); count < 2 {
+		t.Fatalf("clock patches=%d; body=%q", count, response.Body.String())
 	}
 }
 

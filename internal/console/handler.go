@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/autback/internal/control"
@@ -27,18 +28,26 @@ type Source interface {
 }
 
 type Config struct {
-	Source Source
+	Source        Source
+	ClockInterval time.Duration
+	Now           func() time.Time
 }
 
 func New(config Config) (http.Handler, error) {
 	if config.Source == nil {
 		return nil, errors.New("console source is required")
 	}
+	if config.ClockInterval <= 0 {
+		config.ClockInterval = time.Second
+	}
+	if config.Now == nil {
+		config.Now = time.Now
+	}
 	assetFS, err := fs.Sub(assets, "assets")
 	if err != nil {
 		return nil, err
 	}
-	server := &server{source: config.Source}
+	server := &server{source: config.Source, clockInterval: config.ClockInterval, now: config.Now}
 	mux := http.NewServeMux()
 	mux.Handle("GET /app/assets/", http.StripPrefix("/app/assets/", http.FileServer(http.FS(assetFS))))
 	mux.HandleFunc("GET /app", server.page(Route{Kind: RouteOverview}))
@@ -54,7 +63,9 @@ func New(config Config) (http.Handler, error) {
 }
 
 type server struct {
-	source Source
+	source        Source
+	clockInterval time.Duration
+	now           func() time.Time
 }
 
 func (s *server) page(route Route) http.HandlerFunc {
@@ -128,14 +139,21 @@ func (s *server) updates(response http.ResponseWriter, request *http.Request) {
 		writeSourceError(response, err)
 		return
 	}
+	snapshot.Clock = ClockView{Now: s.now().UTC()}
 	if err := stream.Patch(snapshot.patch()); err != nil {
 		return
 	}
 	revision := snapshot.Revision
+	clock := time.NewTicker(s.clockInterval)
+	defer clock.Stop()
 	for {
 		select {
 		case <-request.Context().Done():
 			return
+		case <-clock.C:
+			if err := stream.Patch(map[string]any{"clock": ClockView{Now: s.now().UTC()}}); err != nil {
+				return
+			}
 		case _, open := <-updates:
 			if !open {
 				return
@@ -147,6 +165,7 @@ func (s *server) updates(response http.ResponseWriter, request *http.Request) {
 			if next.Revision <= revision {
 				continue
 			}
+			next.Clock = ClockView{Now: s.now().UTC()}
 			if err := stream.Patch(next.patch()); err != nil {
 				return
 			}

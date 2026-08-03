@@ -22,6 +22,7 @@ const EMPTY: ConsoleSignals = {
   session: { user: '', admin: false, projects: [] },
   service: { name: 'Autback', version: '', control: 'CLI only', admission: 'One at a time', startedAt: '' },
   worker: { status: 'connecting', capacity: '1 operation', activeId: '', updatedAt: '' },
+  clock: { now: '' },
   resources: EMPTY_RESOURCES,
   queue: [], operations: [], operation: null,
   log: { available: false, truncated: false, content: '' },
@@ -52,6 +53,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
     return {
       session: this.signal('session', EMPTY.session), service: this.signal('service', EMPTY.service),
       worker: this.signal('worker', EMPTY.worker), resources: this.signal('resources', EMPTY.resources),
+      clock: this.signal('clock', EMPTY.clock),
       queue: this.signal('queue', EMPTY.queue), operations: this.signal('operations', EMPTY.operations),
       operation: this.signal('operation', EMPTY.operation), log: this.signal('log', EMPTY.log),
       audit: this.signal('audit', EMPTY.audit), status: this.signal('status', EMPTY.status),
@@ -91,28 +93,29 @@ class AutbackConsole extends DatastarLit(LitElement) {
   }
 
   private page(signals: ConsoleSignals): TemplateResult {
+    const now = Date.parse(signals.clock.now)
     switch (this.routeKind) {
-      case 'project': return this.projectPage(signals)
-      case 'operation': return this.runPage(signals)
-      case 'audit': return this.auditPage(signals)
-      default: return this.overview(signals)
+      case 'project': return this.projectPage(signals, now)
+      case 'operation': return this.runPage(signals, now)
+      case 'audit': return this.auditPage(signals, now)
+      default: return this.overview(signals, now)
     }
   }
 
-  private overview(signals: ConsoleSignals): TemplateResult {
+  private overview(signals: ConsoleSignals, now: number): TemplateResult {
     return html`
       ${this.pageHead('Shared runner', 'Runs and capacity', 'See what is running, what is next, and whether the machine has room to do more.')}
       ${this.resourceChart(signals.resources, 'Runner utilization')}
       ${this.resourceMetrics(signals.resources)}
       <section class="grid">
-        ${this.jobsPanel(signals.queue)}
+        ${this.jobsPanel(signals.queue, now)}
         ${this.runnerPanel(signals)}
       </section>
-      ${this.runsPanel(signals.operations, 'Recent runs')}
+      ${this.runsPanel(signals.operations, 'Recent runs', now)}
     `
   }
 
-  private projectPage(signals: ConsoleSignals): TemplateResult {
+  private projectPage(signals: ConsoleSignals, now: number): TemplateResult {
     const project = signals.session.projects.find((item) => item.slug === this.project)
     if (!project) return this.notFound('You do not have access to this project.')
     return html`
@@ -127,12 +130,12 @@ class AutbackConsole extends DatastarLit(LitElement) {
       </section>
       ${this.projectTrends(signals.operations)}
       ${this.resourceChart(signals.resources, 'Resource utilization')}
-      <section class="grid">${this.jobsPanel(signals.queue)}${this.runnerPanel(signals)}</section>
-      ${this.runsPanel(signals.operations, 'Project runs')}
+      <section class="grid">${this.jobsPanel(signals.queue, now)}${this.runnerPanel(signals)}</section>
+      ${this.runsPanel(signals.operations, 'Project runs', now)}
     `
   }
 
-  private runPage(signals: ConsoleSignals): TemplateResult {
+  private runPage(signals: ConsoleSignals, now: number): TemplateResult {
     const run = signals.operation
     if (!run) return this.notFound('You do not have access to this run.')
     const title = run.command || `${capitalize(run.kind)} ${shortID(run.id, 18)}`
@@ -142,7 +145,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
       <section class="metrics" aria-label="Run summary">
         ${metric('Status', run.status, capitalize(run.kind), 'pulse')}
         ${metric('Queue wait', formatMilliseconds(run.queueWaitMillis), 'before starting', 'queue')}
-        ${metric('Duration', duration(run.startedAt, run.finishedAt), run.startedAt ? 'elapsed time' : 'not started', 'clock')}
+        ${metric('Duration', duration(run.startedAt, run.finishedAt, now), run.startedAt ? 'elapsed time' : 'not started', 'clock')}
         ${metric('Exit code', run.exitCode == null ? '—' : String(run.exitCode), run.finishedAt ? 'result' : 'pending', 'terminal')}
       </section>
       <section class="detail-grid">
@@ -152,7 +155,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
           </article>
           ${this.logPanel(signals, run)}
         </div>
-        <div class="detail-stack">${this.runSummaryPanel(run)}${this.provenancePanel(run)}
+        <div class="detail-stack">${this.runSummaryPanel(run, now)}${this.provenancePanel(run)}
           <article class="panel"><header class="panel-head"><div class="panel-title">${icon('terminal')}Continue in CLI</div><span class="panel-meta">CLI</span></header>
             <div class="panel-body"><p class="lede">View the full log or inspect this run from your terminal.</p><pre class="command"><span class="prompt">$</span> autback ${run.kind === 'job' ? 'logs' : 'build status'} ${run.id}</pre></div>
           </article>
@@ -166,7 +169,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
       ${metric('Busy', formatPercent(resources.busyRatio), 'of the selected hour', 'pulse')}
       ${metric('CPU while active', formatPercent(resources.cpuAverage), `${formatPercent(resources.cpuPeak)} peak`, 'cpu')}
       ${metric('Memory while active', formatPercent(resources.memoryAverage), `${formatBytes(resources.memoryBytesPeak)} peak`, 'memory')}
-		${metric('Queue wait p95', formatMilliseconds(resources.queueWaitP95Millis), 'recent runs', 'queue')}
+      ${metric('Queue wait p95', formatMilliseconds(resources.queueWaitP95Millis), 'recent runs', 'queue')}
     </section>`
   }
 
@@ -207,12 +210,12 @@ class AutbackConsole extends DatastarLit(LitElement) {
     </section>`
   }
 
-  private jobsPanel(queue: QueueView[]): TemplateResult {
+  private jobsPanel(queue: QueueView[], now: number): TemplateResult {
     return html`<article class="panel">
       <header class="panel-head"><div class="panel-title">${icon('queue')}Jobs</div><span class="panel-meta">${queue.length}</span></header>
       <div class="queue-list">${queue.length === 0 ? emptyState('queue', 'No jobs queued or active', 'The next submitted job can start immediately.') : queue.map((item) => html`
         <div class="queue-row"><span class="position">${item.position}</span>
-          <div class="queue-main"><a href=${runURL(item.kind, item.id)}>${shortID(item.id, 24)}</a><div class="queue-sub">${item.projectName} · ${relativeTime(item.acceptedAt)}</div></div>
+          <div class="queue-main"><a href=${runURL(item.kind, item.id)}>${shortID(item.id, 24)}</a><div class="queue-sub">${item.projectName} · ${relativeTime(item.acceptedAt, now)}</div></div>
           <span class="badge ${item.status}">${item.status}</span>
         </div>`)}
       </div>
@@ -227,25 +230,25 @@ class AutbackConsole extends DatastarLit(LitElement) {
     </article>`
   }
 
-  private runsPanel(operations: OperationView[], title: string): TemplateResult {
+  private runsPanel(operations: OperationView[], title: string, now: number): TemplateResult {
     return html`<article class="panel"><header class="panel-head"><div class="panel-title">${icon('activity')}${title}</div><span class="panel-meta">${operations.length} shown</span></header>
       ${operations.length === 0 ? emptyState('activity', 'No runs yet', 'Submit a repository command with autback exec.') : html`<div class="table-wrap"><table>
         <thead><tr><th>Run</th><th>Status</th><th>Project</th><th>Duration</th><th>CPU peak</th><th>Memory peak</th><th>Created</th></tr></thead>
         <tbody>${operations.map((run) => html`<tr>
           <td class="primary"><a href=${runURL(run.kind, run.id)}><span class="kind-icon">${icon(run.kind === 'build' ? 'cube' : 'terminal')}</span><span><span class="mono">${shortID(run.id, 20)}</span><br><span class="muted">${run.command || capitalize(run.kind)}</span></span></a></td>
           <td><span class="badge ${run.status}">${run.status}</span></td><td>${run.projectName}</td>
-          <td class="mono">${duration(run.startedAt, run.finishedAt)}</td>
+          <td class="mono">${duration(run.startedAt, run.finishedAt, now)}</td>
           <td class="mono">${run.resources?.sampleCount ? formatPercent(run.resources.cpuPeak) : '—'}</td>
           <td class="mono">${run.resources?.sampleCount ? formatBytes(run.resources.memoryBytesPeak) : '—'}</td>
-          <td>${relativeTime(run.createdAt)}</td>
+          <td>${relativeTime(run.createdAt, now)}</td>
         </tr>`)}</tbody>
       </table></div>`}
     </article>`
   }
 
-  private runSummaryPanel(run: OperationDetailView): TemplateResult {
+  private runSummaryPanel(run: OperationDetailView, now: number): TemplateResult {
     return html`<article class="panel"><header class="panel-head"><div class="panel-title">${icon('activity')}Run summary</div><span class="panel-meta">${run.resources.sampleCount} samples</span></header>
-      <dl class="definition"><dt>Started</dt><dd>${run.startedAt ? relativeTime(run.startedAt) : '—'}</dd><dt>CPU peak</dt><dd>${formatPercent(run.resources.cpuPeak)}</dd><dt>Memory peak</dt><dd>${formatBytes(run.resources.memoryBytesPeak)}</dd><dt>Queue wait</dt><dd>${formatMilliseconds(run.queueWaitMillis)}</dd></dl>
+      <dl class="definition"><dt>Started</dt><dd>${run.startedAt ? relativeTime(run.startedAt, now) : '—'}</dd><dt>CPU peak</dt><dd>${formatPercent(run.resources.cpuPeak)}</dd><dt>Memory peak</dt><dd>${formatBytes(run.resources.memoryBytesPeak)}</dd><dt>Queue wait</dt><dd>${formatMilliseconds(run.queueWaitMillis)}</dd></dl>
     </article>`
   }
 
@@ -262,15 +265,15 @@ class AutbackConsole extends DatastarLit(LitElement) {
     </article>`
   }
 
-  private auditPage(signals: ConsoleSignals): TemplateResult {
+  private auditPage(signals: ConsoleSignals, now: number): TemplateResult {
     return html`${this.pageHead('Governance', 'Audit log', 'Project, access, image, job, and build activity across Autback.')}
       <article class="panel"><header class="panel-head"><div class="panel-title">${icon('shield')}Recent events</div><span class="panel-meta">${signals.audit.length} records</span></header>
-      ${signals.audit.length === 0 ? emptyState('shield', 'No audit events yet', 'Changes made with the Autback CLI will appear here.') : this.auditTable(signals.audit)}</article>`
+      ${signals.audit.length === 0 ? emptyState('shield', 'No audit events yet', 'Changes made with the Autback CLI will appear here.') : this.auditTable(signals.audit, now)}</article>`
   }
 
-  private auditTable(events: AuditView[]): TemplateResult {
+  private auditTable(events: AuditView[], now: number): TemplateResult {
     return html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Actor</th><th>Project</th><th>Target</th><th>When</th></tr></thead>
-      <tbody>${events.map((event) => html`<tr><td><span class="audit-action">${event.action}</span>${metadata(event)}</td><td>${event.actor}</td><td>${event.project || 'Service'}</td><td class="mono">${shortID(event.target, 18)}</td><td>${relativeTime(event.createdAt)}</td></tr>`)}</tbody>
+      <tbody>${events.map((event) => html`<tr><td><span class="audit-action">${event.action}</span>${metadata(event)}</td><td>${event.actor}</td><td>${event.project || 'Service'}</td><td class="mono">${shortID(event.target, 18)}</td><td>${relativeTime(event.createdAt, now)}</td></tr>`)}</tbody>
     </table></div>`
   }
 

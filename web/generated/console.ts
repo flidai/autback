@@ -31,6 +31,10 @@ export interface WorkerView {
   updatedAt: string
 }
 
+export interface ClockView {
+  now: string
+}
+
 export interface ResourceView {
   samples: ResourceSampleView[]
   sampleCount: number
@@ -130,6 +134,7 @@ export interface ConsoleSignals {
   session: SessionView
   service: ServiceView
   worker: WorkerView
+  clock: ClockView
   resources: ResourceView
   queue: QueueView[]
   operations: OperationView[]

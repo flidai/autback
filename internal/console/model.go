@@ -23,6 +23,7 @@ type Snapshot struct {
 	Session    SessionView
 	Service    ServiceView
 	Worker     WorkerView
+	Clock      ClockView
 	Resources  ResourceView
 	Queue      []QueueView
 	Operations []OperationView
@@ -61,6 +62,10 @@ type WorkerView struct {
 	Capacity  string    `json:"capacity"`
 	ActiveID  string    `json:"activeId"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type ClockView struct {
+	Now time.Time `json:"now"`
 }
 
 type QueueView struct {
@@ -165,6 +170,7 @@ type StatusView struct {
 func (s Snapshot) patch() map[string]any {
 	return map[string]any{
 		"session": s.Session, "service": s.Service, "worker": s.Worker,
+		"clock":     s.Clock,
 		"resources": s.Resources,
 		"queue":     s.Queue, "operations": s.Operations, "operation": s.Operation,
 		"log": s.Log, "audit": s.Audit, "status": s.Status,

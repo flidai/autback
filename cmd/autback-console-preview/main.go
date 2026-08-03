@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,8 +42,7 @@ func main() {
 
 type fixtureSource struct {
 	revision atomic.Int64
-	updates  chan struct{}
-	now      time.Time
+	interval time.Duration
 	base     console.Snapshot
 }
 
@@ -64,7 +64,7 @@ func newFixtureSource() *fixtureSource {
 		Session:   console.SessionView{User: "Jacob Østergaard", Admin: true, Projects: projects},
 		Service:   console.ServiceView{Name: "Autback", Version: "0.1.0", Control: "CLI only", Admission: "One at a time", StartedAt: now.Add(-31 * time.Hour)},
 		Worker:    console.WorkerView{Status: "online", Capacity: "1 operation", ActiveID: operations[0].ID, UpdatedAt: now},
-		Resources: fixtureResources(now, operations[0].ID),
+		Resources: fixtureResources(now, 190),
 		Queue: []console.QueueView{
 			{Position: 1, Kind: "job", ID: operations[0].ID, Project: "leapview", ProjectName: "LeapView", Status: "active", AcceptedAt: now.Add(-2 * time.Minute), LeasedAt: pointer(now.Add(-95 * time.Second))},
 			{Position: 2, Kind: "build", ID: operations[1].ID, Project: "autback", ProjectName: "Autback", Status: "queued", AcceptedAt: now.Add(-7 * time.Minute)},
@@ -79,7 +79,7 @@ func newFixtureSource() *fixtureSource {
 		},
 		Status: console.StatusView{Ready: true, Route: "overview", Message: "Live", UpdatedAt: now},
 	}
-	source := &fixtureSource{updates: make(chan struct{}), now: now, base: base}
+	source := &fixtureSource{base: base, interval: 2 * time.Second}
 	source.revision.Store(190)
 	return source
 }
@@ -92,12 +92,43 @@ func (s *fixtureSource) Authorize(context.Context, control.Principal, console.Ro
 	return nil
 }
 
-func (s *fixtureSource) SubscribeChanges() (<-chan struct{}, func()) { return s.updates, func() {} }
+func (s *fixtureSource) SubscribeChanges() (<-chan struct{}, func()) {
+	updates := make(chan struct{}, 1)
+	done := make(chan struct{})
+	var stop sync.Once
+	go func() {
+		interval := s.interval
+		if interval <= 0 {
+			interval = 2 * time.Second
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		defer close(updates)
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				s.revision.Add(1)
+				select {
+				case updates <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	return updates, func() { stop.Do(func() { close(done) }) }
+}
 
 func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route console.Route) (console.Snapshot, error) {
+	now := time.Now().UTC()
 	snapshot := s.base
-	snapshot.Revision = s.revision.Load()
+	revision := s.revision.Load()
+	snapshot.Revision = revision
 	snapshot.Status.Route = string(route.Kind)
+	snapshot.Status.UpdatedAt = now
+	snapshot.Worker.UpdatedAt = now
+	snapshot.Resources = fixtureResources(now, int(revision))
 	if route.Kind == console.RouteProject {
 		filtered := make([]console.OperationView, 0)
 		for _, operation := range snapshot.Operations {
@@ -128,7 +159,7 @@ func (s *fixtureSource) Snapshot(_ context.Context, _ control.Principal, route c
 					RootDigest: "bd76a4d3bd9ec8f076ad844fb3b1e1b39b12acbe2c1d2df5f68761ee7e758c9d/12786",
 				}
 				snapshot.Log = console.LogView{Available: operation.Kind == "job", Content: previewLog, Truncated: true}
-				snapshot.Resources.Samples = operationSamples(s.now, operation.ID)
+				snapshot.Resources.Samples = operationSamples(now, int(revision))
 				snapshot.Resources.SampleCount = len(snapshot.Resources.Samples)
 				snapshot.Resources.ActiveSampleCount = len(snapshot.Resources.Samples)
 				snapshot.Resources.BusyRatio = 1
@@ -152,11 +183,11 @@ func resourceSummary(samples int, cpuAverage, cpuPeak, memoryAverage, memoryPeak
 	return console.OperationResourceView{SampleCount: samples, CPUAverage: cpuAverage, CPUPeak: cpuPeak, MemoryAverage: memoryAverage, MemoryPeak: memoryPeak, MemoryBytesPeak: uint64(memoryGB * float64(uint64(1)<<30))}
 }
 
-func fixtureResources(now time.Time, _ string) console.ResourceView {
+func fixtureResources(now time.Time, offset int) console.ResourceView {
 	samples := make([]console.ResourceSampleView, 0, 120)
 	active := 0
 	for index := 0; index < 120; index++ {
-		phase := index % 40
+		phase := (index + offset) % 40
 		cpu, memory := .03, .21
 		if phase >= 12 && phase <= 30 {
 			cpu = .24 + float64((phase*17)%55)/100
@@ -170,11 +201,11 @@ func fixtureResources(now time.Time, _ string) console.ResourceView {
 		MemoryAverage: .49, MemoryPeak: .68, MemoryBytesPeak: uint64(54) * (1 << 30) / 10, QueueWaitP95Millis: 60000}
 }
 
-func operationSamples(now time.Time, _ string) []console.ResourceSampleView {
+func operationSamples(now time.Time, offset int) []console.ResourceSampleView {
 	samples := make([]console.ResourceSampleView, 0, 48)
 	for index := 0; index < 48; index++ {
-		samples = append(samples, console.ResourceSampleView{ObservedAt: now.Add(time.Duration(index-47) * 2 * time.Second), CPUUtilization: .18 + float64((index*13)%68)/100,
-			MemoryUtilization: .38 + float64(index%15)/50})
+		samples = append(samples, console.ResourceSampleView{ObservedAt: now.Add(time.Duration(index-47) * 2 * time.Second), CPUUtilization: .18 + float64(((index+offset)*13)%68)/100,
+			MemoryUtilization: .38 + float64((index+offset)%15)/50})
 	}
 	return samples
 }

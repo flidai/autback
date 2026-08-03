@@ -37,8 +37,13 @@ control buttons, or client-side calls to Connect.
 - `/app/audit`: authorized governance events.
 
 Go console structs generate the TypeScript contracts used by Lit. The stable signal roots
-are `$session`, `$service`, `$worker`, `$resources`, `$queue`, `$operations`, `$operation`, `$log`, `$audit`,
+are `$session`, `$service`, `$worker`, `$clock`, `$resources`, `$queue`, `$operations`, `$operation`, `$log`, `$audit`,
 and `$status`. Canonical route identity remains in server URLs; Lit does not route or fetch.
+
+The SSE connection also publishes the server-owned `$clock` once per second. Running
+durations and relative timestamps derive from that signal, so they advance without browser
+timers, polling, or a full document refresh. Durable projections are still re-queried only
+after their committed change notification.
 
 The server samples whole-VM CPU, memory, and disk capacity every two seconds by default,
 attributes occupied samples to the admitted run, and records the sample in the same SQLite

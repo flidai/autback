@@ -92,6 +92,34 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	}
 }
 
+func TestGetJobRepairsStatusAfterAdmissionLeaseReleased(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	ctx := context.Background()
+	prepared, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
+		IdempotencyKey: "repair-released-job", Project: fixture.bootstrap.Project.Slug,
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"task", "ci"}, Timeout: durationpb.New(time.Minute),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: strings.Repeat("a", 64) + "/1"})); err != nil {
+		t.Fatal(err)
+	}
+	fixture.scheduler.complete(prepared.Msg.Job.Id, protocol.StatusSucceeded, 0)
+	if err := fixture.store.ReleaseOperation(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := client.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: prepared.Msg.Job.Id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_SUCCEEDED {
+		t.Fatalf("job status = %s, want succeeded", got.Msg.Job.Status)
+	}
+}
+
 func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
@@ -271,6 +299,24 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func TestJobAdmissionAllowsLongRepositoryCIButBoundsRunawayJobs(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	request := &autbackv1.PrepareJobRequest{
+		IdempotencyKey: "long-repository-ci", Project: "example",
+		Image:   "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64),
+		Command: []string{"task", "ci"}, Timeout: durationpb.New(90 * time.Minute),
+	}
+	if _, err := client.PrepareJob(context.Background(), connect.NewRequest(request)); err != nil {
+		t.Fatalf("90-minute repository CI rejected: %v", err)
+	}
+	request.IdempotencyKey = "runaway-repository-ci"
+	request.Timeout = durationpb.New(24*time.Hour + time.Second)
+	if _, err := client.PrepareJob(context.Background(), connect.NewRequest(request)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("runaway timeout error = %v, want invalid argument", err)
 	}
 }
 

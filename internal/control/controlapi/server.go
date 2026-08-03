@@ -23,12 +23,15 @@ import (
 	autbackv1 "github.com/flidai/autback/internal/gen/rtest/v1"
 	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
 	"github.com/flidai/autback/internal/protocol"
+	"github.com/flidai/autback/internal/version"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const Version = "0.1.0"
+const Version = version.Current
+
+const maximumJobTimeout = 24 * time.Hour
 
 type OIDCVerifier interface {
 	Verify(context.Context, string) (control.GitHubClaims, error)
@@ -865,15 +868,14 @@ func (s *Server) refreshJob(ctx context.Context, job control.Job) (control.Job, 
 		return job, nil
 	}
 	state, err := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
-	if errors.Is(err, control.ErrNotFound) {
-		return job, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, control.ErrNotFound) {
 		return control.Job{}, err
 	}
-	if state == control.OperationQueued {
+	if err == nil && state == control.OperationQueued {
 		return job, nil
 	}
+	// A missing admission lease can race with a stale reconciler snapshot. The
+	// managed service remains authoritative until the durable status is terminal.
 	remote, err := s.config.Scheduler.Status(ctx, job.ID)
 	if err != nil {
 		return control.Job{}, err
@@ -934,8 +936,8 @@ func (s *Server) validateJob(projectID string, message *autbackv1.PrepareJobRequ
 		}
 		timeout = message.Timeout.AsDuration()
 	}
-	if timeout < time.Second || timeout > time.Hour {
-		return control.PrepareJob{}, errors.New("timeout must be between 1 second and 1 hour")
+	if timeout < time.Second || timeout > maximumJobTimeout {
+		return control.PrepareJob{}, errors.New("timeout must be between 1 second and 24 hours")
 	}
 	if !idempotencyKeyPattern.MatchString(message.IdempotencyKey) {
 		return control.PrepareJob{}, errors.New("idempotency key must contain 8 to 128 safe characters")

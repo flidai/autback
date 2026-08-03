@@ -10,7 +10,39 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
+	"github.com/flidai/autback/internal/protocol"
 )
+
+func TestSyncJobDoesNotRegressTerminalState(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "terminal-race", RequestHash: "terminal-race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueJob(ctx, job.ID, "digest/1"); err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationJob, job.ID)
+
+	started := time.Now().UTC().Add(-time.Minute)
+	finished, exitCode := time.Now().UTC(), 0
+	terminal, err := store.SyncJob(ctx, job.ID, protocol.Job{ID: job.ID, Status: protocol.StatusSucceeded, StartedAt: &started, FinishedAt: &finished, ExitCode: &exitCode})
+	if err != nil || terminal.Status != protocol.StatusSucceeded {
+		t.Fatalf("terminal sync = %#v, %v", terminal, err)
+	}
+	stale, err := store.SyncJob(ctx, job.ID, protocol.Job{ID: job.ID, Status: protocol.StatusRunning, StartedAt: &started})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Status != protocol.StatusSucceeded || stale.FinishedAt == nil || stale.ExitCode == nil || *stale.ExitCode != 0 {
+		t.Fatalf("stale reconciliation regressed terminal job: %#v", stale)
+	}
+}
 
 func TestOperationsShareOneDurableFIFO(t *testing.T) {
 	store := openStore(t)

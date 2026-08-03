@@ -314,6 +314,40 @@ func TestWaitForServiceBuildPollsUntilBuildKitIsAdmitted(t *testing.T) {
 	}
 }
 
+func TestWaitForServiceBuildRenewsGitHubOIDCSessionMoreThanOnce(t *testing.T) {
+	stale := &expiringQueuedBuildService{rejectAfter: 0}
+	staleClient, closeStale := testServiceClient(t, stale)
+	defer closeStale()
+	queued := &expiringQueuedBuildService{rejectAfter: 1}
+	queuedClient, closeQueued := testServiceClient(t, queued)
+	defer closeQueued()
+	running := &queuedBuildService{}
+	runningClient, closeRunning := testServiceClient(t, running)
+	defer closeRunning()
+
+	renewals := 0
+	client := &renewableControlClient{
+		ControlServiceClient: staleClient,
+		renew: func(context.Context) (autbackv1connect.ControlServiceClient, error) {
+			renewals++
+			if renewals == 1 {
+				return queuedClient, nil
+			}
+			return runningClient, nil
+		},
+	}
+
+	build, connection, err := waitForServiceBuild(context.Background(), client, &autbackv1.Build{
+		Id: "bld-long-queued", Status: autbackv1.BuildStatus_BUILD_STATUS_QUEUED,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewals != 2 || queued.polls != 2 || running.polls != 1 || build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil {
+		t.Fatalf("renewals=%d queued polls=%d running polls=%d build=%#v connection=%#v", renewals, queued.polls, running.polls, build, connection)
+	}
+}
+
 func initGitRepository(t *testing.T, directory string) {
 	t.Helper()
 	command := exec.Command("git", "init", "-q")
@@ -359,6 +393,22 @@ type finishBuildService struct {
 type queuedBuildService struct {
 	autbackv1connect.UnimplementedControlServiceHandler
 	polls int
+}
+
+type expiringQueuedBuildService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	polls       int
+	rejectAfter int
+}
+
+func (s *expiringQueuedBuildService) GetBuild(_ context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {
+	s.polls++
+	if s.polls > s.rejectAfter {
+		return nil, connect.NewError(connect.CodeUnauthenticated, context.Canceled)
+	}
+	return connect.NewResponse(&autbackv1.GetBuildResponse{
+		Build: &autbackv1.Build{Id: request.Msg.Id, Status: autbackv1.BuildStatus_BUILD_STATUS_QUEUED},
+	}), nil
 }
 
 func (s *queuedBuildService) GetBuild(_ context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {

@@ -83,6 +83,23 @@ it once and stores the resulting named device token in macOS Keychain, Linux Sec
 Service, or Windows Credential Manager through the operating-system keyring. `autback logout`
 removes the local entry; `autback token revoke <id>` independently revokes one laptop.
 
+## Read-only governance console
+
+Run `autback console` to open the live service console. The CLI creates an ephemeral,
+random loopback session and injects the device credential into proxied `/app` requests;
+the browser never receives the Keychain token and cannot reach the Connect control API.
+The console is deliberately read-only: all execution, cancellation, enrollment, trust,
+and image commands remain in the CLI and audit log.
+
+For design-system and browser work without a running worker, use the loopback-only fixture:
+
+```console
+go run ./cmd/autback-console-preview
+```
+
+See [the console architecture](docs/console.md) for routes, live consistency, and signal
+contracts.
+
 The manual GitHub Actions POC exchanges GitHub OIDC directly for a short-lived project
 credential; see [GitHub Actions](docs/github-actions.md). It deliberately has no
 pull-request trigger until the protected environment and trusted-change policy are proven.
@@ -115,6 +132,7 @@ candidates while preserving raw logs and an exact source fingerprint.
 - `internal/cas`, `internal/workspace`: standard CAS transfer and exact Git input selection.
 - `internal/swarm`: server-private Docker job specifications and lifecycle operations.
 - `internal/buildkit`: thin native Buildx remote-builder wrapper.
+- `internal/console`, `web`: authenticated Gomponents/Pagestream transport and Lit console UI.
 - `cmd/autback-job-entrypoint`: CAS materialization, timeout, process-group, and result boundary.
 - `host`: idempotent existing-host installation and systemd units.
 - `action/setup-autback`: GitHub composite action that installs and configures the CLI.

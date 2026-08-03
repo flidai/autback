@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/controlapi"
 	"github.com/flidai/autback/internal/control/dispatcher"
@@ -643,6 +644,10 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func newFixtureWithVerifier(t *testing.T, verifier controlapi.OIDCVerifier) *fixture {
+	return newFixtureWithCapacity(t, verifier, nil)
+}
+
+func newFixtureWithCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	store, err := controlsqlite.Open(filepath.Join(root, "state"), []byte("test-pepper-that-is-at-least-32-bytes"))
@@ -659,11 +664,11 @@ func newFixtureWithVerifier(t *testing.T, verifier controlapi.OIDCVerifier) *fix
 		t.Fatal(err)
 	}
 	scheduler := &fakeScheduler{jobs: map[string]protocol.Job{}}
-	dispatch := dispatcher.New(store, scheduler)
+	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacity))
 	handler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
 		CASEndpoint: "cas.example:50051", CASInstance: "autback", BuildKitEndpoint: "buildkit.example:1234",
-		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier,
+		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier, Capacity: capacity,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -672,6 +677,30 @@ func newFixtureWithVerifier(t *testing.T, verifier controlapi.OIDCVerifier) *fix
 	t.Cleanup(server.Close)
 	return &fixture{store: store, bootstrap: bootstrap, scheduler: scheduler, server: server}
 }
+
+func TestAdmissionRejectsBeforeIssuingDataPlaneCredentialsWhenCapacityIsExhausted(t *testing.T) {
+	fixture := newFixtureWithCapacity(t, nil, fakeCapacity{err: &capacity.ResourceExhaustedError{FreeBytes: 1, RequiredBytes: 2}})
+	client := fixture.client(fixture.bootstrap.Token)
+	_, err := client.PrepareJob(context.Background(), connect.NewRequest(&autbackv1.PrepareJobRequest{
+		IdempotencyKey: "capacity-job-1", Project: fixture.bootstrap.Project.Slug,
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"true"}, Timeout: durationpb.New(time.Minute),
+	}))
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("PrepareJob error = %v, want resource exhausted", err)
+	}
+	page, listErr := fixture.store.ListJobs(context.Background(), fixture.bootstrap.Project.ID, 20, "")
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(page.Jobs) != 0 {
+		t.Fatalf("jobs = %#v, admission created state before capacity check", page.Jobs)
+	}
+}
+
+type fakeCapacity struct{ err error }
+
+func (f fakeCapacity) Ensure(context.Context) error { return f.err }
+func (f fakeCapacity) Check(context.Context) error  { return f.err }
 
 func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	fixture := newFixture(t)

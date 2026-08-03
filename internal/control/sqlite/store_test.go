@@ -163,6 +163,120 @@ func testPreparedJob(projectID string) control.PrepareJob {
 	return control.PrepareJob{ProjectID: projectID, Image: "runner@test", Command: []string{"true"}, Timeout: time.Minute}
 }
 
+func TestTerminalJobRetentionNeverSelectsActiveJobs(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "terminal-job", RequestHash: "terminal-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FailJob(ctx, terminal.ID, "test terminal state"); err != nil {
+		t.Fatal(err)
+	}
+	active, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "active-job", RequestHash: "active-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := store.TerminalJobIDsBefore(ctx, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != terminal.ID {
+		t.Fatalf("terminal jobs = %#v, want only %s (not %s)", ids, terminal.ID, active.ID)
+	}
+}
+
+func TestEmergencyStopAtomicallyTerminatesActiveOperation(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "emergency-job", RequestHash: "emergency-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = store.QueueJob(ctx, job.ID, "digest/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationJob, job.ID)
+	if err := store.ActivateOperation(ctx, control.OperationJob, job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	operation, err := store.EmergencyStopActiveOperation(ctx, "worker capacity exhausted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation == nil || operation.ID != job.ID {
+		t.Fatalf("stopped operation = %#v, want %s", operation, job.ID)
+	}
+	stored, err := store.Job(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "failed" || stored.ExitCode == nil || *stored.ExitCode != 137 || stored.ErrorMessage != "worker capacity exhausted" {
+		t.Fatalf("job after emergency = %#v", stored)
+	}
+	if _, err := store.Operation(ctx, control.OperationJob, job.ID); !errors.Is(err, control.ErrNotFound) {
+		t.Fatalf("operation remains after emergency: %v", err)
+	}
+}
+
+func TestCapacityImagePoliciesProtectActiveAndRollbackImages(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := store.Authenticate(ctx, bootstrap.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := "ghcr.io/example/runner@sha256:first"
+	second := "ghcr.io/example/runner@sha256:second"
+	if _, err := store.ActivateProjectImage(ctx, principal, bootstrap.Project.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivateProjectImage(ctx, principal, bootstrap.Project.ID, second); err != nil {
+		t.Fatal(err)
+	}
+	unprotected := testPreparedJob(bootstrap.Project.ID)
+	unprotected.Image = "ghcr.io/example/old@sha256:third"
+	if _, _, err := store.CreatePreparedJob(ctx, unprotected, control.Idempotency{Key: "image-last-use", RequestHash: "image-last-use"}); err != nil {
+		t.Fatal(err)
+	}
+
+	policies, err := store.CapacityImagePolicies(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byReference := map[string]struct {
+		protected bool
+		lastUsed  time.Time
+	}{}
+	for _, policy := range policies {
+		byReference[policy.Reference] = struct {
+			protected bool
+			lastUsed  time.Time
+		}{policy.Protected, policy.LastUsedAt}
+	}
+	if !byReference[first].protected || !byReference[second].protected {
+		t.Fatalf("protected image policies = %#v", byReference)
+	}
+	if byReference[unprotected.Image].protected || byReference[unprotected.Image].lastUsed.IsZero() {
+		t.Fatalf("unprotected image policy = %#v", byReference[unprotected.Image])
+	}
+}
+
 func TestOpenMigratesAdmissionIdempotencyColumns(t *testing.T) {
 	root := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(root, "control.db"))

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/flidai/autback/internal/control"
 )
@@ -33,5 +34,27 @@ func TestProjectCachesUseIndependentPrivateDirectories(t *testing.T) {
 func TestCacheDirectoriesRejectUnsafeComponents(t *testing.T) {
 	if err := prepareCacheDirectories(t.TempDir(), "project", []control.CacheMount{{Name: "../shared", Target: "/cache"}}); err == nil {
 		t.Fatal("unsafe cache name was accepted")
+	}
+}
+
+func TestPreparingCacheRecordsDurableLastUse(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "project", "modules")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(directory, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareCacheDirectories(root, "project", []control.CacheMount{{Name: "modules", Target: "/go/pkg/mod"}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old) {
+		t.Fatalf("cache last use = %s, want after %s", info.ModTime(), old)
 	}
 }

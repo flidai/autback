@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -9,6 +10,29 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestBoundedJobLogPreservesDiskLimitAndSignalsTruncation(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "job-log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	writer, err := newBoundedLogWriter(file, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("x"), 128)
+	if written, err := writer.Write(payload); err != nil || written != len(payload) {
+		t.Fatalf("write = %d, %v", written, err)
+	}
+	contents, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contents) > 64 || !bytes.Contains(contents, []byte("durable job log reached")) {
+		t.Fatalf("bounded log len=%d contents=%q", len(contents), contents)
+	}
+}
 
 func TestInitializeGitBaselineMakesMaterializedSnapshotClean(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

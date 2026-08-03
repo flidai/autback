@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
@@ -76,6 +77,10 @@ func prepareCacheDirectories(root, projectID string, caches []control.CacheMount
 			return err
 		}
 		if err := os.Chmod(directory, 0o700); err != nil {
+			return err
+		}
+		now := time.Now()
+		if err := os.Chtimes(directory, now, now); err != nil {
 			return err
 		}
 	}

@@ -33,7 +33,6 @@ scp "${reply[@]}" \
   "${AUTBACK_DIR}/host/autback-server.service" \
   "${AUTBACK_DIR}/host/autback-cas.service" \
   "${AUTBACK_DIR}/host/autback-buildkit.service" \
-  "${AUTBACK_DIR}/host/maintain.sh" \
   "${AUTBACK_DIR}/host/autback-maintenance.service" \
   "${AUTBACK_DIR}/host/autback-maintenance.timer" \
   "${ssh_user}@${host}:/tmp/"

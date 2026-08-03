@@ -14,9 +14,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
 	_ "modernc.org/sqlite"
@@ -1110,6 +1112,79 @@ func (s *Store) FailJob(ctx context.Context, id, message string) (control.Job, e
 	return s.Job(ctx, id)
 }
 
+// TerminalJobIDsBefore returns only durable terminal job records whose retained
+// workspace may be removed. Runtime state is deliberately selected from SQLite
+// rather than inferred from directory timestamps.
+func (s *Store) TerminalJobIDsBefore(ctx context.Context, before time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM control_jobs WHERE finished_at IS NOT NULL AND finished_at<? AND status IN (?,?,?,?,?) ORDER BY finished_at,id`,
+		unix(before.UTC()), protocol.StatusSucceeded, protocol.StatusFailed, protocol.StatusCancelled, protocol.StatusTimedOut, protocol.StatusLost)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CapacityImagePolicies protects the active and rollback images for every
+// project and supplies durable job recency for pressure-driven image LRU.
+func (s *Store) CapacityImagePolicies(ctx context.Context) ([]capacity.ImagePolicy, error) {
+	policies := map[string]capacity.ImagePolicy{}
+	projectRows, err := s.db.QueryContext(ctx, `SELECT active_image,previous_image FROM projects`)
+	if err != nil {
+		return nil, err
+	}
+	for projectRows.Next() {
+		var active, previous string
+		if err := projectRows.Scan(&active, &previous); err != nil {
+			_ = projectRows.Close()
+			return nil, err
+		}
+		for _, reference := range []string{active, previous} {
+			if reference != "" {
+				policy := policies[reference]
+				policy.Reference, policy.Protected = reference, true
+				policies[reference] = policy
+			}
+		}
+	}
+	if err := projectRows.Close(); err != nil {
+		return nil, err
+	}
+	jobRows, err := s.db.QueryContext(ctx, `SELECT image,MAX(created_at) FROM control_jobs WHERE image<>'' GROUP BY image`)
+	if err != nil {
+		return nil, err
+	}
+	defer jobRows.Close()
+	for jobRows.Next() {
+		var reference string
+		var lastUsed int64
+		if err := jobRows.Scan(&reference, &lastUsed); err != nil {
+			return nil, err
+		}
+		policy := policies[reference]
+		policy.Reference = reference
+		policy.LastUsedAt = time.Unix(0, lastUsed).UTC()
+		policies[reference] = policy
+	}
+	if err := jobRows.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]capacity.ImagePolicy, 0, len(policies))
+	for _, policy := range policies {
+		result = append(result, policy)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Reference < result[j].Reference })
+	return result, nil
+}
+
 func (s *Store) CreateBuild(ctx context.Context, projectID string, idempotency control.Idempotency) (control.Build, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1226,6 +1301,63 @@ func (s *Store) ActivateOperation(ctx context.Context, kind control.OperationKin
 func (s *Store) ReleaseOperation(ctx context.Context, kind control.OperationKind, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state IN (?,?)`, kind, id, control.OperationAdmitting, control.OperationActive)
 	return err
+}
+
+// EmergencyStopActiveOperation atomically protects the control plane from a
+// worker-wide capacity emergency. It terminalizes the single admitting/active
+// operation and releases the durable FIFO lease without admitting another job.
+func (s *Store) EmergencyStopActiveOperation(ctx context.Context, message string) (*control.Operation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var operation control.Operation
+	var acceptedAt int64
+	var leasedAt sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at FROM control_queue WHERE state IN (?,?) ORDER BY sequence LIMIT 1`, control.OperationAdmitting, control.OperationActive).
+		Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt, &leasedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	operation.AcceptedAt = time.Unix(0, acceptedAt).UTC()
+	if leasedAt.Valid {
+		value := time.Unix(0, leasedAt.Int64).UTC()
+		operation.LeasedAt = &value
+	}
+	now := unix(time.Now().UTC())
+	switch operation.Kind {
+	case control.OperationJob:
+		result, err := tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,finished_at=?,exit_code=137,error_message=?,cancel_requested=1 WHERE id=? AND status IN (?,?)`,
+			protocol.StatusFailed, now, message, operation.ID, protocol.StatusQueued, protocol.StatusRunning)
+		if err != nil {
+			return nil, err
+		}
+		if count, _ := result.RowsAffected(); count != 1 {
+			return nil, errors.New("active emergency job is missing")
+		}
+	case control.OperationBuild:
+		result, err := tx.ExecContext(ctx, `UPDATE control_builds SET status=?,finished_at=?,exit_code=130 WHERE id=? AND status IN (?,?)`,
+			control.BuildCancelled, now, operation.ID, control.BuildQueued, control.BuildRunning)
+		if err != nil {
+			return nil, err
+		}
+		if count, _ := result.RowsAffected(); count != 1 {
+			return nil, errors.New("active emergency build is missing")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported operation kind %q", operation.Kind)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, operation.Kind, operation.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &operation, nil
 }
 
 func (s *Store) CancelQueuedOperation(ctx context.Context, kind control.OperationKind, id string) (bool, error) {

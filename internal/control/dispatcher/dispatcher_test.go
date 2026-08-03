@@ -133,10 +133,34 @@ func TestDispatcherPreservesAdmissionWhenActivationWriteFails(t *testing.T) {
 	}
 }
 
+func TestDispatcherLeavesFIFOQueuedWhenCapacityIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	store, projectID := queueFixture(t)
+	job := queueJob(t, store, projectID, "capacity-blocked")
+	scheduler := &fakeScheduler{}
+	want := errors.New("worker capacity exhausted")
+	d := dispatcher.New(store, scheduler, dispatcher.WithCapacity(fakeCapacity{err: want}))
+
+	if err := d.RunOnce(ctx); !errors.Is(err, want) {
+		t.Fatalf("dispatch error = %v, want %v", err, want)
+	}
+	if len(scheduler.created) != 0 {
+		t.Fatalf("scheduled = %#v, want none", scheduler.created)
+	}
+	state, err := store.OperationState(ctx, control.OperationJob, job.ID)
+	if err != nil || state != control.OperationQueued {
+		t.Fatalf("operation state = %s, %v; want queued", state, err)
+	}
+}
+
 type activationFailStore struct {
 	*controlsqlite.Store
 	err error
 }
+
+type fakeCapacity struct{ err error }
+
+func (f fakeCapacity) Ensure(context.Context) error { return f.err }
 
 func (s activationFailStore) ActivateOperation(context.Context, control.OperationKind, string) error {
 	return s.err

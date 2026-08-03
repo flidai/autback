@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/controlapi"
 	"github.com/flidai/autback/internal/control/dispatcher"
@@ -40,6 +42,8 @@ func main() {
 			backupState(os.Args[2:])
 		case "restore":
 			restoreState(os.Args[2:])
+		case "maintain":
+			maintainWorker(os.Args[2:])
 		default:
 			log.Fatalf("unknown command %q", os.Args[1])
 		}
@@ -83,7 +87,13 @@ func serve() {
 		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
-	dispatch := dispatcher.New(store, scheduler)
+	capacityController := newCapacityController(dataDir, store, scheduler, false)
+	status, capacityErr := capacityController.Maintain(ctx, capacity.TriggerManual)
+	writeCapacityStatus(filepath.Join(dataDir, "capacity.json"), status)
+	if capacityErr != nil {
+		log.Printf("initial capacity reconciliation: %v", capacityErr)
+	}
+	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacityController))
 	if err := dispatch.RunOnce(ctx); err != nil {
 		log.Printf("initial dispatch: %v", err)
 	}
@@ -94,6 +104,7 @@ func serve() {
 		BuildLeaseTimeout: durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Minute),
 	})
 	go runReconciler(ctx, reconcile, durationEnv("AUTBACK_RECONCILE_INTERVAL", time.Second))
+	go runCapacityController(ctx, capacityController, filepath.Join(dataDir, "capacity.json"), durationEnv("AUTBACK_CAPACITY_CHECK_INTERVAL", 5*time.Second), durationEnv("AUTBACK_MAINTENANCE_INTERVAL", time.Minute))
 	var verifier controlapi.OIDCVerifier
 	if audience := os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
 		verifier, err = githuboidc.New(ctx, env("AUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
@@ -107,6 +118,7 @@ func serve() {
 		BuildKitEndpoint:    env("AUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
 		CredentialTTL:       durationEnv("AUTBACK_CREDENTIAL_TTL", 15*time.Minute),
 		AllowUnpinnedImages: os.Getenv("AUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
+		Capacity:            capacityController,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -140,6 +152,35 @@ func serve() {
 	defer cancel()
 	if err := server.Shutdown(shutdown); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+}
+
+func runCapacityController(ctx context.Context, controller *capacity.Controller, statusPath string, pressureInterval, maintenanceInterval time.Duration) {
+	if pressureInterval <= 0 {
+		pressureInterval = 5 * time.Second
+	}
+	if maintenanceInterval <= 0 {
+		maintenanceInterval = time.Minute
+	}
+	pressure := time.NewTicker(pressureInterval)
+	maintenance := time.NewTicker(maintenanceInterval)
+	defer pressure.Stop()
+	defer maintenance.Stop()
+	for {
+		var trigger capacity.Trigger
+		select {
+		case <-ctx.Done():
+			return
+		case <-pressure.C:
+			trigger = capacity.TriggerPressure
+		case <-maintenance.C:
+			trigger = capacity.TriggerPeriodic
+		}
+		status, err := controller.Maintain(ctx, trigger)
+		writeCapacityStatus(statusPath, status)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("capacity %s: %v", trigger, err)
+		}
 	}
 }
 
@@ -218,6 +259,84 @@ func restoreState(args []string) {
 		log.Fatal(err)
 	}
 	fmt.Printf("Restored: %s\n", *dataDir)
+}
+
+func maintainWorker(args []string) {
+	flags := flag.NewFlagSet("autback-server maintain", flag.ExitOnError)
+	dataDir := flags.String("data-dir", env("AUTBACK_DATA_DIR", "/var/lib/autback"), "persistent autback data directory")
+	dryRun := flags.Bool("dry-run", false, "report reclaim candidates without deleting them")
+	jsonOutput := flags.Bool("json", false, "write the capacity report as JSON")
+	_ = flags.Parse(args)
+	store := openStore(*dataDir)
+	defer store.Close()
+	docker := swarm.New(swarm.Config{Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
+	if err := docker.Check(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	scheduler := swarmscheduler.New(swarmscheduler.Config{Client: docker})
+	controller := newCapacityController(*dataDir, store, scheduler, *dryRun)
+	status, err := controller.Maintain(context.Background(), capacity.TriggerManual)
+	writeCapacityStatus(filepath.Join(*dataDir, "capacity.json"), status)
+	if *jsonOutput {
+		if encodeErr := json.NewEncoder(os.Stdout).Encode(status); encodeErr != nil {
+			log.Fatal(encodeErr)
+		}
+	} else {
+		fmt.Printf("Capacity: %s; free: %d; reclaimed: %d\n", status.State, status.After.FreeBytes, status.Reclaim.ReclaimedBytes)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler *swarmscheduler.Scheduler, dryRun bool) *capacity.Controller {
+	// Destructive Docker cleanup is valid only on a worker whose daemon is an
+	// Autback ownership boundary. Local development defaults to observation.
+	dryRun = dryRun || os.Getenv("AUTBACK_WORKER_OWNERSHIP") != "exclusive"
+	host := capacity.NewHost(capacity.HostConfig{
+		CapacityPath: env("AUTBACK_CAPACITY_PATH", dataDir),
+		JobsRoot:     env("AUTBACK_JOBS_ROOT", filepath.Join(dataDir, "jobs")),
+		CacheRoot:    env("AUTBACK_CACHE_ROOT", filepath.Join(dataDir, "cache")),
+		LockPath:     filepath.Join(dataDir, "capacity.lock"),
+		Store:        store,
+		Commands: capacity.DockerCommands{
+			Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock"),
+		},
+		DryRun: dryRun,
+		Emergency: func(ctx context.Context) error {
+			operation, err := store.EmergencyStopActiveOperation(ctx, "worker capacity exhausted")
+			if err != nil || operation == nil {
+				return err
+			}
+			if operation.Kind == control.OperationJob {
+				if err := scheduler.Cancel(ctx, operation.ID); err != nil {
+					log.Printf("emergency cancel job %s: %v", operation.ID, err)
+				}
+				if err := scheduler.Remove(ctx, operation.ID); err != nil {
+					log.Printf("emergency remove job %s: %v", operation.ID, err)
+				}
+			}
+			log.Printf("capacity emergency stopped %s %s", operation.Kind, operation.ID)
+			return nil
+		},
+	})
+	return capacity.New(capacity.DefaultPolicy(), host)
+}
+
+func writeCapacityStatus(path string, status capacity.Status) {
+	contents, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		log.Printf("encode capacity status: %v", err)
+		return
+	}
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, append(contents, '\n'), 0o600); err != nil {
+		log.Printf("write capacity status: %v", err)
+		return
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		log.Printf("publish capacity status: %v", err)
+	}
 }
 
 func openStore(dataDir string) *controlsqlite.Store {

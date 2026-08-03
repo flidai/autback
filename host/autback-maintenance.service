@@ -5,4 +5,13 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/autback-maintain
+User=autback
+Group=autback
+SupplementaryGroups=docker
+EnvironmentFile=/etc/autback/service.env
+ExecStart=/usr/local/bin/autback-server maintain --json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/autback

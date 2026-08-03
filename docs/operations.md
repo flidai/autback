@@ -56,6 +56,9 @@ oldest-first to 8 GiB, but only while no managed job is active. At 85% filesyste
 use, the same cache pruning runs and BuildKit retention tightens from 10 GiB to 4 GiB.
 The host janitor removes only terminal services older than 24 hours. Its cutoff is
 independent because Swarm does not expose the task completion timestamp in `service ls`.
+It also removes unused anonymous Docker volumes and dangling images older than 24 hours.
+BuildKit pruning targets the dedicated `autback-buildkit` daemon rather than Docker's
+unrelated default builder.
 `AUTBACK_ORPHAN_RETENTION_SECONDS`, `AUTBACK_JOB_RETENTION_MINUTES`,
 `AUTBACK_CACHE_HIGH_BYTES`, `AUTBACK_CACHE_LOW_BYTES`, and `AUTBACK_DISK_HIGH_PERCENT` override
 these defaults for a larger worker.

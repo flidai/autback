@@ -2,12 +2,12 @@ import { LitElement, html, nothing, svg, type TemplateResult } from 'lit'
 import { DatastarLit } from './datastar-lit'
 import { consoleStyles } from './console-styles'
 import { duration, formatBytes, formatMilliseconds, formatPercent, relativeTime, shortDigest, shortID, successRate } from './format'
+import './runs-table'
 import type {
   AuditView,
   ConsoleSignals,
   OperationDetailView,
   OperationView,
-  QueueView,
   ResourceSampleView,
   ResourceView,
 } from './generated/console'
@@ -95,27 +95,23 @@ class AutbackConsole extends DatastarLit(LitElement) {
   private page(signals: ConsoleSignals): TemplateResult {
     const now = Date.parse(signals.clock.now)
     switch (this.routeKind) {
-      case 'project': return this.projectPage(signals, now)
+      case 'project': return this.projectPage(signals)
       case 'operation': return this.runPage(signals, now)
       case 'audit': return this.auditPage(signals, now)
-      default: return this.overview(signals, now)
+      default: return this.overview(signals)
     }
   }
 
-  private overview(signals: ConsoleSignals, now: number): TemplateResult {
+  private overview(signals: ConsoleSignals): TemplateResult {
     return html`
       ${this.pageHead('Shared runner', 'Runs and capacity', 'See what is running, what is next, and whether the machine has room to do more.')}
       ${this.resourceChart(signals.resources, 'Runner utilization')}
       ${this.resourceMetrics(signals.resources)}
-      <section class="grid">
-        ${this.jobsPanel(signals.queue, now)}
-        ${this.runnerPanel(signals)}
-      </section>
-      ${this.runsPanel(signals.operations, 'Recent runs', now)}
+      <autback-runs-table></autback-runs-table>
     `
   }
 
-  private projectPage(signals: ConsoleSignals, now: number): TemplateResult {
+  private projectPage(signals: ConsoleSignals): TemplateResult {
     const project = signals.session.projects.find((item) => item.slug === this.project)
     if (!project) return this.notFound('You do not have access to this project.')
     return html`
@@ -130,8 +126,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
       </section>
       ${this.projectTrends(signals.operations)}
       ${this.resourceChart(signals.resources, 'Resource utilization')}
-      <section class="grid">${this.jobsPanel(signals.queue, now)}${this.runnerPanel(signals)}</section>
-      ${this.runsPanel(signals.operations, 'Project runs', now)}
+      <autback-runs-table></autback-runs-table>
     `
   }
 
@@ -210,42 +205,6 @@ class AutbackConsole extends DatastarLit(LitElement) {
     </section>`
   }
 
-  private jobsPanel(queue: QueueView[], now: number): TemplateResult {
-    return html`<article class="panel">
-      <header class="panel-head"><div class="panel-title">${icon('queue')}Jobs</div><span class="panel-meta">${queue.length}</span></header>
-      <div class="queue-list">${queue.length === 0 ? emptyState('queue', 'No jobs queued or active', 'The next submitted job can start immediately.') : queue.map((item) => html`
-        <div class="queue-row"><span class="position">${item.position}</span>
-          <div class="queue-main"><a href=${runURL(item.kind, item.id)}>${shortID(item.id, 24)}</a><div class="queue-sub">${item.projectName} · ${relativeTime(item.acceptedAt, now)}</div></div>
-          <span class="badge ${item.status}">${item.status}</span>
-        </div>`)}
-      </div>
-    </article>`
-  }
-
-  private runnerPanel(signals: ConsoleSignals): TemplateResult {
-    const resources = signals.resources
-    return html`<article class="panel runner-panel"><header class="panel-head"><div class="panel-title">${icon('cpu')}Runner</div><span class="badge ${signals.worker.status}">${signals.worker.status}</span></header>
-      <div class="runner-capacity"><div><strong>${resources.cpuCores || '—'}</strong><span>vCPU</span></div><div><strong>${formatBytes(resources.memoryTotalBytes)}</strong><span>Memory</span></div><div><strong>${formatBytes(resources.diskTotalBytes)}</strong><span>Disk</span></div></div>
-      <div class="runner-now"><span class="live-dot"></span><div><strong>${signals.worker.activeId ? shortID(signals.worker.activeId, 22) : 'Ready'}</strong><span>${signals.worker.activeId ? 'active now' : 'waiting for work'}</span></div></div>
-    </article>`
-  }
-
-  private runsPanel(operations: OperationView[], title: string, now: number): TemplateResult {
-    return html`<article class="panel"><header class="panel-head"><div class="panel-title">${icon('activity')}${title}</div><span class="panel-meta">${operations.length} shown</span></header>
-      ${operations.length === 0 ? emptyState('activity', 'No runs yet', 'Submit a repository command with autback exec.') : html`<div class="table-wrap"><table>
-        <thead><tr><th>Run</th><th>Status</th><th>Project</th><th>Duration</th><th>CPU peak</th><th>Memory peak</th><th>Created</th></tr></thead>
-        <tbody>${operations.map((run) => html`<tr>
-          <td class="primary"><a href=${runURL(run.kind, run.id)}><span class="kind-icon">${icon(run.kind === 'build' ? 'cube' : 'terminal')}</span><span><span class="mono">${shortID(run.id, 20)}</span><br><span class="muted">${run.command || capitalize(run.kind)}</span></span></a></td>
-          <td><span class="badge ${run.status}">${run.status}</span></td><td>${run.projectName}</td>
-          <td class="mono">${duration(run.startedAt, run.finishedAt, now)}</td>
-          <td class="mono">${run.resources?.sampleCount ? formatPercent(run.resources.cpuPeak) : '—'}</td>
-          <td class="mono">${run.resources?.sampleCount ? formatBytes(run.resources.memoryBytesPeak) : '—'}</td>
-          <td>${relativeTime(run.createdAt, now)}</td>
-        </tr>`)}</tbody>
-      </table></div>`}
-    </article>`
-  }
-
   private runSummaryPanel(run: OperationDetailView, now: number): TemplateResult {
     return html`<article class="panel"><header class="panel-head"><div class="panel-title">${icon('activity')}Run summary</div><span class="panel-meta">${run.resources.sampleCount} samples</span></header>
       <dl class="definition"><dt>Started</dt><dd>${run.startedAt ? relativeTime(run.startedAt, now) : '—'}</dd><dt>CPU peak</dt><dd>${formatPercent(run.resources.cpuPeak)}</dd><dt>Memory peak</dt><dd>${formatBytes(run.resources.memoryBytesPeak)}</dd><dt>Queue wait</dt><dd>${formatMilliseconds(run.queueWaitMillis)}</dd></dl>
@@ -310,7 +269,6 @@ function emptyState(iconName: IconName, title: string, description: string): Tem
   return html`<div class="empty"><div>${icon(iconName)}<strong>${title}</strong><span>${description}</span></div></div>`
 }
 
-function runURL(kind: string, id: string): string { return `/app/runs/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` }
 function capacity(resources: ResourceView): string { return resources.cpuCores ? `${resources.cpuCores} vCPU · ${formatBytes(resources.memoryTotalBytes)} · ${formatBytes(resources.diskTotalBytes)} disk` : 'Waiting for capacity data' }
 function chartY(value: number): number { return 216 - Math.max(0, Math.min(1, value)) * 196 }
 function chartPoints(samples: ResourceSampleView[], value: (sample: ResourceSampleView) => number): string {

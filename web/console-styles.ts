@@ -190,7 +190,6 @@ export const consoleStyles = css`
   .metric-value { margin-top: 18px; font-size: 24px; font-weight: 570; letter-spacing: -0.04em; }
   .metric-note { margin-top: 2px; color: var(--text-faint); font-size: 10px; }
 
-  .grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(290px, 0.75fr); gap: 14px; margin-bottom: 18px; }
   .panel { overflow: hidden; border-radius: 11px; }
   .panel-head { display: flex; min-height: 53px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; border-bottom: 1px solid var(--line); }
   .panel-title { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 620; }
@@ -214,36 +213,6 @@ export const consoleStyles = css`
   .series.memory { stroke: var(--green); opacity: .9; }
   .chart-times { display: flex; justify-content: space-between; padding-left: 42px; color: var(--text-faint); font: 9px var(--mono); }
 
-  .runner-panel { min-height: 271px; }
-  .runner-capacity { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
-  .runner-capacity div { padding: 22px 14px; border-right: 1px solid var(--line); }
-  .runner-capacity div:last-child { border-right: 0; }
-  .runner-capacity strong { display: block; color: var(--text); font-size: 17px; font-weight: 570; letter-spacing: -.03em; }
-  .runner-capacity span { display: block; margin-top: 4px; color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .07em; }
-  .runner-now { display: flex; align-items: center; gap: 12px; padding: 22px 18px; }
-  .runner-now .live-dot { flex: 0 0 auto; }
-  .runner-now strong { display: block; font: 11px var(--mono); }
-  .runner-now span:not(.live-dot) { display: block; margin-top: 3px; color: var(--text-faint); font-size: 10px; }
-
-  .worker-orbit { position: relative; display: grid; min-height: 218px; place-items: center; overflow: hidden; }
-  .worker-orbit::before, .worker-orbit::after { content: ""; position: absolute; border: 1px solid var(--line); border-radius: 50%; }
-  .worker-orbit::before { width: 185px; height: 185px; }
-  .worker-orbit::after { width: 128px; height: 128px; border-color: rgba(227,130,66,.2); }
-  .worker-core { position: relative; z-index: 1; display: grid; width: 86px; height: 86px; place-items: center; border: 1px solid rgba(227,130,66,.3); border-radius: 50%; background: radial-gradient(circle at 35% 30%, #33251e, #17171a 68%); box-shadow: 0 0 44px rgba(227,130,66,.08); }
-  .worker-core svg { width: 25px; color: var(--ember); }
-  .worker-label { position: absolute; z-index: 1; bottom: 21px; text-align: center; }
-  .worker-label strong { display: block; font-size: 12px; font-weight: 600; }
-  .worker-label span { color: var(--text-faint); font-size: 10px; }
-
-  .queue-list { min-height: 218px; }
-  .queue-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 11px; align-items: center; min-height: 58px; padding: 8px 18px; border-bottom: 1px solid var(--line); }
-  .queue-row:last-child { border-bottom: 0; }
-  .position { display: grid; width: 23px; height: 23px; place-items: center; border: 1px solid var(--line); border-radius: 6px; color: var(--text-faint); font: 10px var(--mono); }
-  .queue-main { min-width: 0; }
-  .queue-main a { display: block; overflow: hidden; font: 11px var(--mono); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-  .queue-main a:hover { color: var(--ember); }
-  .queue-sub { margin-top: 3px; color: var(--text-faint); font-size: 10px; }
-
   .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); font-size: 10px; font-weight: 560; white-space: nowrap; }
   .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
   .badge.success, .badge.running, .badge.active, .badge.online { border-color: rgba(112,214,162,.18); background: var(--green-soft); color: var(--green); }
@@ -258,8 +227,6 @@ export const consoleStyles = css`
   td.primary { min-width: 200px; color: var(--text); }
   td.primary a { display: flex; align-items: center; gap: 9px; text-decoration: none; }
   td.primary a:hover { color: var(--ember); }
-  .kind-icon { display: grid; flex: 0 0 auto; width: 26px; height: 26px; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: var(--canvas-soft); }
-  .kind-icon svg { width: 13px; color: var(--text-faint); }
   .mono { font-family: var(--mono); font-size: 10px; }
   .muted { color: var(--text-faint); }
 
@@ -311,8 +278,7 @@ export const consoleStyles = css`
 
   @media (max-width: 1040px) {
     .metrics { grid-template-columns: repeat(2, 1fr); }
-    .grid, .detail-grid, .trend-grid { grid-template-columns: 1fr; }
-    .worker-orbit { min-height: 190px; }
+    .detail-grid, .trend-grid { grid-template-columns: 1fr; }
   }
 
   @media (max-width: 760px) {

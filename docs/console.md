@@ -31,14 +31,19 @@ control buttons, or client-side calls to Connect.
 
 ## Routes and signals
 
-- `/app`: VM utilization, jobs with `queued` or `active` status, authorized projects, and recent runs.
-- `/app/projects/{project}`: project image/trust posture, utilization, jobs, and run history.
+- `/app`: VM utilization and one ordered Runs list spanning active, queued, and completed work.
+- `/app/projects/{project}`: project image/trust posture, utilization, and the same project-scoped Runs list.
 - `/app/runs/{kind}/{id}`: provenance, timing, command, and a bounded 64 KiB log tail.
 - `/app/audit`: authorized governance events.
 
 Go console structs generate the TypeScript contracts used by Lit. The stable signal roots
 are `$session`, `$service`, `$worker`, `$clock`, `$resources`, `$queue`, `$operations`, `$operation`, `$log`, `$audit`,
 and `$status`. Canonical route identity remains in server URLs; Lit does not route or fetch.
+
+`<autback-runs-table>` reads `$queue`, `$operations`, and `$clock` directly through the
+Datastar Lit adapter. It presents active work first, queued work in FIFO order, and then
+completed work newest first. TanStack Table owns the local search and status/kind filters;
+filtering does not introduce another data source or browser API.
 
 The SSE connection also publishes the server-owned `$clock` once per second. Running
 durations and relative timestamps derive from that signal, so they advance without browser

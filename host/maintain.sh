@@ -47,8 +47,12 @@ if [[ "$worker_busy" == false ]]; then
 fi
 
 docker container prune --force --filter 'label=org.testcontainers=true' --filter 'until=24h' >/dev/null
+docker volume prune --force >/dev/null
+docker image prune --force --filter 'until=24h' >/dev/null
 if (( $(df --output=pcent /var/lib/autback | tail -1 | tr -cd '0-9') >= disk_high_percent )); then
-  docker builder prune --force --filter 'until=24h' --keep-storage 4GB >/dev/null
+  docker exec autback-buildkit buildctl --addr tcp://127.0.0.1:1234 prune \
+    --all --keep-storage 4000 >/dev/null
 else
-  docker builder prune --force --filter 'until=336h' --keep-storage 10GB >/dev/null
+  docker exec autback-buildkit buildctl --addr tcp://127.0.0.1:1234 prune \
+    --all --keep-storage 10000 >/dev/null
 fi

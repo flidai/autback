@@ -3,13 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Autback is self-hosted remote execution for small, trusted engineering teams—built on REAPI, OCI, Docker Buildx, and BuildKit.">
-    <meta name="theme-color" content="#171613">
+    <meta name="description" content="Autback is self-hosted remote execution for small, trusted engineering teams. Run heavy tests and native image builds on compute you control.">
+    <meta name="theme-color" content="#0f0e14">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Autback — remote execution for trusted teams">
-    <meta property="og:description" content="Move heavy tests and image builds off laptops and hosted runners without adopting a proprietary pipeline language.">
-    <title>Autback — remote execution for trusted teams</title>
+    <meta property="og:title" content="Autback — heavy work, light laptop">
+    <meta property="og:description" content="Remote tests and native image builds on compute you control.">
+    <meta property="og:image" content="assets/background.webp">
+    <title>Autback — heavy work, light laptop</title>
     <link rel="stylesheet" href="styles.css">
+    <script defer src="script.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -17,285 +20,329 @@
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Autback home">
         <span class="brand-mark" aria-hidden="true">A</span>
-        <span>autback</span>
+        <span>Autback</span>
       </a>
-      <nav aria-label="Primary navigation">
-        <a href="#architecture">Architecture</a>
-        <a href="#benchmarks">Benchmarks</a>
-        <a href="https://github.com/flidai/autback/blob/main/docs/architecture.md">Docs</a>
-        <a class="nav-cta" href="https://github.com/flidai/autback">GitHub ↗</a>
+
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="main-navigation">
+        <span class="sr-only">Open navigation</span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+
+      <nav id="main-navigation" aria-label="Primary navigation">
+        <div class="nav-main">
+          <a href="#workflow">Workflow</a>
+          <a href="#standards">Standards</a>
+          <a href="#benchmarks">Benchmarks</a>
+          <a href="#trust">Trust boundary</a>
+        </div>
+        <div class="nav-actions">
+          <a href="https://github.com/flidai/autback/blob/main/docs/architecture.md">Docs</a>
+          <a class="nav-cta" href="https://github.com/flidai/autback">View on GitHub</a>
+        </div>
       </nav>
     </header>
 
     <main id="main-content">
       <section class="hero" id="top">
+        <img class="hero-landscape" src="assets/background.webp" alt="Illustrated desert landscape beneath a star-filled sky and coral clouds">
+        <div class="hero-shade" aria-hidden="true"></div>
+
         <div class="hero-copy">
-          <p class="eyebrow">Self-hosted remote execution</p>
-          <h1>Remote compute for the work your laptop shouldn’t carry.</h1>
-          <p class="hero-lede">
-            Autback runs heavy tests and native container builds on one shared Linux worker.
-            Your repository keeps its commands, OCI environment, and task graph. Autback
-            supplies the remote execution boundary.
-          </p>
+          <p class="eyebrow">Remote execution for trusted teams</p>
+          <h1>Heavy work.<br>Light laptop.</h1>
+          <p class="hero-lede">Remote tests and native image builds on compute you control.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="https://github.com/flidai/autback">View on GitHub ↗</a>
-            <a class="button button-secondary" href="#how-it-works">See how it works ↓</a>
+            <a class="button button-primary" href="https://github.com/flidai/autback">Explore Autback <span aria-hidden="true">→</span></a>
+            <a class="button button-secondary" href="#workflow">See how it works</a>
           </div>
-          <p class="hero-note">Apache-2.0 · For small, trusted engineering teams</p>
         </div>
 
-        <div class="terminal" aria-label="Example Autback commands">
-          <div class="terminal-bar">
-            <span>project shell</span>
-            <span>autback / connected</span>
+        <div class="product-window" aria-label="Autback remote execution example">
+          <div class="window-bar">
+            <div class="window-context">
+              <span class="mini-mark" aria-hidden="true">A</span>
+              <strong>leapview</strong>
+              <span>/</span>
+              <span>production</span>
+            </div>
+            <div class="window-status"><span aria-hidden="true"></span> Worker connected</div>
           </div>
-          <pre><code><span class="prompt">$</span> autback exec -- task test
-<span class="muted">queue</span>    admitted job_01K...
-<span class="muted">source</span>   0 B uploaded · CAS warm
-<span class="muted">worker</span>   task test
-<span class="success">passed</span>   exit 0 · 3.89s
 
-<span class="prompt">$</span> autback build -- --push \
-    -t ghcr.io/acme/app:sha .
-<span class="success">pushed</span>   sha256:9f34…</code></pre>
+          <div class="window-tabs" role="tablist" aria-label="Autback workflow">
+            <button id="tab-execute" type="button" role="tab" aria-selected="true" aria-controls="panel-execute" tabindex="0" data-tab="execute">Execute</button>
+            <button id="tab-sync" type="button" role="tab" aria-selected="false" aria-controls="panel-sync" tabindex="-1" data-tab="sync">Sync</button>
+            <button id="tab-build" type="button" role="tab" aria-selected="false" aria-controls="panel-build" tabindex="-1" data-tab="build">Build</button>
+            <button id="tab-queue" type="button" role="tab" aria-selected="false" aria-controls="panel-queue" tabindex="-1" data-tab="queue">Queue</button>
+          </div>
+
+          <div class="window-body">
+            <section id="panel-execute" class="demo-panel" role="tabpanel" aria-labelledby="tab-execute" data-panel="execute">
+              <div class="command-card">
+                <div class="command-title"><span class="status-dot success-dot" aria-hidden="true"></span> task test</div>
+                <code><span>$</span> autback exec -- task test</code>
+                <div class="command-meta">
+                  <span>project leapview</span>
+                  <span>image sha256:40d2…</span>
+                </div>
+              </div>
+              <div class="flow-arrow" aria-hidden="true">→</div>
+              <div class="worker-card">
+                <span class="worker-label">CPX32 · active</span>
+                <strong>4 vCPU / 8 GB</strong>
+                <span>Full machine available</span>
+              </div>
+              <div class="log-card">
+                <div class="log-header"><strong>Job job_01K…</strong><span>3.893s</span></div>
+                <code><span class="log-muted">source</span> 0 B uploaded</code>
+                <code><span class="log-muted">runner</span> starting task test</code>
+                <code><span class="log-good">passed</span> exit 0</code>
+              </div>
+            </section>
+
+            <section id="panel-sync" class="demo-panel" role="tabpanel" aria-labelledby="tab-sync" data-panel="sync" hidden>
+              <div class="sync-summary">
+                <span class="panel-kicker">Exact worktree</span>
+                <strong>1,921 files</strong>
+                <span>Tracked + non-ignored untracked</span>
+              </div>
+              <div class="digest-stack" aria-label="Content-addressed source blocks">
+                <span>sha256:ea34…</span>
+                <span>sha256:9f02…</span>
+                <span>sha256:41c8…</span>
+                <span class="digest-hit">all present</span>
+              </div>
+              <div class="transfer-card">
+                <span>REAPI CAS</span>
+                <strong>0 B</strong>
+                <span>uploaded on repeat</span>
+              </div>
+            </section>
+
+            <section id="panel-build" class="demo-panel" role="tabpanel" aria-labelledby="tab-build" data-panel="build" hidden>
+              <div class="build-command">
+                <span class="panel-kicker">Native Buildx</span>
+                <code>$ autback build -- --push \<br>&nbsp;&nbsp;-t ghcr.io/flidai/app:sha .</code>
+              </div>
+              <div class="build-steps">
+                <span class="complete">✓ context</span>
+                <span class="complete">✓ cached layers</span>
+                <span class="active">● push manifest</span>
+              </div>
+              <div class="digest-card">
+                <span>immutable handoff</span>
+                <strong>sha256:9f34…</strong>
+                <span>smoke-test exact digest</span>
+              </div>
+            </section>
+
+            <section id="panel-queue" class="demo-panel queue-demo" role="tabpanel" aria-labelledby="tab-queue" data-panel="queue" hidden>
+              <div class="queue-entry running"><span>01</span><strong>task test</strong><em>running</em></div>
+              <div class="queue-entry"><span>02</span><strong>build --push</strong><em>queued</em></div>
+              <div class="queue-entry"><span>03</span><strong>task browser:test</strong><em>queued</em></div>
+              <div class="queue-worker"><span>ACTIVE WORKER</span><strong>Elastic CPU + RAM</strong></div>
+            </section>
+          </div>
+        </div>
+
+        <div class="hero-facts" aria-label="Autback proof points">
+          <div><strong>0 B</strong><span>repeat source upload</span></div>
+          <div><strong>13.68 s</strong><span>build + push median</span></div>
+          <div><strong>1 job</strong><span>the whole machine</span></div>
+          <div><strong>Apache-2.0</strong><span>open source</span></div>
         </div>
       </section>
 
-      <section class="standards" aria-label="Core standards">
-        <span>REAPI CAS</span>
-        <span>OCI environments</span>
-        <span>Buildx / BuildKit</span>
-        <span>Docker Swarm</span>
-        <span>FIFO admission</span>
-      </section>
-
-      <section class="section problem-section" id="why-autback">
-        <div class="section-heading">
-          <p class="eyebrow">Why Autback</p>
-          <h2>Your tools already know how to do the work.</h2>
-          <p>
-            The missing piece is a durable, authenticated path from a developer laptop or
-            GitHub Actions to compute you own.
-          </p>
-        </div>
-
-        <div class="feature-grid">
-          <article class="feature-card">
-            <p class="card-index">01</p>
-            <h3>Keep the laptop responsive</h3>
-            <p>Send CPU-heavy tests, browser suites, and container builds to a persistent worker while local tools stay usable.</p>
-          </article>
-          <article class="feature-card">
-            <p class="card-index">02</p>
-            <h3>Pay for the machine</h3>
-            <p>Use one right-sized VPS across the team instead of metered build minutes. Hetzner is the current host, not a dependency.</p>
-          </article>
-          <article class="feature-card">
-            <p class="card-index">03</p>
-            <h3>Keep the exit doors open</h3>
-            <p>Source uses REAPI CAS, environments use OCI images, and builds remain ordinary native Buildx and BuildKit.</p>
-          </article>
+      <section class="standards-strip" id="standards" aria-labelledby="standards-title">
+        <p id="standards-title">Built on the tools you already trust</p>
+        <div class="standards-grid">
+          <span>REAPI CAS</span>
+          <span>OCI</span>
+          <span>Buildx</span>
+          <span>BuildKit</span>
+          <span>Testcontainers</span>
+          <span>GitHub OIDC</span>
         </div>
       </section>
 
-      <section class="section architecture-section" id="architecture">
-        <div class="section-heading light">
-          <p class="eyebrow">Architecture</p>
-          <h2>A thin control plane around standards.</h2>
-          <p>Autback owns admission, identity, logs, and lifecycle. Upstream tools keep doing the actual work.</p>
-        </div>
+      <section class="journey" id="workflow" aria-label="Autback workflow">
+        <article class="scene scene-execute">
+          <span class="journey-marker" aria-hidden="true"></span>
+          <div class="scene-copy">
+            <p class="scene-label">Execute</p>
+            <h2>Run anything without a pipeline language.</h2>
+            <p>Your repository keeps its Taskfile, Makefile, scripts, and argument vectors. Autback adds the remote boundary—not another workflow format.</p>
+            <a href="https://github.com/flidai/autback/blob/main/docs/repository-configuration.md">Repository contract <span aria-hidden="true">→</span></a>
+          </div>
 
-        <div class="architecture-map" aria-label="Autback service architecture">
-          <div class="architecture-column">
-            <p class="architecture-label">Dispatch</p>
-            <div class="architecture-node">
-              <strong>Developer CLI</strong>
-              <span>Per-device token</span>
+          <div class="console-stage">
+            <div class="console-toolbar">
+              <span class="mini-mark" aria-hidden="true">A</span>
+              <span>leapview / test</span>
+              <span class="console-live">● live</span>
             </div>
-            <div class="architecture-node">
-              <strong>GitHub Actions</strong>
-              <span>OIDC exchange</span>
-            </div>
-          </div>
-          <div class="architecture-arrow" aria-hidden="true">→</div>
-          <div class="architecture-column emphasized">
-            <p class="architecture-label">Control</p>
-            <div class="architecture-node">
-              <strong>Connect API</strong>
-              <span>Auth · projects · audit</span>
-            </div>
-            <div class="architecture-node">
-              <strong>Durable FIFO</strong>
-              <span>One active worker lease</span>
+            <div class="console-grid">
+              <div class="console-command">
+                <span class="panel-kicker">Repository command</span>
+                <code><span>$</span> autback exec \<br>&nbsp;&nbsp;--cache go-build=/root/.cache/go-build \<br>&nbsp;&nbsp;-- task test</code>
+              </div>
+              <div class="console-output">
+                <div><span>auth</span><strong>device token</strong><em>ok</em></div>
+                <div><span>source</span><strong>REAPI CAS</strong><em>0 B</em></div>
+                <div><span>worker</span><strong>OCI sha256:40d2…</strong><em>active</em></div>
+                <div><span>result</span><strong>task test</strong><em>exit 0</em></div>
+              </div>
             </div>
           </div>
-          <div class="architecture-arrow" aria-hidden="true">→</div>
-          <div class="architecture-column">
-            <p class="architecture-label">Execute</p>
-            <div class="architecture-node">
-              <strong>OCI test job</strong>
-              <span>Swarm + Testcontainers</span>
-            </div>
-            <div class="architecture-node">
-              <strong>Native image build</strong>
-              <span>Buildx + BuildKit</span>
-            </div>
-          </div>
-        </div>
 
-        <div class="trust-note">
-          <strong>Honest trust boundary.</strong>
-          <span>Jobs may use the worker Docker socket for Testcontainers. That is host control, not a sandbox. Autback is intentionally for trusted repositories and trusted pull requests.</span>
-        </div>
+          <div class="scene-footnotes">
+            <div><strong>Project-owned OCI</strong><span>Pin the complete environment as code.</span></div>
+            <div><strong>Arbitrary argv</strong><span>No shell interpretation unless you request it.</span></div>
+            <div><strong>Testcontainers ready</strong><span>Sibling containers use the worker Docker daemon.</span></div>
+          </div>
+        </article>
+
+        <article class="scene scene-sync">
+          <span class="journey-marker" aria-hidden="true"></span>
+          <div class="split-scene">
+            <div class="scene-copy">
+              <p class="scene-label">Sync</p>
+              <h2>Only the change crosses the wire.</h2>
+              <p>Git chooses the exact worktree. REAPI Merkle trees and FindMissingBlobs upload only content the shared CAS does not already have.</p>
+              <a href="https://github.com/flidai/autback/blob/main/docs/architecture.md">Source architecture <span aria-hidden="true">→</span></a>
+            </div>
+            <div class="cas-visual" aria-label="Content-addressed source synchronization">
+              <div class="cas-source"><span>worktree</span><strong>1,921 files</strong></div>
+              <div class="cas-path" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="cas-store">
+                <span class="panel-kicker">Shared CAS</span>
+                <code>ea34… <em>hit</em></code>
+                <code>9f02… <em>hit</em></code>
+                <code>41c8… <em>hit</em></code>
+              </div>
+              <div class="cas-result"><strong>0 B</strong><span>transferred</span></div>
+            </div>
+          </div>
+          <div class="scene-footnotes compact">
+            <div><strong>Dirty bytes included</strong><span>Tracked and non-ignored untracked source.</span></div>
+            <div><strong>Ignored files excluded</strong><span>Local databases, secrets, and outputs stay local.</span></div>
+            <div><strong>No clone drift</strong><span>The uploaded tree is the worktree you invoked.</span></div>
+          </div>
+        </article>
+
+        <article class="scene scene-queue">
+          <span class="journey-marker" aria-hidden="true"></span>
+          <div class="split-scene reverse">
+            <div class="scene-copy">
+              <p class="scene-label">Strict FIFO</p>
+              <h2>One queue. The whole machine.</h2>
+              <p>Every dispatcher submits to one durable first-in, first-out queue. One active operation gets the worker’s available CPU and memory.</p>
+              <a href="https://github.com/flidai/autback/blob/main/docs/operations.md">Operations model <span aria-hidden="true">→</span></a>
+            </div>
+            <div class="scheduler-visual">
+              <div class="scheduler-header"><span>shared worker</span><strong>4 vCPU · 8 GB</strong></div>
+              <ol>
+                <li class="active"><span>01</span><strong>task test</strong><em>running</em></li>
+                <li><span>02</span><strong>build --push</strong><em>queued</em></li>
+                <li><span>03</span><strong>task browser:test</strong><em>queued</em></li>
+              </ol>
+              <div class="capacity-bar"><span></span><strong>capacity follows the active job</strong></div>
+            </div>
+          </div>
+          <div class="scene-footnotes compact">
+            <div><strong>Durable admission</strong><span>Queue and active lease survive restart.</span></div>
+            <div><strong>No resource profiles</strong><span>Deploy unchanged on a larger or smaller VPS.</span></div>
+            <div><strong>Parallel within the job</strong><span>Your task runner owns useful concurrency.</span></div>
+          </div>
+        </article>
+
+        <article class="scene scene-build">
+          <span class="journey-marker" aria-hidden="true"></span>
+          <div class="scene-copy">
+            <p class="scene-label">Build</p>
+            <h2>Native Buildx in. Immutable digest out.</h2>
+            <p>Autback gives Buildx a short-lived mTLS connection to upstream BuildKit. Your Dockerfile, registry, and standard flags remain unchanged.</p>
+            <a href="https://github.com/flidai/autback/blob/main/docs/build-push-smoke.md">Build and smoke-test <span aria-hidden="true">→</span></a>
+          </div>
+
+          <div class="build-stage">
+            <div class="build-stage-command">
+              <span class="panel-kicker">GitHub Actions</span>
+              <code>autback build -- --push -t ghcr.io/flidai/app:sha .</code>
+            </div>
+            <div class="build-timeline" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div class="build-stage-result">
+              <span class="result-check" aria-hidden="true">✓</span>
+              <div><strong>Manifest pushed</strong><code>ghcr.io/flidai/app@sha256:9f34…</code></div>
+              <em>13.68 s</em>
+            </div>
+          </div>
+
+          <div class="scene-footnotes">
+            <div><strong>Upstream BuildKit</strong><span>No custom image builder protocol.</span></div>
+            <div><strong>Short-lived mTLS</strong><span>The CLI never receives Docker access.</span></div>
+            <div><strong>Exact-digest proof</strong><span>Smoke-test what the registry will deploy.</span></div>
+          </div>
+        </article>
       </section>
 
-      <section class="section workflow-section" id="how-it-works">
-        <div class="section-heading">
-          <p class="eyebrow">Repository contract</p>
-          <h2>Three decisions. No pipeline language.</h2>
-        </div>
-
-        <ol class="workflow-list">
-          <li>
-            <span class="step-number">1</span>
-            <div>
-              <h3>Link the repository</h3>
-              <p>A tiny committed file identifies the server-side project. It contains no commands, credentials, hooks, or environment values.</p>
-              <pre><code>{ "project": "acme-api" }</code></pre>
-            </div>
-          </li>
-          <li>
-            <span class="step-number">2</span>
-            <div>
-              <h3>Choose an OCI environment</h3>
-              <p>Build a normal Dockerfile, capture the immutable digest, and activate it for the project.</p>
-              <pre><code>autback image build \
-  --tag ghcr.io/acme/ci:autback \
-  --file Dockerfile.autback</code></pre>
-            </div>
-          </li>
-          <li>
-            <span class="step-number">3</span>
-            <div>
-              <h3>Run the command you already own</h3>
-              <p>Keep sequencing and parallelism in Task, Make, your test runner, or a script checked into the repository.</p>
-              <pre><code>autback exec \
-  --cache go-build=/root/.cache/go-build \
-  -- task test</code></pre>
-            </div>
-          </li>
-        </ol>
-      </section>
-
-      <section class="section queue-section">
-        <div class="queue-copy">
-          <p class="eyebrow">Capacity model</p>
-          <h2>One queue. One worker. The whole machine.</h2>
-          <p>
-            Every dispatcher can submit work. Autback starts it in strict arrival order and
-            admits one operation at a time, so unrelated jobs do not turn a small worker into
-            an oversubscribed scheduler.
-          </p>
-          <p>
-            Need concurrency? Submit one command whose repository-owned task graph runs work
-            in parallel. The active job can use the worker’s available CPU and memory without
-            Autback inventing resource profiles.
-          </p>
-        </div>
-        <div class="queue-visual" aria-label="FIFO queue leading to a single active worker">
-          <div class="queue-row">
-            <span class="queue-position">01</span>
-            <span>task test</span>
-            <strong>running</strong>
-          </div>
-          <div class="queue-row waiting">
-            <span class="queue-position">02</span>
-            <span>build --push</span>
-            <strong>queued</strong>
-          </div>
-          <div class="queue-row waiting">
-            <span class="queue-position">03</span>
-            <span>task browser:test</span>
-            <strong>queued</strong>
-          </div>
-          <div class="worker-meter">
-            <span>ACTIVE WORKER</span>
-            <span>elastic CPU + RAM</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="section benchmark-section" id="benchmarks">
-        <div class="section-heading">
+      <section class="proof" id="benchmarks">
+        <div class="proof-heading">
           <p class="eyebrow">Measured, not estimated</p>
           <h2>Warm-cache proof on an 8 GB VPS.</h2>
-          <p>Observed on the existing 4 vCPU Hetzner CPX32 during the LeapView proof on 2 August 2026.</p>
+          <p>Observed on the existing Hetzner CPX32 during the LeapView proof on 2 August 2026.</p>
+          <a href="https://github.com/flidai/autback/blob/main/docs/benchmarks.md">Read the complete methodology <span aria-hidden="true">→</span></a>
         </div>
-
-        <div class="metric-grid">
-          <article class="metric-card accent">
-            <strong>0 B</strong>
-            <span>source uploaded on repeated test runs</span>
-          </article>
-          <article class="metric-card">
-            <strong>13.68 s</strong>
-            <span>production image build + push median</span>
-          </article>
-          <article class="metric-card">
-            <strong>13.31 s</strong>
-            <span>site image build + push median</span>
-          </article>
-          <article class="metric-card">
-            <strong>3.89 s</strong>
-            <span>generic service warm E2E sample</span>
-          </article>
+        <div class="proof-grid">
+          <article><strong>0 B</strong><span>repeat test source upload</span></article>
+          <article><strong>13.68 s</strong><span>production build + push median</span></article>
+          <article><strong>13.31 s</strong><span>site build + push median</span></article>
+          <article><strong>3.89 s</strong><span>generic warm E2E sample</span></article>
         </div>
-        <p class="benchmark-footnote">
-          These are workload-specific measurements, not universal claims. The full method,
-          distributions, raw boundaries, and Depot comparison are committed as
-          <a href="https://github.com/flidai/autback/blob/main/docs/benchmarks.md">benchmark evidence ↗</a>.
-        </p>
+        <p class="proof-note">Workload-specific measurements with committed raw boundaries—not universal performance claims.</p>
       </section>
 
-      <section class="section ownership-section">
-        <div class="ownership-panel">
-          <p class="eyebrow">Your repository owns</p>
-          <ul>
-            <li>Commands and task composition</li>
-            <li>Dockerfiles and OCI environments</li>
-            <li>Testcontainers dependencies</li>
-            <li>Build tags and registry policy</li>
-          </ul>
+      <section class="trust" id="trust">
+        <div class="trust-copy">
+          <p class="eyebrow">A deliberate boundary</p>
+          <h2>Powerful because it trusts you.</h2>
+          <p>Autback is for a small team, its own projects, and trusted pull requests. Jobs may use the Docker socket for Testcontainers. That is host control, not a sandbox.</p>
         </div>
-        <div class="ownership-panel inverse">
-          <p class="eyebrow">Autback owns</p>
-          <ul>
-            <li>Project identity and authentication</li>
-            <li>Incremental source transfer</li>
-            <li>FIFO admission and cancellation</li>
-            <li>Remote logs and immutable build handoff</li>
-          </ul>
+        <div class="trust-grid">
+          <article><span>Local</span><strong>Per-device tokens</strong><p>Revocable credentials stored by the operating-system keyring.</p></article>
+          <article><span>GitHub</span><strong>OIDC exchange</strong><p>Short-lived project credentials bound to repository and workflow policy.</p></article>
+          <article><span>Worker</span><strong>Private Docker</strong><p>Only the control plane reaches Swarm; clients never receive host credentials.</p></article>
         </div>
       </section>
 
-      <section class="section final-cta">
-        <p class="eyebrow">Built for the trusted middle ground</p>
-        <h2>More capable than local Docker.<br>Smaller than a CI platform.</h2>
-        <p>Read the architecture, inspect the proof, and deploy Autback to a Linux machine you control.</p>
-        <div class="hero-actions centered">
-          <a class="button button-primary" href="https://github.com/flidai/autback">Explore the repository ↗</a>
-          <a class="button button-secondary dark" href="https://github.com/flidai/autback/blob/main/docs/operations.md">Read operations ↗</a>
+      <section class="final-cta">
+        <img src="assets/background.webp" alt="" aria-hidden="true">
+        <div class="final-shade" aria-hidden="true"></div>
+        <div>
+          <p class="eyebrow">Your compute. Your commands.</p>
+          <h2>Send the hard work out back.</h2>
+          <p>Open source remote execution for the trusted middle ground.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/flidai/autback">Explore the repository <span aria-hidden="true">→</span></a>
+            <a class="button button-secondary" href="https://github.com/flidai/autback/blob/main/docs/operations.md">Deploy to a worker</a>
+          </div>
         </div>
       </section>
     </main>
 
     <footer>
-      <a class="brand footer-brand" href="#top">
-        <span class="brand-mark" aria-hidden="true">A</span>
-        <span>autback</span>
-      </a>
-      <p>Self-hosted remote execution for small, trusted teams.</p>
-      <p><a href="https://github.com/flidai/autback/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/flidai/autback">GitHub</a></p>
+      <div class="footer-brand">
+        <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">A</span><span>Autback</span></a>
+        <p>Self-hosted remote execution for small, trusted teams.</p>
+      </div>
+      <div class="footer-links">
+        <div><strong>Product</strong><a href="#workflow">Workflow</a><a href="#benchmarks">Benchmarks</a><a href="#trust">Trust boundary</a></div>
+        <div><strong>Resources</strong><a href="https://github.com/flidai/autback/blob/main/docs/architecture.md">Architecture</a><a href="https://github.com/flidai/autback/blob/main/docs/operations.md">Operations</a><a href="https://github.com/flidai/autback">GitHub</a></div>
+      </div>
+      <div class="footer-bottom">
+        <span>Apache-2.0</span>
+        <span>Autback</span>
+      </div>
     </footer>
   </body>
 </html>

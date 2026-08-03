@@ -224,7 +224,14 @@ func renewServiceClient(ctx context.Context, api autbackv1connect.ControlService
 	if !ok {
 		return api, nil
 	}
-	return renewable.renew(ctx)
+	refreshed, err := renewable.renew(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the renewable wrapper so a long-running command can refresh more
+	// than once while it waits in FIFO or executes remotely.
+	renewable.ControlServiceClient = refreshed
+	return renewable, nil
 }
 
 func serviceLogin(ctx context.Context, settings config.Config, explicitToken string, args []string, streams IO) int {

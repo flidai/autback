@@ -18,9 +18,11 @@ of recreating Depot's proprietary service or introducing a new CI task language.
 ## Decision
 
 1. The stable client boundary is a protobuf-defined Connect API over HTTPS on port 443.
-2. Local users authenticate with one opaque, named, revocable token per device. GitHub
-   Actions authenticates through a project-specific OIDC trust relationship. SSH is only
-   for administration and break-glass access.
+2. GitHub proves human identity through OAuth, while Autback remains the authorization
+   authority. Interactive login issues one opaque, named, revocable Autback token per
+   device; the console uses a separate short-lived Autback browser session. GitHub Actions
+   authenticates through a project-specific OIDC trust relationship. SSH is only for
+   administration and break-glass access.
 3. The control plane owns projects, membership, authorization, admission, job/build
    identity, scheduling, status, logs, cancellation, credential issuance, and audit.
 4. Clients never receive Docker or Swarm access. Docker Swarm is the initial internal job
@@ -52,9 +54,9 @@ while retaining standard, independently replaceable execution and storage compon
   shipped in the product; historical measurements remain evidence only.
 - The CLI has one service transport, one repository project-link format, and no language
   suite/profile fallback.
-- The implementation includes project/user storage, token lifecycle, GitHub trust
-  relationships, OIDC exchange, operation-scoped credentials, TLS ingress, audit, and a
-  server-owned scheduler adapter.
+- The implementation includes project/user storage, immutable GitHub identity bindings,
+  device and browser session lifecycle, GitHub Actions trust relationships, OIDC exchange,
+  operation-scoped credentials, TLS ingress, audit, and a server-owned scheduler adapter.
 - A repository can express its environment with a Dockerfile/OCI image and its commands in
   an existing Taskfile, script, or CI step. autback stays an execution tool rather than a
   second build system.
@@ -70,6 +72,9 @@ while retaining standard, independently replaceable execution and storage compon
   project authorization, CI identity, auditing, and coworker access.
 - **One long-lived shared API key:** cannot separate users, devices, CI, workers, projects,
   or incident scope.
+- **GitHub access tokens as Autback credentials:** couples every service request to GitHub,
+  weakens per-device revocation, and makes an external provider Autback's authorization
+  store rather than its identity proof.
 - **Direct client access to Docker or Swarm:** exposes a root-equivalent infrastructure
   credential and makes scheduler choice part of the public API.
 - **A server-side Git clone plus proprietary patch protocol:** duplicates the incremental

@@ -912,6 +912,35 @@ func TestGitHubOIDCExchangeReturnsProjectScopedTemporaryToken(t *testing.T) {
 	}
 }
 
+func TestAdminBindsGitHubLoginToAnAutbackUserByImmutableID(t *testing.T) {
+	fixture := newFixtureWithDirectory(t, fakeGitHubDirectory{identity: control.ExternalIdentity{Provider: "github", Subject: "12345678", Login: "yacobolo"}})
+	client := fixture.client(fixture.bootstrap.Token)
+	member, err := client.CreateUser(context.Background(), connect.NewRequest(&autbackv1.CreateUserRequest{Name: "Jacob"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := client.BindGitHubIdentity(context.Background(), connect.NewRequest(&autbackv1.BindGitHubIdentityRequest{UserId: member.Msg.User.Id, Login: "Yacobolo"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Msg.Identity.Subject != "12345678" || bound.Msg.Identity.Login != "yacobolo" || bound.Msg.Identity.UserId != member.Msg.User.Id {
+		t.Fatalf("identity = %#v", bound.Msg.Identity)
+	}
+	resolved, err := fixture.store.UserByExternalIdentity(context.Background(), "github", "12345678", "yacobolo")
+	if err != nil || resolved.ID != member.Msg.User.Id {
+		t.Fatalf("resolved=%#v err=%v", resolved, err)
+	}
+}
+
+type fakeGitHubDirectory struct {
+	identity control.ExternalIdentity
+	err      error
+}
+
+func (f fakeGitHubDirectory) Resolve(context.Context, string) (control.ExternalIdentity, error) {
+	return f.identity, f.err
+}
+
 type fixture struct {
 	store     *controlsqlite.Store
 	bootstrap control.BootstrapResult
@@ -937,14 +966,18 @@ func newFixtureWithBuildCapability(t *testing.T, capability string) *fixture {
 }
 
 func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, capability string) *fixture {
-	return newFixtureWithCapabilitiesAndCapacity(t, verifier, capacity, capability, "")
+	return newFixtureWithOptions(t, verifier, capacity, capability, "", nil)
 }
 
 func newFixtureWithJobCapability(t *testing.T, capability string) *fixture {
-	return newFixtureWithCapabilitiesAndCapacity(t, nil, nil, "", capability)
+	return newFixtureWithOptions(t, nil, nil, "", capability, nil)
 }
 
-func newFixtureWithCapabilitiesAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string) *fixture {
+func newFixtureWithDirectory(t *testing.T, directory controlapi.GitHubDirectory) *fixture {
+	return newFixtureWithOptions(t, nil, nil, "", "", directory)
+}
+
+func newFixtureWithOptions(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string, directory controlapi.GitHubDirectory) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	store, err := controlsqlite.Open(filepath.Join(root, "state"), []byte("test-pepper-that-is-at-least-32-bytes"))
@@ -972,6 +1005,7 @@ func newFixtureWithCapabilitiesAndCapacity(t *testing.T, verifier controlapi.OID
 		RequiredBuildClientCapability: buildCapability,
 		RequiredJobClientCapability:   jobCapability,
 		Ready:                         func() bool { return !draining.Load() },
+		GitHubDirectory:               directory,
 	})
 	if err != nil {
 		t.Fatal(err)

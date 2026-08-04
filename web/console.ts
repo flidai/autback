@@ -35,6 +35,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
   get routeKind(): string { return this.getAttribute('route-kind') || 'overview' }
   get project(): string { return this.getAttribute('project') || '' }
   get operationID(): string { return this.getAttribute('operation-id') || '' }
+  get humanAuth(): boolean { return this.getAttribute('human-auth') === 'true' }
 
   override render(): TemplateResult {
     const signals = this.signals()
@@ -76,7 +77,7 @@ class AutbackConsole extends DatastarLit(LitElement) {
       </nav>
       <div class="sidebar-foot"><div class="identity"><span class="avatar">${initials(signals.session.user)}</span><div>
         <div class="identity-name">${signals.session.user || 'Connecting'}</div><div class="identity-role">${signals.session.admin ? 'Administrator' : 'Member'}</div>
-      </div></div></div>
+      </div>${this.humanAuth ? html`<a class="sign-out" href="/auth/logout">Sign out</a>` : nothing}</div></div>
     </aside>`
   }
 

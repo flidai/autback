@@ -49,6 +49,10 @@ type Capacity interface {
 	Check(context.Context) error
 }
 
+type GitHubDirectory interface {
+	Resolve(context.Context, string) (control.ExternalIdentity, error)
+}
+
 type Config struct {
 	Store                         *controlsqlite.Store
 	Scheduler                     control.Scheduler
@@ -64,6 +68,7 @@ type Config struct {
 	RequiredBuildClientCapability string
 	RequiredJobClientCapability   string
 	Ready                         func() bool
+	GitHubDirectory               GitHubDirectory
 }
 
 type Server struct {
@@ -124,9 +129,13 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func (s *Server) GetServiceInfo(context.Context, *connect.Request[autbackv1.GetServiceInfoRequest]) (*connect.Response[autbackv1.GetServiceInfoResponse], error) {
-	return connect.NewResponse(&autbackv1.GetServiceInfoResponse{Version: Version, Capabilities: []string{
+	capabilities := []string{
 		"connect", "projects", "project-images", "project-caches", "job-secrets-v1", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "durable-fifo-admission", version.CapabilityDurableJobPrepare, "buildkit-mtls",
-	}}), nil
+	}
+	if s.config.GitHubDirectory != nil {
+		capabilities = append(capabilities, "github-human-auth", "public-console")
+	}
+	return connect.NewResponse(&autbackv1.GetServiceInfoResponse{Version: Version, Capabilities: capabilities}), nil
 }
 
 func (s *Server) CreateUser(ctx context.Context, request *connect.Request[autbackv1.CreateUserRequest]) (*connect.Response[autbackv1.CreateUserResponse], error) {
@@ -142,6 +151,31 @@ func (s *Server) CreateUser(ctx context.Context, request *connect.Request[autbac
 		return nil, connectError(err)
 	}
 	return connect.NewResponse(&autbackv1.CreateUserResponse{User: userProto(user)}), nil
+}
+
+func (s *Server) BindGitHubIdentity(ctx context.Context, request *connect.Request[autbackv1.BindGitHubIdentityRequest]) (*connect.Response[autbackv1.BindGitHubIdentityResponse], error) {
+	principal, err := s.authenticate(ctx, request.Header())
+	if err != nil {
+		return nil, err
+	}
+	if principal.Kind != control.PrincipalDevice || !principal.Admin {
+		return nil, connectError(control.ErrForbidden)
+	}
+	if s.config.GitHubDirectory == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("GitHub human authentication is not configured"))
+	}
+	identity, err := s.config.GitHubDirectory.Resolve(ctx, request.Msg.Login)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("resolve GitHub login"))
+	}
+	identity, err = s.config.Store.BindExternalIdentity(ctx, principal, request.Msg.UserId, identity)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	if err := s.config.Store.Audit(ctx, principal, "", "identity.github.bind", identity.UserID, map[string]string{"github_id": identity.Subject, "github_login": identity.Login}); err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&autbackv1.BindGitHubIdentityResponse{Identity: externalIdentityProto(identity)}), nil
 }
 
 func (s *Server) CreateProject(ctx context.Context, request *connect.Request[autbackv1.CreateProjectRequest]) (*connect.Response[autbackv1.CreateProjectResponse], error) {
@@ -1282,6 +1316,13 @@ func buildProto(build control.Build) *autbackv1.Build {
 
 func userProto(user control.User) *autbackv1.User {
 	return &autbackv1.User{Id: user.ID, Name: user.Name, Admin: user.Admin, CreatedAt: timestamppb.New(user.CreatedAt)}
+}
+
+func externalIdentityProto(identity control.ExternalIdentity) *autbackv1.ExternalIdentity {
+	return &autbackv1.ExternalIdentity{
+		Provider: identity.Provider, Subject: identity.Subject, Login: identity.Login, UserId: identity.UserID,
+		CreatedAt: timestamppb.New(identity.CreatedAt), LastAuthenticatedAt: timestamp(identity.LastAuthenticatedAt),
+	}
 }
 
 func projectProto(project control.Project) *autbackv1.Project {

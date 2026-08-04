@@ -39,6 +39,19 @@ timestamp in newest-first order.
 
 ## Device enrollment
 
+Normal interactive login uses the HTTPS endpoints below `/auth`: the CLI creates a
+short-lived device request, the user signs in to the browser with GitHub and approves it,
+and the CLI polls until it can exchange the request exactly once for a standard device
+token. These browser endpoints are deliberately outside the stable Connect v1 API.
+
+`BindGitHubIdentity` is the administrative Connect command used before that flow. It
+requires an administrator device credential, resolves the supplied GitHub login through
+GitHub's API, and stores the returned immutable numeric subject against one Autback user.
+The mutable login is metadata only. A duplicate GitHub subject or a second GitHub identity
+for the same Autback user is rejected.
+
+### Recovery enrollment
+
 `CreateEnrollmentCode` requires an administrator's device credential and names the target
 user and device. Codes expire between one and 30 minutes after issuance, contain 256 bits
 of entropy, are stored only as a keyed digest, and lock permanently after five failed

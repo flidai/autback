@@ -14,6 +14,7 @@ func TestParseTokenAcceptsOnlyAutbackCredentials(t *testing.T) {
 	}{
 		{token: "autback_dt_tokdevice_secret", kind: control.PrincipalDevice, id: "tokdevice"},
 		{token: "autback_gh_tokgithub_secret", kind: control.PrincipalGitHub, id: "tokgithub"},
+		{token: "autback_ws_tokbrowser_secret", kind: control.PrincipalBrowser, id: "tokbrowser"},
 	}
 	for _, test := range tests {
 		kind, id, ok := parseToken(test.token)

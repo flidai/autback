@@ -15,7 +15,7 @@ curl --fail --cacert <ca.pem> https://<worker>/readyz
 
 The public endpoints are:
 
-- `443/tcp`: protobuf/Connect control API over HTTPS;
+- `443/tcp`: protobuf/Connect control API, GitHub login, and read-only console over HTTPS;
 - `50052/tcp`: protocol-transparent REAPI CAS gateway requiring an active job certificate;
 - `1235/tcp`: protocol-transparent BuildKit gateway requiring an active build certificate.
 
@@ -159,7 +159,7 @@ cache isolation, serialized execution, restart convergence, durable logs, closed
 ports, and a backup/restore drill—is recorded in
 [`../evidence/service/hardening.json`](../evidence/service/hardening.json).
 
-## Deployment and first login
+## Public console deployment and first login
 
 `task deploy` (also exposed as `task deploy:service`) requires an explicit existing
 host and SSH identity. It never provisions or replaces infrastructure. It installs the
@@ -169,29 +169,58 @@ device token in the OS keychain, then removes the bootstrap handoff file from th
 An upgrade stops the maintenance timer, any active maintenance invocation, and the old
 control plane before pulling infrastructure images, preventing the outgoing lifecycle
 controller from pruning a layer being installed for the incoming version.
+When a public domain is configured, the server obtains and renews its control-plane
+certificate with ACME TLS-ALPN on port 443. CAS and BuildKit continue using Autback's
+private operation-scoped PKI.
+
+Before deployment:
+
+1. Create an `A` record for `console.autback.dev` pointing to the worker public IP.
+2. Create a GitHub OAuth App with homepage `https://autback.dev` and callback
+   `https://console.autback.dev/auth/github/callback`. The app requests no OAuth scopes.
+3. Export the client ID and client secret only in the deploying shell. The deploy script
+   transfers them through a mode-0600 temporary file and installs root-owned
+   `/etc/autback/auth.env`; secrets never appear in process arguments or service logs.
 
 ```console
 AUTBACK_SERVER_IP=62.238.54.70 \
 AUTBACK_SSH_USER=developer \
 AUTBACK_SSH_KEY=~/.ssh/id_ed25519 \
+AUTBACK_SERVER_NAMES=console.autback.dev,62.238.54.70 \
+AUTBACK_PUBLIC_URL=https://console.autback.dev \
+AUTBACK_ACME_DOMAIN=console.autback.dev \
+AUTBACK_ACME_EMAIL=owner@example.com \
+AUTBACK_GITHUB_CLIENT_ID=... \
+AUTBACK_GITHUB_CLIENT_SECRET=... \
 AUTBACK_PROJECT=leapview \
 AUTBACK_PROJECT_NAME=LeapView \
 AUTBACK_PROJECT_IMAGE=ghcr.io/example/ci@sha256:... \
 task deploy:service
 ```
 
-Create a separate user and one-time enrollment for every coworker laptop:
+Provision the existing owner and each coworker by immutable GitHub identity:
 
 ```console
 autback admin user create --name coworker
 autback admin member add --project leapview --user usr...
-autback admin enrollment create --user usr... --device coworker-laptop --expires 10m
-# On the coworker's laptop; the code is read by a hidden prompt:
+autback admin identity github --user usr... --login coworker-github-login
+# On the coworker's laptop:
 autback login
 autback token list
 autback token revoke <token-id>
 ```
 
+The initial owner must also be bound once. Its user ID is available on the existing
+administrator token:
+
+```console
+owner_user_id=$(autback token list | jq -r '.[0].user_id')
+autback admin identity github --user "$owner_user_id" --login Yacobolo
+```
+
+Keep one working administrator device token until public login and device approval have
+both been verified. For recovery without GitHub, create a one-time enrollment with
+`autback admin enrollment create` and consume it with `autback login --recovery-code`.
 Use `autback admin user create`, `autback admin project create`, and `autback admin member add`
 to create coworker/project identities. No user's device token is shared.
 

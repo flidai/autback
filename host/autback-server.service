@@ -9,6 +9,7 @@ User=autback
 Group=autback
 SupplementaryGroups=docker
 EnvironmentFile=/etc/autback/service.env
+EnvironmentFile=-/etc/autback/auth.env
 ExecStart=/usr/local/bin/autback-server
 Restart=always
 RestartSec=2

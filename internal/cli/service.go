@@ -128,6 +128,15 @@ func serviceAdmin(ctx context.Context, api autbackv1connect.ControlServiceClient
 			return fail(streams.Stderr, err)
 		}
 		return encode(streams, response.Msg.Project)
+	case "identity github":
+		if values["--user"] == "" || values["--login"] == "" {
+			return failUsage(streams.Stderr, "admin identity github requires --user and --login")
+		}
+		response, err := api.BindGitHubIdentity(ctx, connect.NewRequest(&autbackv1.BindGitHubIdentityRequest{UserId: values["--user"], Login: values["--login"]}))
+		if err != nil {
+			return fail(streams.Stderr, err)
+		}
+		return encode(streams, response.Msg.Identity)
 	case "member add":
 		if values["--project"] == "" || values["--user"] == "" {
 			return failUsage(streams.Stderr, "admin member add requires --project and --user")
@@ -235,15 +244,32 @@ func renewServiceClient(ctx context.Context, api autbackv1connect.ControlService
 }
 
 func serviceLogin(ctx context.Context, settings config.Config, explicitToken string, args []string, streams IO) int {
+	streams = defaults(streams)
 	token := explicitToken
 	if token == "" && len(args) == 2 && args[0] == "--token" {
 		token = args[1]
 		args = nil
 	}
-	if len(args) != 0 {
-		return failUsage(streams.Stderr, "login accepts no arguments; enter an enrollment code when prompted")
+	recovery, noOpen, deviceName := false, false, ""
+	for len(args) > 0 {
+		switch args[0] {
+		case "--recovery-code":
+			recovery, args = true, args[1:]
+		case "--no-open":
+			noOpen, args = true, args[1:]
+		case "--device":
+			if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+				return failUsage(streams.Stderr, "--device requires a name")
+			}
+			deviceName, args = strings.TrimSpace(args[1]), args[2:]
+		default:
+			return failUsage(streams.Stderr, "login accepts --device <name>, --no-open, or --recovery-code")
+		}
 	}
-	if token == "" {
+	if recovery && (token != "" || noOpen || deviceName != "") {
+		return failUsage(streams.Stderr, "--recovery-code cannot be combined with another login method")
+	}
+	if token == "" && recovery {
 		code, err := readEnrollmentCode(streams)
 		if err != nil {
 			return fail(streams.Stderr, err)
@@ -257,6 +283,51 @@ func serviceLogin(ctx context.Context, settings config.Config, explicitToken str
 			return fail(streams.Stderr, fmt.Errorf("exchange enrollment code: %w", err))
 		}
 		token = exchanged.Msg.Token
+	}
+	if token == "" {
+		if deviceName == "" {
+			hostname, err := os.Hostname()
+			if err != nil || strings.TrimSpace(hostname) == "" {
+				deviceName = "developer-device"
+			} else {
+				deviceName = hostname
+			}
+		}
+		httpClient, target, err := controlclient.NewHTTPClient(settings.URL, "", settings.Service.CACertFile)
+		if err != nil {
+			return fail(streams.Stderr, err)
+		}
+		loginClient, err := authclient.NewBrowserLoginClient(target.String(), httpClient)
+		if err != nil {
+			return fail(streams.Stderr, err)
+		}
+		login, err := loginClient.Start(ctx, deviceName)
+		if err != nil {
+			return fail(streams.Stderr, fmt.Errorf("start browser login: %w", err))
+		}
+		fmt.Fprintf(streams.Stdout, "Open %s\nCode: %s\n", login.VerificationURIComplete, login.UserCode)
+		if !noOpen {
+			if err := streams.OpenURL(login.VerificationURIComplete); err != nil {
+				fmt.Fprintln(streams.Stderr, "Open the login URL in a browser; automatic opening failed:", err)
+			}
+		}
+		for {
+			if !time.Now().Before(login.ExpiresAt) {
+				return fail(streams.Stderr, errors.New("browser login expired"))
+			}
+			if err := streams.Wait(ctx, login.Interval); err != nil {
+				return fail(streams.Stderr, err)
+			}
+			issued, pending, err := loginClient.Poll(ctx, login.DeviceCode)
+			if err != nil {
+				return fail(streams.Stderr, err)
+			}
+			if pending {
+				continue
+			}
+			token = issued.Token
+			break
+		}
 	}
 	api, err := controlclient.New(settings.URL, token, settings.Service.CACertFile)
 	if err != nil {

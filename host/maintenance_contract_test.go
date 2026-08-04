@@ -56,6 +56,23 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 }
 
+func TestPublicConsoleSecretsRemainOutsideTheCommittedServiceEnvironment(t *testing.T) {
+	root := repositoryRoot(t)
+	service := readFile(t, filepath.Join(root, "host", "autback-server.service"))
+	if !strings.Contains(service, "EnvironmentFile=-/etc/autback/auth.env") {
+		t.Fatal("server does not load the root-owned optional authentication environment")
+	}
+	install := readFile(t, filepath.Join(root, "host", "install-swarm.sh"))
+	for _, required := range []string{"AUTBACK_PUBLIC_URL", "AUTBACK_ACME_DOMAIN", "AUTBACK_ACME_EMAIL"} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installer does not persist %s", required)
+		}
+	}
+	if strings.Contains(install, "AUTBACK_GITHUB_CLIENT_SECRET") {
+		t.Fatal("installer accepts the GitHub client secret through process arguments")
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, source, _, ok := runtime.Caller(0)

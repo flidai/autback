@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -37,9 +38,11 @@ import (
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
 	"github.com/flidai/autback/internal/control/swarmscheduler"
 	"github.com/flidai/autback/internal/hostmetrics"
+	"github.com/flidai/autback/internal/humanauth"
 	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 	jobsecrets "github.com/flidai/autback/internal/secrets"
 	"github.com/flidai/autback/internal/version"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 func main() {
@@ -190,6 +193,29 @@ func run(ctx context.Context) error {
 		}
 	}
 	draining := &atomic.Bool{}
+	var humanAuthHandler http.Handler
+	var githubHumanAuth *humanauth.GitHub
+	githubClientID, githubClientSecret := os.Getenv("AUTBACK_GITHUB_CLIENT_ID"), os.Getenv("AUTBACK_GITHUB_CLIENT_SECRET")
+	if githubClientID != "" || githubClientSecret != "" {
+		publicURL := strings.TrimRight(os.Getenv("AUTBACK_PUBLIC_URL"), "/")
+		if githubClientID == "" || githubClientSecret == "" || publicURL == "" {
+			return errors.New("AUTBACK_GITHUB_CLIENT_ID, AUTBACK_GITHUB_CLIENT_SECRET, and AUTBACK_PUBLIC_URL must be configured together")
+		}
+		githubHumanAuth, err = humanauth.NewGitHub(humanauth.GitHubConfig{
+			ClientID: githubClientID, ClientSecret: githubClientSecret, CallbackURL: publicURL + "/auth/github/callback",
+		})
+		if err != nil {
+			return err
+		}
+		humanAuthHandler, err = humanauth.New(humanauth.Config{
+			Store: store, GitHub: githubHumanAuth, PublicURL: publicURL,
+			SessionTTL: durationEnv("AUTBACK_BROWSER_SESSION_TTL", 7*24*time.Hour),
+			LoginTTL:   durationEnv("AUTBACK_LOGIN_TTL", 10*time.Minute),
+		})
+		if err != nil {
+			return err
+		}
+	}
 	controlHandler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority, OIDCVerifier: verifier,
 		CASEndpoint: env("AUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
@@ -200,6 +226,7 @@ func run(ctx context.Context) error {
 		RequiredBuildClientCapability: version.CapabilityBuildLeaseHeartbeat,
 		RequiredJobClientCapability:   version.CapabilityDurableJobPrepare,
 		Ready:                         func() bool { return !draining.Load() },
+		GitHubDirectory:               githubHumanAuth,
 	})
 	if err != nil {
 		return err
@@ -210,11 +237,15 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	consoleHandler, err := console.New(console.Config{Source: consoleSource})
+	consoleConfig := console.Config{Source: consoleSource}
+	if humanAuthHandler != nil {
+		consoleConfig.LoginURL = "/auth/login"
+	}
+	consoleHandler, err := console.New(consoleConfig)
 	if err != nil {
 		return err
 	}
-	handler := serviceHandler(controlHandler, consoleHandler)
+	handler := serviceHandler(controlHandler, consoleHandler, humanAuthHandler)
 	active := func(kind pki.Operation, id string) bool {
 		return store.OperationActive(context.Background(), string(kind), id)
 	}
@@ -228,9 +259,15 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("listen for BuildKit proxy: %w", err)
 	}
 	defer buildKitListener.Close()
+	controlTLSConfig, controlCertificate, controlKey, err := controlTLS(
+		filepath.Join(dataDir, "acme"), pkiDir, names, os.Getenv("AUTBACK_ACME_DOMAIN"), os.Getenv("AUTBACK_ACME_EMAIL"),
+	)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr: env("AUTBACK_LISTEN", ":8443"), Handler: handler, ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout: 2 * time.Minute, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
+		IdleTimeout: 2 * time.Minute, TLSConfig: controlTLSConfig,
 	}
 	controlListener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
@@ -283,7 +320,7 @@ func run(ctx context.Context) error {
 	group.Add(appserver.Component{
 		Name: "control HTTP server",
 		Run: func(ctx context.Context) error {
-			err := server.ServeTLS(controlListener, filepath.Join(pkiDir, "server.pem"), filepath.Join(pkiDir, "server-key.pem"))
+			err := server.ServeTLS(controlListener, controlCertificate, controlKey)
 			if errors.Is(err, http.ErrServerClosed) || ctx.Err() != nil {
 				return nil
 			}
@@ -303,6 +340,25 @@ func run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func controlTLS(acmeDir, pkiDir string, names []string, acmeDomain, email string) (*tls.Config, string, string, error) {
+	if acmeDomain == "" {
+		return &tls.Config{MinVersion: tls.VersionTLS13}, filepath.Join(pkiDir, "server.pem"), filepath.Join(pkiDir, "server-key.pem"), nil
+	}
+	if !slices.Contains(names, acmeDomain) {
+		return nil, "", "", errors.New("AUTBACK_ACME_DOMAIN must be included in AUTBACK_SERVER_NAMES")
+	}
+	if err := os.MkdirAll(acmeDir, 0o700); err != nil {
+		return nil, "", "", err
+	}
+	manager := &autocert.Manager{
+		Prompt: autocert.AcceptTOS, Cache: autocert.DirCache(acmeDir), Email: email,
+		HostPolicy: autocert.HostWhitelist(acmeDomain),
+	}
+	config := manager.TLSConfig()
+	config.MinVersion = tls.VersionTLS13
+	return config, "", "", nil
 }
 
 func runCapacityController(ctx context.Context, controller *capacity.Controller, statusPath string, pressureInterval, maintenanceInterval time.Duration) {
@@ -334,10 +390,13 @@ func runCapacityController(ctx context.Context, controller *capacity.Controller,
 	}
 }
 
-func serviceHandler(controlHandler, consoleHandler http.Handler) http.Handler {
+func serviceHandler(controlHandler, consoleHandler, authHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/app", consoleHandler)
 	mux.Handle("/app/", consoleHandler)
+	if authHandler != nil {
+		mux.Handle("/auth/", authHandler)
+	}
 	mux.Handle("/", controlHandler)
 	return mux
 }

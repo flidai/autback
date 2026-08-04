@@ -112,7 +112,11 @@ func serve() {
 		log.Fatal(err)
 	}
 	go resourceCollector.Run(ctx)
-	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacityController))
+	dispatch := dispatcher.New(store, scheduler,
+		dispatcher.WithCapacity(capacityController),
+		dispatcher.WithAdvanceContext(ctx),
+		dispatcher.WithErrorHandler(func(err error) { log.Printf("advance FIFO: %v", err) }),
+	)
 	if err := dispatch.RunOnce(ctx); err != nil {
 		log.Printf("initial dispatch: %v", err)
 	}

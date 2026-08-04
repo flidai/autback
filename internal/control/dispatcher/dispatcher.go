@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/flidai/autback/internal/control"
 )
@@ -31,18 +33,90 @@ func WithCapacity(capacity Capacity) Option {
 	return func(dispatcher *Dispatcher) { dispatcher.capacity = capacity }
 }
 
+func WithAdvanceContext(ctx context.Context) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.advanceCtx = ctx }
+}
+
+func WithErrorHandler(handler func(error)) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.onError = handler }
+}
+
 type Dispatcher struct {
 	store     Store
 	scheduler Scheduler
 	capacity  Capacity
+
+	advanceCtx     context.Context
+	onError        func(error)
+	advanceMu      sync.Mutex
+	advancing      bool
+	advancePending bool
 }
 
 func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
-	dispatcher := &Dispatcher{store: store, scheduler: scheduler}
+	dispatcher := &Dispatcher{store: store, scheduler: scheduler, advanceCtx: context.Background()}
 	for _, option := range options {
 		option(dispatcher)
 	}
 	return dispatcher
+}
+
+// Advance schedules FIFO admission without coupling a terminal operation's
+// acknowledgement to capacity reclaim or runtime creation. Concurrent wakeups
+// are coalesced; transient failures retry until the server context ends.
+func (d *Dispatcher) Advance() {
+	d.advanceMu.Lock()
+	d.advancePending = true
+	if d.advancing {
+		d.advanceMu.Unlock()
+		return
+	}
+	d.advancing = true
+	d.advanceMu.Unlock()
+	go d.advance()
+}
+
+func (d *Dispatcher) advance() {
+	for {
+		d.advanceMu.Lock()
+		d.advancePending = false
+		d.advanceMu.Unlock()
+
+		if err := d.RunOnce(d.advanceCtx); err != nil {
+			if d.onError != nil {
+				d.onError(err)
+			}
+			timer := time.NewTimer(5 * time.Second)
+			select {
+			case <-d.advanceCtx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				d.finishAdvance()
+				return
+			case <-timer.C:
+				continue
+			}
+		}
+
+		d.advanceMu.Lock()
+		if d.advancePending {
+			d.advanceMu.Unlock()
+			continue
+		}
+		d.advancing = false
+		d.advanceMu.Unlock()
+		return
+	}
+}
+
+func (d *Dispatcher) finishAdvance() {
+	d.advanceMu.Lock()
+	d.advancing = false
+	d.advanceMu.Unlock()
 }
 
 // RunOnce reserves the oldest operation only when the worker is idle. The

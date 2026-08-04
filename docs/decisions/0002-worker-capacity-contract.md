@@ -87,6 +87,11 @@ and remeasures after each tier:
 4. project caches ordered by last use, from a 10% high watermark to an 8% low watermark;
 5. BuildKit through its native collector, retaining a 2 GiB floor under pressure.
 
+Terminal job and build transitions commit and acknowledge before this work begins. FIFO
+advancement runs asynchronously and retries transient capacity or runtime failures, so a
+successful image push cannot be reported as failed merely because reclaiming enough space
+for the next queued operation exceeds an RPC deadline.
+
 Routine collection uses a 24-hour object age. Pressure collection uses a five-minute
 creation grace. Docker image removal is never forced, so images referenced by any
 container remain protected even when application metadata is incomplete.

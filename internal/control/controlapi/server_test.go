@@ -167,8 +167,12 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	if _, err := client.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
 		t.Fatal(err)
 	}
-	if fixture.scheduler.createdCount() != 2 || fixture.scheduler.created[1].ID != second.Id {
-		t.Fatalf("created jobs = %#v, want second after build", fixture.scheduler.created)
+	deadline := time.Now().Add(time.Second)
+	for fixture.scheduler.createdCount() != 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if fixture.scheduler.createdCount() != 2 || fixture.scheduler.createdAt(1).ID != second.Id {
+		t.Fatalf("created jobs = %#v, want second after build", fixture.scheduler.createdSnapshot())
 	}
 }
 
@@ -478,6 +482,48 @@ func TestBuildPreparationReturnsBuildScopedCertificate(t *testing.T) {
 	}
 	if fixture.store.OperationActive(context.Background(), "build", response.Msg.Build.Id) {
 		t.Fatal("finished build credential remains active")
+	}
+}
+
+func TestFinishBuildAcknowledgesBeforeSlowQueueAdvance(t *testing.T) {
+	capacityGate := &blockingAdvanceCapacity{started: make(chan struct{}), release: make(chan struct{})}
+	fixture := newFixtureWithCapacity(t, nil, capacityGate)
+	client := fixture.client(fixture.bootstrap.Token)
+	first, err := client.PrepareBuild(context.Background(), connect.NewRequest(&autbackv1.PrepareBuildRequest{
+		Project: fixture.bootstrap.Project.ID, IdempotencyKey: "terminal-ack-first",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := fixture.store.CreateBuild(context.Background(), fixture.bootstrap.Project.ID, control.Idempotency{Key: "terminal-ack-second", RequestHash: "terminal-ack-second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	finished, err := client.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: first.Msg.Build.Id}))
+	if err != nil {
+		t.Fatalf("FinishBuild waited for queue advance: %v", err)
+	}
+	if finished.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_SUCCEEDED {
+		t.Fatalf("finished status = %s, want succeeded", finished.Msg.Build.Status)
+	}
+	select {
+	case <-capacityGate.started:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous queue advance did not start")
+	}
+	close(capacityGate.release)
+	deadline := time.Now().Add(time.Second)
+	for {
+		build, lookupErr := fixture.store.Build(context.Background(), second.ID)
+		if lookupErr == nil && build.Status == control.BuildRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("second build status = %s, %v; want running", build.Status, lookupErr)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -791,6 +837,32 @@ func (f fakeCapacity) Admit(_ context.Context, reserve func() error) error {
 }
 func (f fakeCapacity) Check(context.Context) error { return f.err }
 
+type blockingAdvanceCapacity struct {
+	mu      sync.Mutex
+	admits  int
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (*blockingAdvanceCapacity) Ensure(context.Context) error { return nil }
+func (*blockingAdvanceCapacity) Check(context.Context) error  { return nil }
+func (b *blockingAdvanceCapacity) Admit(ctx context.Context, reserve func() error) error {
+	b.mu.Lock()
+	b.admits++
+	admit := b.admits
+	b.mu.Unlock()
+	if admit > 1 {
+		b.once.Do(func() { close(b.started) })
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-b.release:
+		}
+	}
+	return reserve()
+}
+
 func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	fixture := newFixture(t)
 	response, err := http.Get(fixture.server.URL + "/readyz")
@@ -876,6 +948,18 @@ func (f *fakeScheduler) createdCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.created)
+}
+
+func (f *fakeScheduler) createdAt(index int) control.Job {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.created[index]
+}
+
+func (f *fakeScheduler) createdSnapshot() []control.Job {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]control.Job(nil), f.created...)
 }
 
 func (f *fakeScheduler) complete(id string, status protocol.Status, exitCode int) {

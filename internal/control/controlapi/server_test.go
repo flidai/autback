@@ -108,7 +108,17 @@ func TestGetJobRepairsStatusAfterAdmissionLeaseReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.scheduler.complete(prepared.Msg.Job.Id, protocol.StatusSucceeded, 0)
-	if err := fixture.store.ReleaseOperation(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
+	if err := fixture.store.BeginOperationCleanup(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := fixture.store.ClaimOperationCleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation == nil || operation.ID != prepared.Msg.Job.Id {
+		t.Fatalf("cleanup operation = %#v", operation)
+	}
+	if err := fixture.store.CompleteOperationCleanup(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,17 +167,22 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	if _, err := client.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: first.Id})); err != nil {
 		t.Fatal(err)
 	}
-	runningBuild, err := client.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
-	if err != nil {
-		t.Fatal(err)
+	var runningBuild *connect.Response[autbackv1.GetBuildResponse]
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runningBuild, err = client.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
+		if err == nil && runningBuild.Msg.Build.Status == autbackv1.BuildStatus_BUILD_STATUS_RUNNING {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if runningBuild.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
-		t.Fatalf("admitted build = %#v", runningBuild.Msg)
+	if err != nil || runningBuild == nil || runningBuild.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
+		t.Fatalf("admitted build = %#v, %v", runningBuild, err)
 	}
 	if _, err := client.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline = time.Now().Add(time.Second)
 	for fixture.scheduler.createdCount() != 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}

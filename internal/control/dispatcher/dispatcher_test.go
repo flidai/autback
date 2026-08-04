@@ -3,12 +3,14 @@ package dispatcher_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/dispatcher"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
+	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 )
 
 func TestDispatcherAdmitsExactlyOneOperationInSharedFIFO(t *testing.T) {
@@ -26,27 +28,29 @@ func TestDispatcherAdmitsExactlyOneOperationInSharedFIFO(t *testing.T) {
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(scheduler.created) != 1 || scheduler.created[0].ID != first.ID {
-		t.Fatalf("scheduled = %#v, want first job", scheduler.created)
+	if scheduled := scheduler.createdJobs(); len(scheduled) != 1 || scheduled[0].ID != first.ID {
+		t.Fatalf("scheduled = %#v, want first job", scheduled)
 	}
 	if stored, _ := store.Build(ctx, build.ID); stored.Status != control.BuildQueued {
 		t.Fatalf("build status = %s, want queued", stored.Status)
 	}
-	if err := d.RunOnce(ctx); err != nil || len(scheduler.created) != 1 {
-		t.Fatalf("second dispatch err=%v scheduled=%d", err, len(scheduler.created))
+	if err := d.RunOnce(ctx); err != nil || len(scheduler.createdJobs()) != 1 {
+		t.Fatalf("second dispatch err=%v scheduled=%d", err, len(scheduler.createdJobs()))
 	}
 
 	if err := d.Release(ctx, control.OperationJob, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if stored, _ := store.Build(ctx, build.ID); stored.Status != control.BuildRunning {
-		t.Fatalf("build status = %s, want running", stored.Status)
-	}
+	eventually(t, func() bool {
+		stored, _ := store.Build(ctx, build.ID)
+		return stored.Status == control.BuildRunning
+	})
 	if err := d.Release(ctx, control.OperationBuild, build.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(scheduler.created) != 2 || scheduler.created[1].ID != second.ID {
-		t.Fatalf("scheduled = %#v, want second job after build", scheduler.created)
+	eventually(t, func() bool { return len(scheduler.createdJobs()) == 2 })
+	if scheduled := scheduler.createdJobs(); scheduled[1].ID != second.ID {
+		t.Fatalf("scheduled = %#v, want second job after build", scheduled)
 	}
 }
 
@@ -65,8 +69,67 @@ func TestDispatcherFailsUnschedulableJobAndAdvances(t *testing.T) {
 	if failed.Status != "failed" {
 		t.Fatalf("first status = %s", failed.Status)
 	}
-	if len(scheduler.created) != 1 || scheduler.created[0].ID != second.ID {
-		t.Fatalf("scheduled = %#v, want second job", scheduler.created)
+	eventually(t, func() bool { return len(scheduler.createdJobs()) == 1 })
+	if scheduled := scheduler.createdJobs(); scheduled[0].ID != second.ID {
+		t.Fatalf("scheduled = %#v, want second job", scheduled)
+	}
+}
+
+func TestBackgroundDispatcherWakesImmediatelyAfterFailedAdmissionCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, projectID := queueFixture(t)
+	first := queueJob(t, store, projectID, "background-failure-first")
+	second := queueJob(t, store, projectID, "background-failure-second")
+	scheduler := &fakeScheduler{failID: first.ID}
+	d := dispatcher.New(store, scheduler, dispatcher.WithAdvanceContext(ctx))
+
+	d.Advance()
+	eventually(t, func() bool {
+		scheduled := scheduler.createdJobs()
+		return len(scheduled) == 1 && scheduled[0].ID == second.ID
+	})
+}
+
+func TestDispatcherReleaseWaitsForAsynchronousCleanupBeforeAdvancing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, projectID := queueFixture(t)
+	first := queueJob(t, store, projectID, "cleanup-first")
+	second := queueJob(t, store, projectID, "cleanup-second")
+	scheduler := &fakeScheduler{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	d := dispatcher.New(store, scheduler,
+		dispatcher.WithAdvanceContext(ctx),
+		dispatcher.WithCleaner(operationcleanup.CleanerFunc(func(_ context.Context, operation control.Operation) error {
+			if operation.ID != first.ID {
+				t.Fatalf("cleanup operation = %s, want %s", operation.ID, first.ID)
+			}
+			close(started)
+			<-release
+			return nil
+		})),
+	)
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Release(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start")
+	}
+	if scheduled := scheduler.createdJobs(); len(scheduled) != 1 {
+		t.Fatalf("scheduled during cleanup = %#v", scheduled)
+	}
+	close(release)
+	eventually(t, func() bool { return len(scheduler.createdJobs()) == 2 })
+	if scheduled := scheduler.createdJobs(); scheduled[1].ID != second.ID {
+		t.Fatalf("scheduled after cleanup = %#v", scheduled)
 	}
 }
 
@@ -105,8 +168,8 @@ func TestDispatcherForwardsCancellationRequestedDuringAdmission(t *testing.T) {
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(scheduler.cancelled) != 1 || scheduler.cancelled[0] != job.ID {
-		t.Fatalf("cancelled = %#v, want %s", scheduler.cancelled, job.ID)
+	if cancelled := scheduler.cancelledJobs(); len(cancelled) != 1 || cancelled[0] != job.ID {
+		t.Fatalf("cancelled = %#v, want %s", cancelled, job.ID)
 	}
 }
 
@@ -144,8 +207,8 @@ func TestDispatcherLeavesFIFOQueuedWhenCapacityIsUnavailable(t *testing.T) {
 	if err := d.RunOnce(ctx); !errors.Is(err, want) {
 		t.Fatalf("dispatch error = %v, want %v", err, want)
 	}
-	if len(scheduler.created) != 0 {
-		t.Fatalf("scheduled = %#v, want none", scheduler.created)
+	if scheduled := scheduler.createdJobs(); len(scheduled) != 0 {
+		t.Fatalf("scheduled = %#v, want none", scheduled)
 	}
 	state, err := store.OperationState(ctx, control.OperationJob, job.ID)
 	if err != nil || state != control.OperationQueued {
@@ -172,6 +235,7 @@ func (s activationFailStore) ActivateOperation(context.Context, control.Operatio
 }
 
 type fakeScheduler struct {
+	mu        sync.Mutex
 	created   []control.Job
 	failID    string
 	cancelled []string
@@ -198,7 +262,9 @@ func (s *fakeScheduler) Create(_ context.Context, job control.Job) error {
 	if job.ID == s.failID {
 		return errors.New("worker rejected job")
 	}
+	s.mu.Lock()
 	s.created = append(s.created, job)
+	s.mu.Unlock()
 	if s.onCreate != nil {
 		return s.onCreate(job)
 	}
@@ -206,8 +272,22 @@ func (s *fakeScheduler) Create(_ context.Context, job control.Job) error {
 }
 
 func (s *fakeScheduler) Cancel(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.cancelled = append(s.cancelled, id)
 	return nil
+}
+
+func (s *fakeScheduler) createdJobs() []control.Job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]control.Job(nil), s.created...)
+}
+
+func (s *fakeScheduler) cancelledJobs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.cancelled...)
 }
 
 func queueFixture(t *testing.T) (*controlsqlite.Store, string) {
@@ -237,4 +317,16 @@ func queueJob(t *testing.T, store *controlsqlite.Store, projectID, key string) c
 		t.Fatal(err)
 	}
 	return job
+}
+
+func eventually(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }

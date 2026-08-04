@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/flidai/autback/internal/control"
+	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 )
 
 type Store interface {
+	operationcleanup.Store
 	AcquireNextOperation(context.Context) (*control.Operation, error)
 	ActivateOperation(context.Context, control.OperationKind, string) error
-	ReleaseOperation(context.Context, control.OperationKind, string) error
 	Job(context.Context, string) (control.Job, error)
 	FailJob(context.Context, string, string) (control.Job, error)
 }
@@ -41,23 +42,44 @@ func WithErrorHandler(handler func(error)) Option {
 	return func(dispatcher *Dispatcher) { dispatcher.onError = handler }
 }
 
+func WithCleaner(cleaner operationcleanup.Cleaner) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.cleaner = cleaner }
+}
+
+func WithCleanupRetryDelay(delay time.Duration) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.cleanupRetryDelay = delay }
+}
+
 type Dispatcher struct {
 	store     Store
 	scheduler Scheduler
 	capacity  Capacity
+	cleaner   operationcleanup.Cleaner
+	cleanups  *operationcleanup.Coordinator
 
-	advanceCtx     context.Context
-	onError        func(error)
-	advanceMu      sync.Mutex
-	advancing      bool
-	advancePending bool
+	advanceCtx        context.Context
+	onError           func(error)
+	cleanupRetryDelay time.Duration
+	advanceMu         sync.Mutex
+	advancing         bool
+	advancePending    bool
+	advanceWake       chan struct{}
 }
 
 func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
-	dispatcher := &Dispatcher{store: store, scheduler: scheduler, advanceCtx: context.Background()}
+	dispatcher := &Dispatcher{
+		store: store, scheduler: scheduler, advanceCtx: context.Background(), cleanupRetryDelay: 5 * time.Second,
+		advanceWake: make(chan struct{}, 1),
+	}
 	for _, option := range options {
 		option(dispatcher)
 	}
+	dispatcher.cleanups = operationcleanup.New(store, dispatcher.cleaner,
+		operationcleanup.WithContext(dispatcher.advanceCtx),
+		operationcleanup.WithRetryDelay(dispatcher.cleanupRetryDelay),
+		operationcleanup.WithErrorHandler(dispatcher.reportError),
+		operationcleanup.WithCompleted(func(control.Operation) { dispatcher.Advance() }),
+	)
 	return dispatcher
 }
 
@@ -65,15 +87,26 @@ func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
 // acknowledgement to capacity reclaim or runtime creation. Concurrent wakeups
 // are coalesced; transient failures retry until the server context ends.
 func (d *Dispatcher) Advance() {
+	d.cleanups.Advance()
 	d.advanceMu.Lock()
 	d.advancePending = true
 	if d.advancing {
+		select {
+		case d.advanceWake <- struct{}{}:
+		default:
+		}
 		d.advanceMu.Unlock()
 		return
 	}
 	d.advancing = true
 	d.advanceMu.Unlock()
 	go d.advance()
+}
+
+func (d *Dispatcher) reportError(err error) {
+	if d.onError != nil {
+		d.onError(err)
+	}
 }
 
 func (d *Dispatcher) advance() {
@@ -83,9 +116,7 @@ func (d *Dispatcher) advance() {
 		d.advanceMu.Unlock()
 
 		if err := d.RunOnce(d.advanceCtx); err != nil {
-			if d.onError != nil {
-				d.onError(err)
-			}
+			d.reportError(err)
 			timer := time.NewTimer(5 * time.Second)
 			select {
 			case <-d.advanceCtx.Done():
@@ -97,6 +128,14 @@ func (d *Dispatcher) advance() {
 				}
 				d.finishAdvance()
 				return
+			case <-d.advanceWake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				continue
 			case <-timer.C:
 				continue
 			}
@@ -154,10 +193,10 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 			if _, failErr := d.store.FailJob(ctx, operation.ID, err.Error()); failErr != nil {
 				return errors.Join(append(admissionErrors, failErr)...)
 			}
-			if releaseErr := d.store.ReleaseOperation(ctx, control.OperationJob, operation.ID); releaseErr != nil {
+			if releaseErr := d.cleanups.Request(ctx, control.OperationJob, operation.ID); releaseErr != nil {
 				return errors.Join(append(admissionErrors, releaseErr)...)
 			}
-			continue
+			return errors.Join(admissionErrors...)
 		}
 		if err := d.store.ActivateOperation(ctx, operation.Kind, operation.ID); err != nil {
 			return errors.Join(append(admissionErrors, fmt.Errorf("activate job %s: %w", operation.ID, err))...)
@@ -176,8 +215,5 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 }
 
 func (d *Dispatcher) Release(ctx context.Context, kind control.OperationKind, id string) error {
-	if err := d.store.ReleaseOperation(ctx, kind, id); err != nil {
-		return err
-	}
-	return d.RunOnce(ctx)
+	return d.cleanups.Request(ctx, kind, id)
 }

@@ -75,7 +75,8 @@ after an ambiguous transport failure before attempting a different operation.
 and users. At most one operation is active on the initial worker. A queued build has
 `BUILD_STATUS_QUEUED` and no BuildKit connection; clients poll `GetBuild` by stable ID until
 it becomes running, then receive a fresh operation-scoped connection. `CancelBuild` removes
-a waiting build or terminates the active build record and advances the queue. `GetBuild`
+a waiting build or terminates the active build record and schedules durable cleanup. The
+next FIFO entry is admitted only after that cleanup releases the worker reservation. `GetBuild`
 renews the lease while the authenticated client is waiting or building. The service expires
 an abandoned queued or running build after two minutes by default; this is a worker safety
 bound, not a scheduler priority.

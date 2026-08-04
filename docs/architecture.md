@@ -169,7 +169,12 @@ VM or equivalent strong sandbox per job and is a future architecture decision.
 Builds and commands share one SQLite-backed FIFO. Submission order is represented by a
 monotonic database sequence, and exactly one row may hold the active worker lease. The
 dispatcher admits the oldest queued operation and makes no priority, fairness, or resource
-estimates. Queue and lease state survive a control-plane restart.
+estimates. An admitted operation moves through `queued`, `admitting`, `active`,
+`terminalizing`, `cleaning`, and `released`. Terminal results can be returned immediately,
+but terminalizing and cleaning continue to own the worker reservation so the next FIFO
+entry cannot overlap teardown. Cleanup attempts and the last error are durable; an
+idempotent cleanup resumes after a control-plane restart. Queue and lease state survive a
+control-plane restart.
 Active build leases have a configurable two-minute safety timeout. Released clients renew
 the lease while queued and while Buildx is running, so a killed or disconnected client
 cannot block every later operation indefinitely. Build admission requires the corresponding

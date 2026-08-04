@@ -36,9 +36,10 @@ control useful parallelism without allowing independent submissions to oversubsc
 worker.
 
 Queued operations consume control-plane state only. Swarm services and BuildKit credentials
-are created only after admission. A one-second reconciliation loop releases completed or
-lost detached jobs and immediately admits the next FIFO entry. Queue state and the active
-lease are persisted in `/var/lib/autback/control.db` and survive a server restart.
+are created only after admission. A one-second reconciliation loop terminalizes completed
+or lost detached jobs. A durable cleanup coordinator then releases the reservation and
+admits the next FIFO entry. Queue state, cleanup attempts/errors, and the active lease are
+persisted in `/var/lib/autback/control.db` and survive a server restart.
 Queued and running builds use a renewable lease so a killed or disconnected client cannot
 block the FIFO indefinitely. The CLI renews the lease while waiting and while Buildx runs;
 the server cancels a build after two minutes without a heartbeat by default
@@ -68,9 +69,11 @@ the worker is idle. Only the hard emergency floor may stop active work, and it d
 before any Docker, cache, or BuildKit reclaim begins.
 
 Terminal operation acknowledgements are independent of queue advancement. After durable
-completion is recorded, Autback responds to the client and advances the FIFO in a
-coalesced background loop. Transient capacity or scheduler errors are logged and retried;
-they do not turn a completed build into a client-visible failure.
+completion is recorded, Autback responds to the client, converges idempotent cleanup, and
+then advances the FIFO in coalesced background loops. `terminalizing` and `cleaning` remain
+worker-busy states; `released` is the tombstone proving teardown completed. Transient
+cleanup, capacity, or scheduler errors are recorded/logged and retried; they do not turn a
+completed build into a client-visible failure.
 
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and

@@ -204,17 +204,23 @@ const (
 type OperationState string
 
 const (
-	OperationQueued    OperationState = "queued"
-	OperationAdmitting OperationState = "admitting"
-	OperationActive    OperationState = "active"
+	OperationQueued        OperationState = "queued"
+	OperationAdmitting     OperationState = "admitting"
+	OperationActive        OperationState = "active"
+	OperationTerminalizing OperationState = "terminalizing"
+	OperationCleaning      OperationState = "cleaning"
+	OperationReleased      OperationState = "released"
 )
 
 type Operation struct {
-	Kind       OperationKind
-	ID         string
-	State      OperationState
-	AcceptedAt time.Time
-	LeasedAt   *time.Time
+	Kind             OperationKind
+	ID               string
+	State            OperationState
+	AcceptedAt       time.Time
+	LeasedAt         *time.Time
+	CleanupAttempts  int
+	CleanupError     string
+	CleanupUpdatedAt *time.Time
 }
 
 type QueueOperation struct {

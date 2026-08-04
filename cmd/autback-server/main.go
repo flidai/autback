@@ -117,9 +117,7 @@ func serve() {
 		dispatcher.WithAdvanceContext(ctx),
 		dispatcher.WithErrorHandler(func(err error) { log.Printf("advance FIFO: %v", err) }),
 	)
-	if err := dispatch.RunOnce(ctx); err != nil {
-		log.Printf("initial dispatch: %v", err)
-	}
+	dispatch.Advance()
 	reconcile := reconciler.New(reconciler.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch,
 		ServiceRetention:  durationEnv("AUTBACK_SERVICE_RETENTION", time.Hour),
@@ -358,6 +356,16 @@ func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler
 				if err := scheduler.Remove(ctx, operation.ID); err != nil {
 					log.Printf("emergency remove job %s: %v", operation.ID, err)
 				}
+			}
+			claimed, err := store.ClaimOperationCleanup(ctx)
+			if err != nil {
+				return err
+			}
+			if claimed == nil || claimed.Kind != operation.Kind || claimed.ID != operation.ID {
+				return fmt.Errorf("claim emergency cleanup for %s %s", operation.Kind, operation.ID)
+			}
+			if err := store.CompleteOperationCleanup(ctx, operation.Kind, operation.ID); err != nil {
+				return err
 			}
 			log.Printf("capacity emergency stopped %s %s", operation.Kind, operation.ID)
 			return nil

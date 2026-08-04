@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,9 +78,7 @@ func TestOperationsShareOneDurableFIFO(t *testing.T) {
 	if err := store.ActivateOperation(ctx, control.OperationJob, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReleaseOperation(ctx, control.OperationJob, first.ID); err != nil {
-		t.Fatal(err)
-	}
+	completeOperationCleanup(t, store, control.OperationJob, first.ID)
 	assertNextOperation(t, store, control.OperationBuild, build.ID)
 	if err := store.ActivateOperation(ctx, control.OperationBuild, build.ID); err != nil {
 		t.Fatal(err)
@@ -88,9 +87,7 @@ func TestOperationsShareOneDurableFIFO(t *testing.T) {
 	if err != nil || storedBuild.Status != control.BuildRunning {
 		t.Fatalf("build = %#v, %v; want running", storedBuild, err)
 	}
-	if err := store.ReleaseOperation(ctx, control.OperationBuild, build.ID); err != nil {
-		t.Fatal(err)
-	}
+	completeOperationCleanup(t, store, control.OperationBuild, build.ID)
 	assertNextOperation(t, store, control.OperationJob, second.ID)
 }
 
@@ -140,10 +137,133 @@ func TestActiveWorkerLeaseSurvivesStoreRestart(t *testing.T) {
 	if operation, err := store.AcquireNextOperation(ctx); err != nil || operation != nil {
 		t.Fatalf("acquire after restart = %#v, %v; active lease was not preserved", operation, err)
 	}
-	if err := store.ReleaseOperation(ctx, control.OperationJob, first.ID); err != nil {
+	completeOperationCleanup(t, store, control.OperationJob, first.ID)
+	assertNextOperation(t, store, control.OperationJob, second.ID)
+}
+
+func TestOperationCleanupLifecycleSurvivesRestartAndBlocksFIFO(t *testing.T) {
+	root := t.TempDir()
+	pepper := []byte("test-pepper-that-is-at-least-32-bytes")
+	store, err := controlsqlite.Open(root, pepper)
+	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "cleanup-1", RequestHash: "cleanup-1"})
+	second, _, _ := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "cleanup-2", RequestHash: "cleanup-2"})
+	_, _ = store.QueueJob(ctx, first.ID, "digest/1")
+	_, _ = store.QueueJob(ctx, second.ID, "digest/2")
+	assertNextOperation(t, store, control.OperationJob, first.ID)
+	if err := store.ActivateOperation(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.BeginOperationCleanup(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginOperationCleanup(ctx, control.OperationJob, first.ID); err != nil {
+		t.Fatalf("idempotent terminalization: %v", err)
+	}
+	operation, err := store.Operation(ctx, control.OperationJob, first.ID)
+	if err != nil || operation.State != control.OperationTerminalizing {
+		t.Fatalf("terminalizing operation = %#v, %v", operation, err)
+	}
+	if next, err := store.AcquireNextOperation(ctx); err != nil || next != nil {
+		t.Fatalf("acquire during terminalization = %#v, %v", next, err)
+	}
+
+	claimed, err := store.ClaimOperationCleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != first.ID || claimed.State != control.OperationCleaning || claimed.CleanupAttempts != 1 {
+		t.Fatalf("claimed cleanup = %#v", claimed)
+	}
+	if err := store.RecordOperationCleanupFailure(ctx, claimed.Kind, claimed.ID, "docker temporarily unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = controlsqlite.Open(root, pepper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	operation, err = store.Operation(ctx, control.OperationJob, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != control.OperationCleaning || operation.CleanupAttempts != 1 || operation.CleanupError != "docker temporarily unavailable" || operation.CleanupUpdatedAt == nil {
+		t.Fatalf("recovered cleanup = %#v", operation)
+	}
+	claimed, err = store.ClaimOperationCleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.CleanupAttempts != 2 || claimed.CleanupError != "" {
+		t.Fatalf("reclaimed cleanup = %#v", claimed)
+	}
+	if err := store.CompleteOperationCleanup(ctx, claimed.Kind, claimed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteOperationCleanup(ctx, claimed.Kind, claimed.ID); err != nil {
+		t.Fatalf("idempotent cleanup completion: %v", err)
+	}
+	operation, err = store.Operation(ctx, control.OperationJob, first.ID)
+	if err != nil || operation.State != control.OperationReleased {
+		t.Fatalf("released operation = %#v, %v", operation, err)
+	}
 	assertNextOperation(t, store, control.OperationJob, second.ID)
+}
+
+func TestTerminalWritesBeginCleanupInTheSameTransaction(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "terminal-job", RequestHash: "terminal-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = store.QueueJob(ctx, job.ID, "digest/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationJob, job.ID)
+	if err := store.ActivateOperation(ctx, control.OperationJob, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	finished, exitCode := time.Now().UTC(), 0
+	if _, err := store.SyncJob(ctx, job.ID, protocol.Job{ID: job.ID, Status: protocol.StatusSucceeded, FinishedAt: &finished, ExitCode: &exitCode}); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := store.OperationState(ctx, control.OperationJob, job.ID); err != nil || state != control.OperationTerminalizing {
+		t.Fatalf("terminal job operation state = %s, %v", state, err)
+	}
+	completeOperationCleanup(t, store, control.OperationJob, job.ID)
+
+	build, _, err := store.CreateBuild(ctx, bootstrap.Project.ID, control.Idempotency{Key: "terminal-build", RequestHash: "terminal-build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNextOperation(t, store, control.OperationBuild, build.ID)
+	if err := store.ActivateOperation(ctx, control.OperationBuild, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FinishBuild(ctx, build.ID, control.BuildSucceeded, 0); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := store.OperationState(ctx, control.OperationBuild, build.ID); err != nil || state != control.OperationTerminalizing {
+		t.Fatalf("terminal build operation state = %s, %v", state, err)
+	}
 }
 
 func TestBuildLeaseHeartbeatCoversQueuedAndRunningBuilds(t *testing.T) {
@@ -193,6 +313,24 @@ func assertNextOperation(t *testing.T, store *controlsqlite.Store, kind control.
 
 func testPreparedJob(projectID string) control.PrepareJob {
 	return control.PrepareJob{ProjectID: projectID, Image: "runner@test", Command: []string{"true"}, Timeout: time.Minute}
+}
+
+func completeOperationCleanup(t *testing.T, store *controlsqlite.Store, kind control.OperationKind, id string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := store.BeginOperationCleanup(ctx, kind, id); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := store.ClaimOperationCleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation == nil || operation.Kind != kind || operation.ID != id {
+		t.Fatalf("claimed cleanup = %#v, want %s %s", operation, kind, id)
+	}
+	if err := store.CompleteOperationCleanup(ctx, kind, id); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestTerminalJobRetentionNeverSelectsActiveJobs(t *testing.T) {
@@ -257,8 +395,9 @@ func TestEmergencyStopAtomicallyTerminatesActiveOperation(t *testing.T) {
 	if stored.Status != "failed" || stored.ExitCode == nil || *stored.ExitCode != 137 || stored.ErrorMessage != "worker capacity exhausted" {
 		t.Fatalf("job after emergency = %#v", stored)
 	}
-	if _, err := store.Operation(ctx, control.OperationJob, job.ID); !errors.Is(err, control.ErrNotFound) {
-		t.Fatalf("operation remains after emergency: %v", err)
+	storedOperation, err := store.Operation(ctx, control.OperationJob, job.ID)
+	if err != nil || storedOperation.State != control.OperationTerminalizing {
+		t.Fatalf("operation after emergency = %#v, %v", storedOperation, err)
 	}
 }
 
@@ -292,9 +431,7 @@ func TestWorkerBusyIncludesAdmissionAndActiveButNotQueued(t *testing.T) {
 	if busy, err := store.WorkerBusy(ctx); err != nil || !busy {
 		t.Fatalf("active busy = %v, %v; want true", busy, err)
 	}
-	if err := store.ReleaseOperation(ctx, control.OperationJob, job.ID); err != nil {
-		t.Fatal(err)
-	}
+	completeOperationCleanup(t, store, control.OperationJob, job.ID)
 	if busy, err := store.WorkerBusy(ctx); err != nil || busy {
 		t.Fatalf("released busy = %v, %v; want false", busy, err)
 	}
@@ -367,6 +504,10 @@ CREATE TABLE control_jobs (
 CREATE TABLE control_builds (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL,
   finished_at INTEGER, exit_code INTEGER
+);
+CREATE TABLE control_queue (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, operation_id TEXT NOT NULL,
+  state TEXT NOT NULL, accepted_at INTEGER NOT NULL, leased_at INTEGER, UNIQUE(kind, operation_id)
 );`)
 	if err != nil {
 		t.Fatal(err)
@@ -424,6 +565,33 @@ CREATE TABLE control_builds (
 		if !projectColumns[name] {
 			t.Fatalf("projects columns = %#v", projectColumns)
 		}
+	}
+	rows, err = database.Query(`PRAGMA table_info(control_queue)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueColumns := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		queueColumns[name] = true
+	}
+	_ = rows.Close()
+	for _, name := range []string{"cleanup_attempts", "cleanup_error", "cleanup_updated_at"} {
+		if !queueColumns[name] {
+			t.Fatalf("control_queue columns = %#v", queueColumns)
+		}
+	}
+	var reservationIndex string
+	if err := database.QueryRow(`SELECT sql FROM sqlite_master WHERE type='index' AND name='control_queue_one_reserved_idx'`).Scan(&reservationIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reservationIndex, "terminalizing") || !strings.Contains(reservationIndex, "cleaning") {
+		t.Fatalf("reservation index = %q", reservationIndex)
 	}
 }
 

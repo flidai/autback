@@ -218,6 +218,9 @@ CREATE TABLE IF NOT EXISTS control_queue (
   state TEXT NOT NULL,
   accepted_at INTEGER NOT NULL,
   leased_at INTEGER,
+	cleanup_attempts INTEGER NOT NULL DEFAULT 0,
+	cleanup_error TEXT NOT NULL DEFAULT '',
+	cleanup_updated_at INTEGER NOT NULL DEFAULT 0,
   UNIQUE(kind, operation_id)
 );
 CREATE INDEX IF NOT EXISTS control_queue_fifo_idx ON control_queue(state, sequence);
@@ -233,6 +236,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(
 		{"control_jobs", "caches_json"},
 		{"control_builds", "idempotency_key"}, {"control_builds", "request_hash"},
 		{"projects", "active_image"}, {"projects", "previous_image"},
+		{"control_queue", "cleanup_error"},
 	} {
 		if err := s.ensureTextColumn(ctx, column.table, column.name); err != nil {
 			return err
@@ -241,11 +245,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(
 	if err := s.ensureIntegerColumn(ctx, "projects", "allow_image_overrides", 1); err != nil {
 		return err
 	}
+	if err := s.ensureIntegerColumn(ctx, "control_queue", "cleanup_attempts", 0); err != nil {
+		return err
+	}
+	if err := s.ensureIntegerColumn(ctx, "control_queue", "cleanup_updated_at", 0); err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, `
 CREATE UNIQUE INDEX IF NOT EXISTS control_jobs_idempotency_idx ON control_jobs(project_id,idempotency_key) WHERE idempotency_key <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS control_builds_idempotency_idx ON control_builds(project_id,idempotency_key) WHERE idempotency_key <> '';
 DROP INDEX IF EXISTS control_queue_one_active_idx;
-CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_reserved_idx ON control_queue((1)) WHERE state IN ('admitting','active');
+DROP INDEX IF EXISTS control_queue_one_reserved_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_reserved_idx ON control_queue((1)) WHERE state IN ('admitting','active','terminalizing','cleaning');
 `)
 	if err != nil {
 		return err
@@ -262,6 +273,7 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 		"control_jobs.caches_json":       true,
 		"control_builds.idempotency_key": true, "control_builds.request_hash": true,
 		"projects.active_image": true, "projects.previous_image": true,
+		"control_queue.cleanup_error": true,
 	}
 	if !allowed[table+"."+column] {
 		return errors.New("unsupported migration column")
@@ -296,10 +308,15 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 }
 
 func (s *Store) ensureIntegerColumn(ctx context.Context, table, column string, defaultValue int) error {
-	if table != "projects" || column != "allow_image_overrides" || defaultValue != 1 {
+	allowed := map[string]int{
+		"projects.allow_image_overrides":   1,
+		"control_queue.cleanup_attempts":   0,
+		"control_queue.cleanup_updated_at": 0,
+	}
+	if value, ok := allowed[table+"."+column]; !ok || value != defaultValue {
 		return errors.New("unsupported integer migration column")
 	}
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(projects)`)
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return err
 	}
@@ -317,7 +334,7 @@ func (s *Store) ensureIntegerColumn(ctx context.Context, table, column string, d
 	if err := rows.Close(); err != nil || found {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN allow_image_overrides INTEGER NOT NULL DEFAULT 1`)
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` INTEGER NOT NULL DEFAULT `+fmt.Sprint(defaultValue))
 	return err
 }
 
@@ -1056,7 +1073,10 @@ func (s *Store) SyncJob(ctx context.Context, id string, remote protocol.Job) (co
 		return control.Job{}, err
 	}
 	if remote.Status.Terminal() {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationJob, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+			control.OperationTerminalizing, time.Now().UTC().UnixNano(), control.OperationJob, id,
+			control.OperationAdmitting, control.OperationActive); err != nil {
 			return control.Job{}, err
 		}
 	}
@@ -1086,7 +1106,8 @@ WHERE id=? AND status NOT IN (?,?,?,?,?)`,
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, control.OperationJob, id, control.OperationQueued); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=? WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationReleased, time.Now().UTC().UnixNano(), control.OperationJob, id, control.OperationQueued); err != nil {
 		return control.Job{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1111,7 +1132,10 @@ func (s *Store) FailJob(ctx context.Context, id, message string) (control.Job, e
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationJob, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?,?)`,
+		control.OperationTerminalizing, time.Now().UTC().UnixNano(), control.OperationJob, id,
+		control.OperationQueued, control.OperationAdmitting, control.OperationActive); err != nil {
 		return control.Job{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1246,7 +1270,8 @@ func (s *Store) AcquireNextOperation(ctx context.Context) (*control.Operation, e
 	}
 	defer tx.Rollback()
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?)`, control.OperationAdmitting, control.OperationActive).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?,?,?)`,
+		control.OperationAdmitting, control.OperationActive, control.OperationTerminalizing, control.OperationCleaning).Scan(&active); err != nil {
 		return nil, err
 	}
 	if active > 0 {
@@ -1284,7 +1309,8 @@ func (s *Store) AcquireNextOperation(ctx context.Context) (*control.Operation, e
 // worker lease. Queued operations do not make destructive maintenance unsafe.
 func (s *Store) WorkerBusy(ctx context.Context) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?)`, control.OperationAdmitting, control.OperationActive).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?,?,?)`,
+		control.OperationAdmitting, control.OperationActive, control.OperationTerminalizing, control.OperationCleaning).Scan(&count)
 	return count > 0, err
 }
 
@@ -1314,9 +1340,101 @@ func (s *Store) ActivateOperation(ctx context.Context, kind control.OperationKin
 	return tx.Commit()
 }
 
-func (s *Store) ReleaseOperation(ctx context.Context, kind control.OperationKind, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state IN (?,?)`, kind, id, control.OperationAdmitting, control.OperationActive)
-	return err
+// BeginOperationCleanup durably transfers the single worker reservation from
+// execution to teardown. It is idempotent so terminal refreshes, reconciliation,
+// and client retries can all request the same transition safely.
+func (s *Store) BeginOperationCleanup(ctx context.Context, kind control.OperationKind, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?,?)`,
+		control.OperationTerminalizing, time.Now().UTC().UnixNano(), kind, id,
+		control.OperationQueued, control.OperationAdmitting, control.OperationActive)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	state, err := s.OperationState(ctx, kind, id)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case control.OperationTerminalizing, control.OperationCleaning, control.OperationReleased:
+		return nil
+	default:
+		return fmt.Errorf("operation %s %s cannot begin cleanup from state %s", kind, id, state)
+	}
+}
+
+// ClaimOperationCleanup returns the oldest teardown reservation. A cleanup
+// left in progress by a process crash is deliberately claimed again; cleaners
+// must therefore be idempotent.
+func (s *Store) ClaimOperationCleanup(ctx context.Context) (*control.Operation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	operation, err := scanOperation(tx.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at,cleanup_attempts,cleanup_error,cleanup_updated_at
+FROM control_queue WHERE state IN (?,?) ORDER BY sequence LIMIT 1`, control.OperationTerminalizing, control.OperationCleaning))
+	if errors.Is(err, control.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	updatedAt := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_attempts=cleanup_attempts+1,cleanup_error='',cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+		control.OperationCleaning, updatedAt.UnixNano(), operation.Kind, operation.ID,
+		control.OperationTerminalizing, control.OperationCleaning)
+	if err != nil {
+		return nil, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return nil, errors.New("operation cleanup was concurrently claimed")
+	}
+	operation.State = control.OperationCleaning
+	operation.CleanupAttempts++
+	operation.CleanupError = ""
+	operation.CleanupUpdatedAt = &updatedAt
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &operation, nil
+}
+
+func (s *Store) RecordOperationCleanupFailure(ctx context.Context, kind control.OperationKind, id, message string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET cleanup_error=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state=?`, message, time.Now().UTC().UnixNano(), kind, id, control.OperationCleaning)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CompleteOperationCleanup(ctx context.Context, kind control.OperationKind, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_error='',cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+		control.OperationReleased, time.Now().UTC().UnixNano(), kind, id,
+		control.OperationTerminalizing, control.OperationCleaning)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	state, err := s.OperationState(ctx, kind, id)
+	if err != nil {
+		return err
+	}
+	if state == control.OperationReleased {
+		return nil
+	}
+	return fmt.Errorf("operation %s %s cannot complete cleanup from state %s", kind, id, state)
 }
 
 // EmergencyStopActiveOperation atomically protects the control plane from a
@@ -1367,7 +1485,8 @@ func (s *Store) EmergencyStopActiveOperation(ctx context.Context, message string
 	default:
 		return nil, fmt.Errorf("unsupported operation kind %q", operation.Kind)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, operation.Kind, operation.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=? WHERE kind=? AND operation_id=?`,
+		control.OperationTerminalizing, time.Now().UTC().UnixNano(), operation.Kind, operation.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1377,7 +1496,8 @@ func (s *Store) EmergencyStopActiveOperation(ctx context.Context, message string
 }
 
 func (s *Store) CancelQueuedOperation(ctx context.Context, kind control.OperationKind, id string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, kind, id, control.OperationQueued)
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=? WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationReleased, time.Now().UTC().UnixNano(), kind, id, control.OperationQueued)
 	if err != nil {
 		return false, err
 	}
@@ -1395,11 +1515,17 @@ func (s *Store) OperationState(ctx context.Context, kind control.OperationKind, 
 }
 
 func (s *Store) Operation(ctx context.Context, kind control.OperationKind, id string) (control.Operation, error) {
+	return scanOperation(s.db.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at,cleanup_attempts,cleanup_error,cleanup_updated_at
+FROM control_queue WHERE kind=? AND operation_id=?`, kind, id))
+}
+
+func scanOperation(row interface{ Scan(...any) error }) (control.Operation, error) {
 	var operation control.Operation
 	var acceptedAt int64
 	var leasedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at FROM control_queue WHERE kind=? AND operation_id=?`, kind, id).
-		Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt, &leasedAt)
+	var cleanupUpdatedAt int64
+	err := row.Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt, &leasedAt,
+		&operation.CleanupAttempts, &operation.CleanupError, &cleanupUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return control.Operation{}, control.ErrNotFound
 	}
@@ -1410,6 +1536,10 @@ func (s *Store) Operation(ctx context.Context, kind control.OperationKind, id st
 	if leasedAt.Valid {
 		value := time.Unix(0, leasedAt.Int64).UTC()
 		operation.LeasedAt = &value
+	}
+	if cleanupUpdatedAt != 0 {
+		value := time.Unix(0, cleanupUpdatedAt).UTC()
+		operation.CleanupUpdatedAt = &value
 	}
 	return operation, nil
 }
@@ -1488,7 +1618,10 @@ func (s *Store) FinishBuild(ctx context.Context, id string, status control.Build
 	if count != 1 {
 		return control.Build{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationBuild, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=CASE WHEN state=? THEN ? ELSE ? END,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?,?)`,
+		control.OperationQueued, control.OperationReleased, control.OperationTerminalizing, time.Now().UTC().UnixNano(),
+		control.OperationBuild, id, control.OperationQueued, control.OperationAdmitting, control.OperationActive); err != nil {
 		return control.Build{}, err
 	}
 	if err := tx.Commit(); err != nil {

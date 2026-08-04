@@ -929,7 +929,7 @@ func (s *Server) refreshJob(ctx context.Context, job control.Job) (control.Job, 
 	if err != nil && !errors.Is(err, control.ErrNotFound) {
 		return control.Job{}, err
 	}
-	if err == nil && state != control.OperationActive {
+	if err == nil && (state == control.OperationQueued || state == control.OperationAdmitting) {
 		return job, nil
 	}
 	// A missing admission lease can race with a stale reconciler snapshot. The

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/pki"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
@@ -63,6 +62,7 @@ type Config struct {
 	AllowUnpinnedImages           bool
 	Capacity                      Capacity
 	RequiredBuildClientCapability string
+	RequiredJobClientCapability   string
 	Ready                         func() bool
 }
 
@@ -125,7 +125,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) GetServiceInfo(context.Context, *connect.Request[autbackv1.GetServiceInfoRequest]) (*connect.Response[autbackv1.GetServiceInfoResponse], error) {
 	return connect.NewResponse(&autbackv1.GetServiceInfoResponse{Version: Version, Capabilities: []string{
-		"connect", "projects", "project-images", "project-caches", "job-secrets-v1", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "durable-fifo-admission", "buildkit-mtls",
+		"connect", "projects", "project-images", "project-caches", "job-secrets-v1", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "durable-fifo-admission", version.CapabilityDurableJobPrepare, "buildkit-mtls",
 	}}), nil
 }
 
@@ -297,6 +297,13 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[autbac
 	if err != nil {
 		return nil, connectError(err)
 	}
+	if required := s.config.RequiredJobClientCapability; required != "" && !headerContainsToken(request.Header(), version.ClientCapabilitiesHeader, required) {
+		clientVersion := strings.TrimSpace(request.Header().Get(version.ClientVersionHeader))
+		if clientVersion == "" {
+			clientVersion = "unknown"
+		}
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("autback client %s does not support %s; upgrade the autback CLI", clientVersion, required))
+	}
 	message := proto.Clone(request.Msg).(*autbackv1.PrepareJobRequest)
 	if message.Image == "" {
 		message.Image = project.ActiveImage
@@ -310,9 +317,6 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[autbac
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	if err := s.ensureCapacity(ctx); err != nil {
-		return nil, err
-	}
 	requestHash, err := admissionHash(input)
 	if err != nil {
 		return nil, connectError(err)
@@ -321,19 +325,33 @@ func (s *Server) PrepareJob(ctx context.Context, request *connect.Request[autbac
 	if err != nil {
 		return nil, connectError(err)
 	}
-	credential, err := s.config.Authority.Issue(pki.OperationJob, job.ID, s.config.CredentialTTL)
-	if err != nil {
-		if !replayed {
-			_, _ = s.config.Store.FailJob(ctx, job.ID, "issue CAS credential")
-		}
-		return nil, connectError(err)
-	}
 	if !replayed {
 		if err := s.config.Store.Audit(ctx, principal, project.ID, "job.prepare", job.ID, map[string]string{"image": job.Image}); err != nil {
+			_, _ = s.config.Store.FailJob(ctx, job.ID, "record job preparation audit")
+			_ = s.config.Dispatcher.Release(ctx, control.OperationJob, job.ID)
 			return nil, connectError(err)
 		}
 	}
-	return connect.NewResponse(&autbackv1.PrepareJobResponse{Job: jobProto(job), Cas: connectionProto(s.config.CASEndpoint, s.config.CASInstance, credential)}), nil
+	// The durable preparation is accepted before capacity is available. A
+	// successful admission reserves the FIFO head; temporary capacity failures
+	// leave it queued and are retried by the background dispatcher.
+	if err := s.config.Dispatcher.RunOnce(ctx); err != nil {
+		s.config.Dispatcher.Advance()
+	}
+	job, err = s.config.Store.Job(ctx, job.ID)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	if job.Status == protocol.StatusPreparing {
+		if err := s.config.Store.RenewOperationLease(ctx, control.OperationJob, job.ID); err != nil {
+			return nil, connectError(err)
+		}
+	}
+	connection, err := s.jobPreparationConnection(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&autbackv1.PrepareJobResponse{Job: jobProto(job), Cas: connection}), nil
 }
 
 func (s *Server) StartJob(ctx context.Context, request *connect.Request[autbackv1.StartJobRequest]) (*connect.Response[autbackv1.StartJobResponse], error) {
@@ -352,14 +370,26 @@ func (s *Server) StartJob(ctx context.Context, request *connect.Request[autbackv
 		if job.RootDigest != request.Msg.RootDigest {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("job was already started with a different root digest"))
 		}
-		_ = s.config.Dispatcher.RunOnce(ctx)
+		if err := s.config.Dispatcher.RunOnce(ctx); err != nil {
+			s.config.Dispatcher.Advance()
+		}
 		return connect.NewResponse(&autbackv1.StartJobResponse{Job: jobProto(job)}), nil
+	}
+	state, err := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	if state != control.OperationAdmitting {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("job is still waiting for worker capacity"))
 	}
 	job, err = s.config.Store.QueueJob(ctx, job.ID, request.Msg.RootDigest)
 	if err != nil {
 		return nil, connectError(err)
 	}
 	dispatchErr := s.config.Dispatcher.RunOnce(ctx)
+	if dispatchErr != nil {
+		s.config.Dispatcher.Advance()
+	}
 	job, err = s.config.Store.Job(ctx, job.ID)
 	if err != nil {
 		return nil, connectError(err)
@@ -386,7 +416,34 @@ func (s *Server) GetJob(ctx context.Context, request *connect.Request[autbackv1.
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&autbackv1.GetJobResponse{Job: jobProto(job)}), nil
+	if job.Status == protocol.StatusPreparing {
+		if err := s.config.Store.RenewOperationLease(ctx, control.OperationJob, job.ID); err != nil {
+			return nil, connectError(err)
+		}
+	}
+	connection, err := s.jobPreparationConnection(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&autbackv1.GetJobResponse{Job: jobProto(job), Cas: connection}), nil
+}
+
+func (s *Server) jobPreparationConnection(ctx context.Context, job control.Job) (*autbackv1.DataPlaneConnection, error) {
+	if job.Status != protocol.StatusPreparing {
+		return nil, nil
+	}
+	state, err := s.config.Store.OperationState(ctx, control.OperationJob, job.ID)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	if state != control.OperationAdmitting {
+		return nil, nil
+	}
+	credential, err := s.config.Authority.Issue(pki.OperationJob, job.ID, s.config.CredentialTTL)
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connectionProto(s.config.CASEndpoint, s.config.CASInstance, credential), nil
 }
 
 func (s *Server) ListJobs(ctx context.Context, request *connect.Request[autbackv1.ListJobsRequest]) (*connect.Response[autbackv1.ListJobsResponse], error) {
@@ -451,7 +508,13 @@ func (s *Server) CancelJob(ctx context.Context, request *connect.Request[autback
 	if job.Status != protocol.StatusCancelled {
 		job, _ = s.refreshJob(ctx, job)
 	}
-	_ = s.config.Dispatcher.RunOnce(ctx)
+	if job.Status.Terminal() && state != control.OperationActive {
+		if err := s.config.Dispatcher.Release(ctx, control.OperationJob, job.ID); err != nil {
+			return nil, connectError(err)
+		}
+	} else {
+		_ = s.config.Dispatcher.RunOnce(ctx)
+	}
 	if err := s.config.Store.Audit(ctx, principal, job.ProjectID, "job.cancel", job.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
@@ -582,9 +645,6 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("autback client %s does not support %s; upgrade the autback CLI", clientVersion, required))
 	}
-	if err := s.ensureCapacity(ctx); err != nil {
-		return nil, err
-	}
 	requestHash, err := admissionHash(struct{ ProjectID string }{ProjectID: project.ID})
 	if err != nil {
 		return nil, connectError(err)
@@ -599,7 +659,9 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 			return nil, connectError(err)
 		}
 	}
-	_ = s.config.Dispatcher.RunOnce(ctx)
+	if err := s.config.Dispatcher.RunOnce(ctx); err != nil {
+		s.config.Dispatcher.Advance()
+	}
 	build, err = s.config.Store.Build(ctx, build.ID)
 	if err != nil {
 		return nil, connectError(err)
@@ -626,21 +688,6 @@ func headerContainsToken(header http.Header, name, required string) bool {
 		}
 	}
 	return false
-}
-
-func (s *Server) ensureCapacity(ctx context.Context) error {
-	if s.config.Capacity == nil {
-		return nil
-	}
-	err := s.config.Capacity.Ensure(ctx)
-	if err == nil {
-		return nil
-	}
-	var exhausted *capacity.ResourceExhaustedError
-	if errors.As(err, &exhausted) {
-		return connect.NewError(connect.CodeResourceExhausted, errors.New(exhausted.Error()))
-	}
-	return connect.NewError(connect.CodeUnavailable, errors.New("worker capacity check failed"))
 }
 
 func (s *Server) GetBuild(ctx context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {

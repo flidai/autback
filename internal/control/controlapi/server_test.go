@@ -25,6 +25,7 @@ import (
 	autbackv1 "github.com/flidai/autback/internal/gen/rtest/v1"
 	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
 	"github.com/flidai/autback/internal/protocol"
+	"github.com/flidai/autback/internal/version"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -94,6 +95,32 @@ func TestAuthenticatedGenericJobLifecycle(t *testing.T) {
 	}
 }
 
+func TestCancelAdmittedPreparationReleasesFIFOLease(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	prepared, err := client.PrepareJob(context.Background(), connect.NewRequest(&autbackv1.PrepareJobRequest{
+		IdempotencyKey: "cancel-admitted-preparation", Project: fixture.bootstrap.Project.Slug,
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"true"}, Timeout: durationpb.New(time.Minute),
+	}))
+	if err != nil || prepared.Msg.Cas == nil {
+		t.Fatalf("prepared = %#v, %v", prepared, err)
+	}
+	cancelled, err := client.CancelJob(context.Background(), connect.NewRequest(&autbackv1.CancelJobRequest{Id: prepared.Msg.Job.Id}))
+	if err != nil || cancelled.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_CANCELLED {
+		t.Fatalf("cancelled = %#v, %v", cancelled, err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		state, stateErr := fixture.store.OperationState(context.Background(), control.OperationJob, prepared.Msg.Job.Id)
+		if stateErr == nil && state == control.OperationReleased {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	state, stateErr := fixture.store.OperationState(context.Background(), control.OperationJob, prepared.Msg.Job.Id)
+	t.Fatalf("operation state = %s, %v; want released", state, stateErr)
+}
+
 func TestGetJobRepairsStatusAfterAdmissionLeaseReleased(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
@@ -159,7 +186,17 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	if build.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_QUEUED || build.Msg.Buildkit != nil {
 		t.Fatalf("queued build = %#v", build.Msg)
 	}
-	second := prepareJob("fifo-second-job")
+	secondPreparation, err := client.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
+		IdempotencyKey: "fifo-second-job", Project: fixture.bootstrap.Project.Slug,
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"task", "ci"}, Timeout: durationpb.New(time.Minute),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := secondPreparation.Msg.Job
+	if secondPreparation.Msg.Cas != nil {
+		t.Fatal("second job received CAS credentials before the earlier build")
+	}
 	if fixture.scheduler.createdCount() != 1 {
 		t.Fatalf("created jobs = %d, want only first", fixture.scheduler.createdCount())
 	}
@@ -181,6 +218,21 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 		t.Fatalf("admitted build = %#v, %v", runningBuild, err)
 	}
 	if _, err := client.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
+		t.Fatal(err)
+	}
+	var admitted *connect.Response[autbackv1.GetJobResponse]
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		admitted, err = client.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: second.Id}))
+		if err == nil && admitted.Msg.Cas != nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err != nil || admitted == nil || admitted.Msg.Cas == nil {
+		t.Fatalf("admitted second preparation = %#v, %v", admitted, err)
+	}
+	if _, err := client.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: second.Id, RootDigest: strings.Repeat("b", 64) + "/1"})); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(time.Second)
@@ -637,6 +689,32 @@ func TestBuildPreparationRequiresLeaseHeartbeatCapability(t *testing.T) {
 	}
 }
 
+func TestJobPreparationRequiresDurableQueueCapability(t *testing.T) {
+	fixture := newFixtureWithJobCapability(t, version.CapabilityDurableJobPrepare)
+	client := fixture.client(fixture.bootstrap.Token)
+	request := func(key, capabilities string) *connect.Request[autbackv1.PrepareJobRequest] {
+		result := connect.NewRequest(&autbackv1.PrepareJobRequest{
+			Project: fixture.bootstrap.Project.ID, IdempotencyKey: key,
+			Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"true"}, Timeout: durationpb.New(time.Minute),
+		})
+		if capabilities != "" {
+			result.Header().Set(version.ClientCapabilitiesHeader, capabilities)
+		}
+		return result
+	}
+
+	if _, err := client.PrepareJob(context.Background(), request("missing-job-capability", "")); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("missing capability error = %v, want failed precondition", err)
+	}
+	response, err := client.PrepareJob(context.Background(), request("compatible-job-client", "future-capability, "+version.CapabilityDurableJobPrepare))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Msg.Job == nil || response.Msg.Cas == nil {
+		t.Fatalf("compatible job response = %#v", response.Msg)
+	}
+}
+
 func TestAdmissionIdempotencyReplaysResourcesAndRejectsChangedRequests(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
@@ -859,6 +937,14 @@ func newFixtureWithBuildCapability(t *testing.T, capability string) *fixture {
 }
 
 func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, capability string) *fixture {
+	return newFixtureWithCapabilitiesAndCapacity(t, verifier, capacity, capability, "")
+}
+
+func newFixtureWithJobCapability(t *testing.T, capability string) *fixture {
+	return newFixtureWithCapabilitiesAndCapacity(t, nil, nil, "", capability)
+}
+
+func newFixtureWithCapabilitiesAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	store, err := controlsqlite.Open(filepath.Join(root, "state"), []byte("test-pepper-that-is-at-least-32-bytes"))
@@ -875,13 +961,16 @@ func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.
 		t.Fatal(err)
 	}
 	scheduler := &fakeScheduler{jobs: map[string]protocol.Job{}}
-	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacity))
+	advanceCtx, cancelAdvance := context.WithCancel(context.Background())
+	t.Cleanup(cancelAdvance)
+	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacity), dispatcher.WithAdvanceContext(advanceCtx))
 	draining := &atomic.Bool{}
 	handler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
 		CASEndpoint: "cas.example:50051", CASInstance: "autback", BuildKitEndpoint: "buildkit.example:1234",
 		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier, Capacity: capacity,
-		RequiredBuildClientCapability: capability,
+		RequiredBuildClientCapability: buildCapability,
+		RequiredJobClientCapability:   jobCapability,
 		Ready:                         func() bool { return !draining.Load() },
 	})
 	if err != nil {
@@ -892,22 +981,51 @@ func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.
 	return &fixture{store: store, bootstrap: bootstrap, scheduler: scheduler, server: server, draining: draining}
 }
 
-func TestAdmissionRejectsBeforeIssuingDataPlaneCredentialsWhenCapacityIsExhausted(t *testing.T) {
+func TestJobPreparationQueuesWithoutCredentialsWhenCapacityIsExhausted(t *testing.T) {
 	fixture := newFixtureWithCapacity(t, nil, fakeCapacity{err: &capacity.ResourceExhaustedError{FreeBytes: 1, RequiredBytes: 2}})
 	client := fixture.client(fixture.bootstrap.Token)
-	_, err := client.PrepareJob(context.Background(), connect.NewRequest(&autbackv1.PrepareJobRequest{
+	prepared, err := client.PrepareJob(context.Background(), connect.NewRequest(&autbackv1.PrepareJobRequest{
 		IdempotencyKey: "capacity-job-1", Project: fixture.bootstrap.Project.Slug,
 		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("1", 64), Command: []string{"true"}, Timeout: durationpb.New(time.Minute),
 	}))
-	if connect.CodeOf(err) != connect.CodeResourceExhausted {
-		t.Fatalf("PrepareJob error = %v, want resource exhausted", err)
+	if err != nil {
+		t.Fatalf("PrepareJob returned terminal capacity error: %v", err)
+	}
+	if prepared.Msg.Job == nil || prepared.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || prepared.Msg.Cas != nil {
+		t.Fatalf("prepared response = %#v, want durable preparation without CAS credentials", prepared.Msg)
 	}
 	page, listErr := fixture.store.ListJobs(context.Background(), fixture.bootstrap.Project.ID, 20, "")
 	if listErr != nil {
 		t.Fatal(listErr)
 	}
-	if len(page.Jobs) != 0 {
-		t.Fatalf("jobs = %#v, admission created state before capacity check", page.Jobs)
+	if len(page.Jobs) != 1 || page.Jobs[0].ID != prepared.Msg.Job.Id {
+		t.Fatalf("jobs = %#v, want persisted preparation", page.Jobs)
+	}
+	operation, stateErr := fixture.store.Operation(context.Background(), control.OperationJob, prepared.Msg.Job.Id)
+	if stateErr != nil || operation.State != control.OperationQueued {
+		t.Fatalf("operation = %#v, %v; want queued", operation, stateErr)
+	}
+	got, err := client.GetJob(context.Background(), connect.NewRequest(&autbackv1.GetJobRequest{Id: prepared.Msg.Job.Id}))
+	if err != nil || got.Msg.Cas != nil {
+		t.Fatalf("GetJob = %#v, %v; credentials must remain withheld", got, err)
+	}
+}
+
+func TestBuildPreparationQueuesWithoutCredentialsWhenCapacityIsExhausted(t *testing.T) {
+	fixture := newFixtureWithCapacity(t, nil, fakeCapacity{err: &capacity.ResourceExhaustedError{FreeBytes: 1, RequiredBytes: 2}})
+	client := fixture.client(fixture.bootstrap.Token)
+	prepared, err := client.PrepareBuild(context.Background(), connect.NewRequest(&autbackv1.PrepareBuildRequest{
+		IdempotencyKey: "capacity-build-1", Project: fixture.bootstrap.Project.Slug,
+	}))
+	if err != nil {
+		t.Fatalf("PrepareBuild returned terminal capacity error: %v", err)
+	}
+	if prepared.Msg.Build == nil || prepared.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_QUEUED || prepared.Msg.Buildkit != nil {
+		t.Fatalf("prepared response = %#v, want durable build without BuildKit credentials", prepared.Msg)
+	}
+	operation, stateErr := fixture.store.Operation(context.Background(), control.OperationBuild, prepared.Msg.Build.Id)
+	if stateErr != nil || operation.State != control.OperationQueued {
+		t.Fatalf("operation = %#v, %v; want queued", operation, stateErr)
 	}
 }
 

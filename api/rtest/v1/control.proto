@@ -265,6 +265,7 @@ message GetJobRequest {
 
 message GetJobResponse {
   Job job = 1;
+  DataPlaneConnection cas = 2;
 }
 
 message ListJobsRequest {

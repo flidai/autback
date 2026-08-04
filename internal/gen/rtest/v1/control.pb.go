@@ -2283,6 +2283,7 @@ func (x *GetJobRequest) GetId() string {
 type GetJobResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Job           *Job                   `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	Cas           *DataPlaneConnection   `protobuf:"bytes,2,opt,name=cas,proto3" json:"cas,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2320,6 +2321,13 @@ func (*GetJobResponse) Descriptor() ([]byte, []int) {
 func (x *GetJobResponse) GetJob() *Job {
 	if x != nil {
 		return x.Job
+	}
+	return nil
+}
+
+func (x *GetJobResponse) GetCas() *DataPlaneConnection {
+	if x != nil {
+		return x.Cas
 	}
 	return nil
 }
@@ -4185,9 +4193,10 @@ const file_rtest_v1_control_proto_rawDesc = "" +
 	"\x10StartJobResponse\x12\x1f\n" +
 	"\x03job\x18\x01 \x01(\v2\r.rtest.v1.JobR\x03job\"\x1f\n" +
 	"\rGetJobRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"1\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"b\n" +
 	"\x0eGetJobResponse\x12\x1f\n" +
-	"\x03job\x18\x01 \x01(\v2\r.rtest.v1.JobR\x03job\"\x81\x01\n" +
+	"\x03job\x18\x01 \x01(\v2\r.rtest.v1.JobR\x03job\x12/\n" +
+	"\x03cas\x18\x02 \x01(\v2\x1d.rtest.v1.DataPlaneConnectionR\x03cas\"\x81\x01\n" +
 	"\x0fListJobsRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x18\n" +
 	"\x05limit\x18\x02 \x01(\x05B\x02\x18\x01R\x05limit\x12\x1b\n" +
@@ -4479,91 +4488,92 @@ var file_rtest_v1_control_proto_depIdxs = []int32{
 	32, // 30: rtest.v1.PrepareJobResponse.cas:type_name -> rtest.v1.DataPlaneConnection
 	28, // 31: rtest.v1.StartJobResponse.job:type_name -> rtest.v1.Job
 	28, // 32: rtest.v1.GetJobResponse.job:type_name -> rtest.v1.Job
-	28, // 33: rtest.v1.ListJobsResponse.jobs:type_name -> rtest.v1.Job
-	28, // 34: rtest.v1.CancelJobResponse.job:type_name -> rtest.v1.Job
-	28, // 35: rtest.v1.StreamJobLogsResponse.terminal_job:type_name -> rtest.v1.Job
-	1,  // 36: rtest.v1.Build.status:type_name -> rtest.v1.BuildStatus
-	71, // 37: rtest.v1.Build.created_at:type_name -> google.protobuf.Timestamp
-	71, // 38: rtest.v1.Build.finished_at:type_name -> google.protobuf.Timestamp
-	44, // 39: rtest.v1.PrepareBuildResponse.build:type_name -> rtest.v1.Build
-	32, // 40: rtest.v1.PrepareBuildResponse.buildkit:type_name -> rtest.v1.DataPlaneConnection
-	44, // 41: rtest.v1.FinishBuildResponse.build:type_name -> rtest.v1.Build
-	71, // 42: rtest.v1.ExchangeGitHubOIDCResponse.expires_at:type_name -> google.protobuf.Timestamp
-	71, // 43: rtest.v1.GitHubTrust.created_at:type_name -> google.protobuf.Timestamp
-	71, // 44: rtest.v1.GitHubTrust.revoked_at:type_name -> google.protobuf.Timestamp
-	51, // 45: rtest.v1.CreateGitHubTrustResponse.trust:type_name -> rtest.v1.GitHubTrust
-	51, // 46: rtest.v1.ListGitHubTrustsResponse.trusts:type_name -> rtest.v1.GitHubTrust
-	71, // 47: rtest.v1.DeviceToken.created_at:type_name -> google.protobuf.Timestamp
-	71, // 48: rtest.v1.DeviceToken.expires_at:type_name -> google.protobuf.Timestamp
-	71, // 49: rtest.v1.DeviceToken.last_used_at:type_name -> google.protobuf.Timestamp
-	71, // 50: rtest.v1.DeviceToken.revoked_at:type_name -> google.protobuf.Timestamp
-	71, // 51: rtest.v1.CreateDeviceTokenRequest.expires_at:type_name -> google.protobuf.Timestamp
-	58, // 52: rtest.v1.CreateDeviceTokenResponse.token_metadata:type_name -> rtest.v1.DeviceToken
-	58, // 53: rtest.v1.ListDeviceTokensResponse.tokens:type_name -> rtest.v1.DeviceToken
-	44, // 54: rtest.v1.GetBuildResponse.build:type_name -> rtest.v1.Build
-	32, // 55: rtest.v1.GetBuildResponse.buildkit:type_name -> rtest.v1.DataPlaneConnection
-	44, // 56: rtest.v1.CancelBuildResponse.build:type_name -> rtest.v1.Build
-	2,  // 57: rtest.v1.ControlService.GetServiceInfo:input_type -> rtest.v1.GetServiceInfoRequest
-	5,  // 58: rtest.v1.ControlService.CreateUser:input_type -> rtest.v1.CreateUserRequest
-	8,  // 59: rtest.v1.ControlService.CreateProject:input_type -> rtest.v1.CreateProjectRequest
-	10, // 60: rtest.v1.ControlService.ListProjects:input_type -> rtest.v1.ListProjectsRequest
-	12, // 61: rtest.v1.ControlService.AddProjectMember:input_type -> rtest.v1.AddProjectMemberRequest
-	19, // 62: rtest.v1.ControlService.ActivateProjectImage:input_type -> rtest.v1.ActivateProjectImageRequest
-	21, // 63: rtest.v1.ControlService.RollbackProjectImage:input_type -> rtest.v1.RollbackProjectImageRequest
-	23, // 64: rtest.v1.ControlService.SetProjectImagePolicy:input_type -> rtest.v1.SetProjectImagePolicyRequest
-	26, // 65: rtest.v1.ControlService.ListProjectImageHistory:input_type -> rtest.v1.ListProjectImageHistoryRequest
-	31, // 66: rtest.v1.ControlService.PrepareJob:input_type -> rtest.v1.PrepareJobRequest
-	34, // 67: rtest.v1.ControlService.StartJob:input_type -> rtest.v1.StartJobRequest
-	36, // 68: rtest.v1.ControlService.GetJob:input_type -> rtest.v1.GetJobRequest
-	38, // 69: rtest.v1.ControlService.ListJobs:input_type -> rtest.v1.ListJobsRequest
-	40, // 70: rtest.v1.ControlService.CancelJob:input_type -> rtest.v1.CancelJobRequest
-	42, // 71: rtest.v1.ControlService.StreamJobLogs:input_type -> rtest.v1.StreamJobLogsRequest
-	45, // 72: rtest.v1.ControlService.PrepareBuild:input_type -> rtest.v1.PrepareBuildRequest
-	65, // 73: rtest.v1.ControlService.GetBuild:input_type -> rtest.v1.GetBuildRequest
-	67, // 74: rtest.v1.ControlService.CancelBuild:input_type -> rtest.v1.CancelBuildRequest
-	47, // 75: rtest.v1.ControlService.FinishBuild:input_type -> rtest.v1.FinishBuildRequest
-	49, // 76: rtest.v1.ControlService.ExchangeGitHubOIDC:input_type -> rtest.v1.ExchangeGitHubOIDCRequest
-	52, // 77: rtest.v1.ControlService.CreateGitHubTrust:input_type -> rtest.v1.CreateGitHubTrustRequest
-	54, // 78: rtest.v1.ControlService.ListGitHubTrusts:input_type -> rtest.v1.ListGitHubTrustsRequest
-	56, // 79: rtest.v1.ControlService.RevokeGitHubTrust:input_type -> rtest.v1.RevokeGitHubTrustRequest
-	59, // 80: rtest.v1.ControlService.CreateDeviceToken:input_type -> rtest.v1.CreateDeviceTokenRequest
-	61, // 81: rtest.v1.ControlService.ListDeviceTokens:input_type -> rtest.v1.ListDeviceTokensRequest
-	63, // 82: rtest.v1.ControlService.RevokeDeviceToken:input_type -> rtest.v1.RevokeDeviceTokenRequest
-	15, // 83: rtest.v1.ControlService.CreateEnrollmentCode:input_type -> rtest.v1.CreateEnrollmentCodeRequest
-	17, // 84: rtest.v1.ControlService.ExchangeEnrollmentCode:input_type -> rtest.v1.ExchangeEnrollmentCodeRequest
-	3,  // 85: rtest.v1.ControlService.GetServiceInfo:output_type -> rtest.v1.GetServiceInfoResponse
-	6,  // 86: rtest.v1.ControlService.CreateUser:output_type -> rtest.v1.CreateUserResponse
-	9,  // 87: rtest.v1.ControlService.CreateProject:output_type -> rtest.v1.CreateProjectResponse
-	11, // 88: rtest.v1.ControlService.ListProjects:output_type -> rtest.v1.ListProjectsResponse
-	13, // 89: rtest.v1.ControlService.AddProjectMember:output_type -> rtest.v1.AddProjectMemberResponse
-	20, // 90: rtest.v1.ControlService.ActivateProjectImage:output_type -> rtest.v1.ActivateProjectImageResponse
-	22, // 91: rtest.v1.ControlService.RollbackProjectImage:output_type -> rtest.v1.RollbackProjectImageResponse
-	24, // 92: rtest.v1.ControlService.SetProjectImagePolicy:output_type -> rtest.v1.SetProjectImagePolicyResponse
-	27, // 93: rtest.v1.ControlService.ListProjectImageHistory:output_type -> rtest.v1.ListProjectImageHistoryResponse
-	33, // 94: rtest.v1.ControlService.PrepareJob:output_type -> rtest.v1.PrepareJobResponse
-	35, // 95: rtest.v1.ControlService.StartJob:output_type -> rtest.v1.StartJobResponse
-	37, // 96: rtest.v1.ControlService.GetJob:output_type -> rtest.v1.GetJobResponse
-	39, // 97: rtest.v1.ControlService.ListJobs:output_type -> rtest.v1.ListJobsResponse
-	41, // 98: rtest.v1.ControlService.CancelJob:output_type -> rtest.v1.CancelJobResponse
-	43, // 99: rtest.v1.ControlService.StreamJobLogs:output_type -> rtest.v1.StreamJobLogsResponse
-	46, // 100: rtest.v1.ControlService.PrepareBuild:output_type -> rtest.v1.PrepareBuildResponse
-	66, // 101: rtest.v1.ControlService.GetBuild:output_type -> rtest.v1.GetBuildResponse
-	68, // 102: rtest.v1.ControlService.CancelBuild:output_type -> rtest.v1.CancelBuildResponse
-	48, // 103: rtest.v1.ControlService.FinishBuild:output_type -> rtest.v1.FinishBuildResponse
-	50, // 104: rtest.v1.ControlService.ExchangeGitHubOIDC:output_type -> rtest.v1.ExchangeGitHubOIDCResponse
-	53, // 105: rtest.v1.ControlService.CreateGitHubTrust:output_type -> rtest.v1.CreateGitHubTrustResponse
-	55, // 106: rtest.v1.ControlService.ListGitHubTrusts:output_type -> rtest.v1.ListGitHubTrustsResponse
-	57, // 107: rtest.v1.ControlService.RevokeGitHubTrust:output_type -> rtest.v1.RevokeGitHubTrustResponse
-	60, // 108: rtest.v1.ControlService.CreateDeviceToken:output_type -> rtest.v1.CreateDeviceTokenResponse
-	62, // 109: rtest.v1.ControlService.ListDeviceTokens:output_type -> rtest.v1.ListDeviceTokensResponse
-	64, // 110: rtest.v1.ControlService.RevokeDeviceToken:output_type -> rtest.v1.RevokeDeviceTokenResponse
-	16, // 111: rtest.v1.ControlService.CreateEnrollmentCode:output_type -> rtest.v1.CreateEnrollmentCodeResponse
-	18, // 112: rtest.v1.ControlService.ExchangeEnrollmentCode:output_type -> rtest.v1.ExchangeEnrollmentCodeResponse
-	85, // [85:113] is the sub-list for method output_type
-	57, // [57:85] is the sub-list for method input_type
-	57, // [57:57] is the sub-list for extension type_name
-	57, // [57:57] is the sub-list for extension extendee
-	0,  // [0:57] is the sub-list for field type_name
+	32, // 33: rtest.v1.GetJobResponse.cas:type_name -> rtest.v1.DataPlaneConnection
+	28, // 34: rtest.v1.ListJobsResponse.jobs:type_name -> rtest.v1.Job
+	28, // 35: rtest.v1.CancelJobResponse.job:type_name -> rtest.v1.Job
+	28, // 36: rtest.v1.StreamJobLogsResponse.terminal_job:type_name -> rtest.v1.Job
+	1,  // 37: rtest.v1.Build.status:type_name -> rtest.v1.BuildStatus
+	71, // 38: rtest.v1.Build.created_at:type_name -> google.protobuf.Timestamp
+	71, // 39: rtest.v1.Build.finished_at:type_name -> google.protobuf.Timestamp
+	44, // 40: rtest.v1.PrepareBuildResponse.build:type_name -> rtest.v1.Build
+	32, // 41: rtest.v1.PrepareBuildResponse.buildkit:type_name -> rtest.v1.DataPlaneConnection
+	44, // 42: rtest.v1.FinishBuildResponse.build:type_name -> rtest.v1.Build
+	71, // 43: rtest.v1.ExchangeGitHubOIDCResponse.expires_at:type_name -> google.protobuf.Timestamp
+	71, // 44: rtest.v1.GitHubTrust.created_at:type_name -> google.protobuf.Timestamp
+	71, // 45: rtest.v1.GitHubTrust.revoked_at:type_name -> google.protobuf.Timestamp
+	51, // 46: rtest.v1.CreateGitHubTrustResponse.trust:type_name -> rtest.v1.GitHubTrust
+	51, // 47: rtest.v1.ListGitHubTrustsResponse.trusts:type_name -> rtest.v1.GitHubTrust
+	71, // 48: rtest.v1.DeviceToken.created_at:type_name -> google.protobuf.Timestamp
+	71, // 49: rtest.v1.DeviceToken.expires_at:type_name -> google.protobuf.Timestamp
+	71, // 50: rtest.v1.DeviceToken.last_used_at:type_name -> google.protobuf.Timestamp
+	71, // 51: rtest.v1.DeviceToken.revoked_at:type_name -> google.protobuf.Timestamp
+	71, // 52: rtest.v1.CreateDeviceTokenRequest.expires_at:type_name -> google.protobuf.Timestamp
+	58, // 53: rtest.v1.CreateDeviceTokenResponse.token_metadata:type_name -> rtest.v1.DeviceToken
+	58, // 54: rtest.v1.ListDeviceTokensResponse.tokens:type_name -> rtest.v1.DeviceToken
+	44, // 55: rtest.v1.GetBuildResponse.build:type_name -> rtest.v1.Build
+	32, // 56: rtest.v1.GetBuildResponse.buildkit:type_name -> rtest.v1.DataPlaneConnection
+	44, // 57: rtest.v1.CancelBuildResponse.build:type_name -> rtest.v1.Build
+	2,  // 58: rtest.v1.ControlService.GetServiceInfo:input_type -> rtest.v1.GetServiceInfoRequest
+	5,  // 59: rtest.v1.ControlService.CreateUser:input_type -> rtest.v1.CreateUserRequest
+	8,  // 60: rtest.v1.ControlService.CreateProject:input_type -> rtest.v1.CreateProjectRequest
+	10, // 61: rtest.v1.ControlService.ListProjects:input_type -> rtest.v1.ListProjectsRequest
+	12, // 62: rtest.v1.ControlService.AddProjectMember:input_type -> rtest.v1.AddProjectMemberRequest
+	19, // 63: rtest.v1.ControlService.ActivateProjectImage:input_type -> rtest.v1.ActivateProjectImageRequest
+	21, // 64: rtest.v1.ControlService.RollbackProjectImage:input_type -> rtest.v1.RollbackProjectImageRequest
+	23, // 65: rtest.v1.ControlService.SetProjectImagePolicy:input_type -> rtest.v1.SetProjectImagePolicyRequest
+	26, // 66: rtest.v1.ControlService.ListProjectImageHistory:input_type -> rtest.v1.ListProjectImageHistoryRequest
+	31, // 67: rtest.v1.ControlService.PrepareJob:input_type -> rtest.v1.PrepareJobRequest
+	34, // 68: rtest.v1.ControlService.StartJob:input_type -> rtest.v1.StartJobRequest
+	36, // 69: rtest.v1.ControlService.GetJob:input_type -> rtest.v1.GetJobRequest
+	38, // 70: rtest.v1.ControlService.ListJobs:input_type -> rtest.v1.ListJobsRequest
+	40, // 71: rtest.v1.ControlService.CancelJob:input_type -> rtest.v1.CancelJobRequest
+	42, // 72: rtest.v1.ControlService.StreamJobLogs:input_type -> rtest.v1.StreamJobLogsRequest
+	45, // 73: rtest.v1.ControlService.PrepareBuild:input_type -> rtest.v1.PrepareBuildRequest
+	65, // 74: rtest.v1.ControlService.GetBuild:input_type -> rtest.v1.GetBuildRequest
+	67, // 75: rtest.v1.ControlService.CancelBuild:input_type -> rtest.v1.CancelBuildRequest
+	47, // 76: rtest.v1.ControlService.FinishBuild:input_type -> rtest.v1.FinishBuildRequest
+	49, // 77: rtest.v1.ControlService.ExchangeGitHubOIDC:input_type -> rtest.v1.ExchangeGitHubOIDCRequest
+	52, // 78: rtest.v1.ControlService.CreateGitHubTrust:input_type -> rtest.v1.CreateGitHubTrustRequest
+	54, // 79: rtest.v1.ControlService.ListGitHubTrusts:input_type -> rtest.v1.ListGitHubTrustsRequest
+	56, // 80: rtest.v1.ControlService.RevokeGitHubTrust:input_type -> rtest.v1.RevokeGitHubTrustRequest
+	59, // 81: rtest.v1.ControlService.CreateDeviceToken:input_type -> rtest.v1.CreateDeviceTokenRequest
+	61, // 82: rtest.v1.ControlService.ListDeviceTokens:input_type -> rtest.v1.ListDeviceTokensRequest
+	63, // 83: rtest.v1.ControlService.RevokeDeviceToken:input_type -> rtest.v1.RevokeDeviceTokenRequest
+	15, // 84: rtest.v1.ControlService.CreateEnrollmentCode:input_type -> rtest.v1.CreateEnrollmentCodeRequest
+	17, // 85: rtest.v1.ControlService.ExchangeEnrollmentCode:input_type -> rtest.v1.ExchangeEnrollmentCodeRequest
+	3,  // 86: rtest.v1.ControlService.GetServiceInfo:output_type -> rtest.v1.GetServiceInfoResponse
+	6,  // 87: rtest.v1.ControlService.CreateUser:output_type -> rtest.v1.CreateUserResponse
+	9,  // 88: rtest.v1.ControlService.CreateProject:output_type -> rtest.v1.CreateProjectResponse
+	11, // 89: rtest.v1.ControlService.ListProjects:output_type -> rtest.v1.ListProjectsResponse
+	13, // 90: rtest.v1.ControlService.AddProjectMember:output_type -> rtest.v1.AddProjectMemberResponse
+	20, // 91: rtest.v1.ControlService.ActivateProjectImage:output_type -> rtest.v1.ActivateProjectImageResponse
+	22, // 92: rtest.v1.ControlService.RollbackProjectImage:output_type -> rtest.v1.RollbackProjectImageResponse
+	24, // 93: rtest.v1.ControlService.SetProjectImagePolicy:output_type -> rtest.v1.SetProjectImagePolicyResponse
+	27, // 94: rtest.v1.ControlService.ListProjectImageHistory:output_type -> rtest.v1.ListProjectImageHistoryResponse
+	33, // 95: rtest.v1.ControlService.PrepareJob:output_type -> rtest.v1.PrepareJobResponse
+	35, // 96: rtest.v1.ControlService.StartJob:output_type -> rtest.v1.StartJobResponse
+	37, // 97: rtest.v1.ControlService.GetJob:output_type -> rtest.v1.GetJobResponse
+	39, // 98: rtest.v1.ControlService.ListJobs:output_type -> rtest.v1.ListJobsResponse
+	41, // 99: rtest.v1.ControlService.CancelJob:output_type -> rtest.v1.CancelJobResponse
+	43, // 100: rtest.v1.ControlService.StreamJobLogs:output_type -> rtest.v1.StreamJobLogsResponse
+	46, // 101: rtest.v1.ControlService.PrepareBuild:output_type -> rtest.v1.PrepareBuildResponse
+	66, // 102: rtest.v1.ControlService.GetBuild:output_type -> rtest.v1.GetBuildResponse
+	68, // 103: rtest.v1.ControlService.CancelBuild:output_type -> rtest.v1.CancelBuildResponse
+	48, // 104: rtest.v1.ControlService.FinishBuild:output_type -> rtest.v1.FinishBuildResponse
+	50, // 105: rtest.v1.ControlService.ExchangeGitHubOIDC:output_type -> rtest.v1.ExchangeGitHubOIDCResponse
+	53, // 106: rtest.v1.ControlService.CreateGitHubTrust:output_type -> rtest.v1.CreateGitHubTrustResponse
+	55, // 107: rtest.v1.ControlService.ListGitHubTrusts:output_type -> rtest.v1.ListGitHubTrustsResponse
+	57, // 108: rtest.v1.ControlService.RevokeGitHubTrust:output_type -> rtest.v1.RevokeGitHubTrustResponse
+	60, // 109: rtest.v1.ControlService.CreateDeviceToken:output_type -> rtest.v1.CreateDeviceTokenResponse
+	62, // 110: rtest.v1.ControlService.ListDeviceTokens:output_type -> rtest.v1.ListDeviceTokensResponse
+	64, // 111: rtest.v1.ControlService.RevokeDeviceToken:output_type -> rtest.v1.RevokeDeviceTokenResponse
+	16, // 112: rtest.v1.ControlService.CreateEnrollmentCode:output_type -> rtest.v1.CreateEnrollmentCodeResponse
+	18, // 113: rtest.v1.ControlService.ExchangeEnrollmentCode:output_type -> rtest.v1.ExchangeEnrollmentCodeResponse
+	86, // [86:114] is the sub-list for method output_type
+	58, // [58:86] is the sub-list for method input_type
+	58, // [58:58] is the sub-list for extension type_name
+	58, // [58:58] is the sub-list for extension extendee
+	0,  // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_rtest_v1_control_proto_init() }

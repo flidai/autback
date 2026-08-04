@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
+	"github.com/flidai/autback/internal/protocol"
 )
 
 var ErrDraining = errors.New("dispatcher is draining")
@@ -234,6 +235,19 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 		if operation == nil {
 			return errors.Join(admissionErrors...)
 		}
+		var job control.Job
+		if operation.Kind == control.OperationJob {
+			job, err = d.store.Job(ctx, operation.ID)
+			if err != nil {
+				return errors.Join(append(admissionErrors, fmt.Errorf("read admitted job %s: %w", operation.ID, err))...)
+			}
+			// Preparing jobs reserve the FIFO head before their source can be
+			// uploaded. Runtime baselines and secrets are prepared only after
+			// StartJob commits the root digest and returns the job to the queue.
+			if job.Status == protocol.StatusPreparing {
+				return errors.Join(admissionErrors...)
+			}
+		}
 		if d.preparer != nil {
 			if err := d.preparer.Prepare(ctx, *operation); err != nil {
 				var permanent interface{ Permanent() bool }
@@ -256,10 +270,6 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 				return errors.Join(append(admissionErrors, fmt.Errorf("activate build %s: %w", operation.ID, err))...)
 			}
 			return errors.Join(admissionErrors...)
-		}
-		job, err := d.store.Job(ctx, operation.ID)
-		if err != nil {
-			return errors.Join(append(admissionErrors, fmt.Errorf("read admitted job %s: %w", operation.ID, err))...)
 		}
 		if err := d.scheduler.Create(ctx, job); err != nil {
 			if isContextCancellation(err, ctx) {

@@ -177,9 +177,10 @@ func run(ctx context.Context) error {
 	)
 	reconcile := reconciler.New(reconciler.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch,
-		ServiceRetention:  durationEnv("AUTBACK_SERVICE_RETENTION", time.Hour),
-		AdmissionGrace:    durationEnv("AUTBACK_ADMISSION_GRACE", 15*time.Second),
-		BuildLeaseTimeout: durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Minute),
+		ServiceRetention:           durationEnv("AUTBACK_SERVICE_RETENTION", time.Hour),
+		AdmissionGrace:             durationEnv("AUTBACK_ADMISSION_GRACE", 15*time.Second),
+		BuildLeaseTimeout:          durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Minute),
+		JobPreparationLeaseTimeout: durationEnv("AUTBACK_JOB_PREPARATION_LEASE_TIMEOUT", 2*time.Minute),
 	})
 	var verifier controlapi.OIDCVerifier
 	if audience := os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
@@ -197,6 +198,7 @@ func run(ctx context.Context) error {
 		AllowUnpinnedImages:           os.Getenv("AUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
 		Capacity:                      capacityController,
 		RequiredBuildClientCapability: version.CapabilityBuildLeaseHeartbeat,
+		RequiredJobClientCapability:   version.CapabilityDurableJobPrepare,
 		Ready:                         func() bool { return !draining.Load() },
 	})
 	if err != nil {

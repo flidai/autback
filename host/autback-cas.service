@@ -7,7 +7,7 @@ Requires=docker.service
 Type=simple
 EnvironmentFile=/etc/autback/swarm.env
 ExecStartPre=-/usr/bin/docker rm -f autback-cas
-ExecStart=/usr/bin/docker run --rm --name autback-cas --network host --memory 768m --pids-limit 512 --log-driver local --log-opt max-size=10m --log-opt max-file=2 -v /var/lib/autback/cas:/data ${AUTBACK_CAS_IMAGE} --dir /data --max_size ${AUTBACK_CAS_MAX_SIZE} --max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT} --grpc_address 127.0.0.1:50051 --http_address 127.0.0.1:50050 --access_log_level none
+ExecStart=/usr/bin/docker run --rm --name autback-cas --label autback.managed=true --network host --memory 768m --pids-limit 512 --log-driver local --log-opt max-size=10m --log-opt max-file=2 -v /var/lib/autback/cas:/data ${AUTBACK_CAS_IMAGE} --dir /data --max_size ${AUTBACK_CAS_MAX_SIZE} --max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT} --grpc_address 127.0.0.1:50051 --http_address 127.0.0.1:50050 --access_log_level none
 ExecStop=/usr/bin/docker stop -t 20 autback-cas
 Restart=on-failure
 RestartSec=3

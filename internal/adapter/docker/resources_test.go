@@ -23,22 +23,23 @@ import (
 func TestClientInventoriesUnprotectedDockerResources(t *testing.T) {
 	api := &fakeEngine{
 		services: []swarm.Service{
-			{ID: "managed-service", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Labels: map[string]string{"autback.managed": "true"}}}},
+			{ID: "managed-service", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Labels: map[string]string{operationcleanup.ProtectedResourceLabel: "true"}}}},
 			{ID: "nested-service", Spec: swarm.ServiceSpec{}},
 		},
 		containers: []container.Summary{
 			{ID: "container-before", Labels: map[string]string{}},
+			{ID: "managed-container", Labels: map[string]string{operationcleanup.ProtectedResourceLabel: "true"}},
 			{ID: "swarm-task", Labels: map[string]string{"com.docker.swarm.service.id": "service-id"}},
 			{ID: "owned-container", Labels: map[string]string{"org.testcontainers": "true"}},
 		},
 		networks: []network.Summary{
 			{Network: network.Network{ID: "network-before", Labels: map[string]string{}}},
-			{Network: network.Network{ID: "managed-network", Labels: map[string]string{"autback.managed": "true"}}},
+			{Network: network.Network{ID: "managed-network", Labels: map[string]string{operationcleanup.ProtectedResourceLabel: "true"}}},
 			{Network: network.Network{ID: "owned-network", Labels: map[string]string{"org.testcontainers": "true"}}},
 		},
 		volumes: []volume.Volume{
 			{Name: "volume-before", CreatedAt: "2026-08-04T07:00:00Z", Labels: map[string]string{}},
-			{Name: "managed-volume", Labels: map[string]string{"autback.managed": "true"}},
+			{Name: "managed-volume", Labels: map[string]string{operationcleanup.ProtectedResourceLabel: "true"}},
 			{Name: "owned-volume", CreatedAt: "2026-08-04T08:00:00Z", Labels: map[string]string{"org.testcontainers": "true"}},
 		},
 	}

@@ -73,7 +73,6 @@ Job preparations and queued/running builds use renewable leases so a killed or d
 client cannot block the FIFO indefinitely. The CLI renews them while waiting, uploading, or
 running Buildx. The server cancels either after two minutes without a heartbeat by default
 (`AUTBACK_JOB_PREPARATION_LEASE_TIMEOUT` and `AUTBACK_BUILD_LEASE_TIMEOUT`).
-
 CAS data lives under `/var/lib/autback/cas`; workspaces live under `/var/lib/autback/jobs`;
 explicit project caches live under `/var/lib/autback/cache/<project-id>/<cache-name>`;
 BuildKit uses `autback-buildkit-state`. CAS and BuildKit content caches are intentionally
@@ -113,6 +112,13 @@ before releasing the lease. Set `AUTBACK_RESOURCE_CLEANUP_GRACE` to tune the Ryu
 `AUTBACK_RESOURCE_CLEANUP_TIMEOUT` to tune the two-minute per-attempt bound. Docker outages
 or partial removals leave the operation in `cleaning`; the coordinator retries and resumes
 from the same baseline after restart. Images and BuildKit cache are deliberately excluded.
+Autback infrastructure and operator-protected Docker resources must carry
+`autback.managed=true`; the installed CAS and BuildKit containers and BuildKit state volume
+carry this label. The cleanup inventory always excludes labeled resources, so an
+infrastructure container recreated after an operation baseline cannot be mistaken for a
+job-created resource. Only apply this label to resources whose lifecycle is owned outside
+the operation: labeling a repository-created resource deliberately excludes it from leak
+cleanup.
 
 Runtime reconciliation is failure-isolated. A malformed Swarm service remains visible as
 an actionable reconciliation error while healthy terminal jobs and stale builds continue

@@ -23,13 +23,14 @@ func TestResourceManagerCleansRealOperationResources(t *testing.T) {
 	preexisting := prefix + "-before"
 	detached := prefix + "-detached"
 	ryuk := prefix + "-ryuk"
+	protected := prefix + "-protected"
 	network := prefix + "-network"
 	volume := prefix + "-volume"
 	service := prefix + "-service"
 
 	dockerRun(t, ctx, "pull", "alpine:3.20")
 	dockerRun(t, ctx, "run", "--detach", "--name", preexisting, "alpine:3.20", "sleep", "300")
-	t.Cleanup(func() { dockerCleanup(preexisting, detached, ryuk, network, volume, service) })
+	t.Cleanup(func() { dockerCleanup(preexisting, detached, ryuk, protected, network, volume, service) })
 	initializedSwarm := false
 	if !swarmActive(ctx) {
 		if err := exec.CommandContext(ctx, "docker", "swarm", "init", "--advertise-addr", "127.0.0.1").Run(); err != nil {
@@ -60,6 +61,7 @@ func TestResourceManagerCleansRealOperationResources(t *testing.T) {
 	dockerRun(t, ctx, "volume", "create", volume)
 	dockerRun(t, ctx, "run", "--detach", "--name", detached, "--network", network, "--volume", volume+":/data", "alpine:3.20", "sleep", "300")
 	dockerRun(t, ctx, "create", "--name", ryuk, "--label", "org.testcontainers.ryuk.container=true", "alpine:3.20", "true")
+	dockerRun(t, ctx, "run", "--detach", "--name", protected, "--label", operationcleanup.ProtectedResourceLabel+"=true", "alpine:3.20", "sleep", "300")
 
 	dockerRun(t, ctx, "service", "create", "--detach=true", "--name", service, "alpine:3.20", "sleep", "300")
 
@@ -76,6 +78,9 @@ func TestResourceManagerCleansRealOperationResources(t *testing.T) {
 	}
 	if err := exec.CommandContext(ctx, "docker", "container", "inspect", preexisting).Run(); err != nil {
 		t.Fatalf("pre-existing container was removed: %v", err)
+	}
+	if err := exec.CommandContext(ctx, "docker", "container", "inspect", protected).Run(); err != nil {
+		t.Fatalf("protected container created after the baseline was removed: %v", err)
 	}
 }
 
@@ -129,11 +134,11 @@ func waitForSwarmInfrastructure(t *testing.T, ctx context.Context) {
 }
 
 func dockerCleanup(names ...string) {
-	if len(names) != 6 {
+	if len(names) != 7 {
 		return
 	}
-	_ = exec.Command("docker", "service", "rm", names[5]).Run()
-	_ = exec.Command("docker", "container", "rm", "--force", names[0], names[1], names[2]).Run()
-	_ = exec.Command("docker", "network", "rm", names[3]).Run()
-	_ = exec.Command("docker", "volume", "rm", "--force", names[4]).Run()
+	_ = exec.Command("docker", "service", "rm", names[6]).Run()
+	_ = exec.Command("docker", "container", "rm", "--force", names[0], names[1], names[2], names[3]).Run()
+	_ = exec.Command("docker", "network", "rm", names[4]).Run()
+	_ = exec.Command("docker", "volume", "rm", "--force", names[5]).Run()
 }

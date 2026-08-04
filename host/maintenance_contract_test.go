@@ -27,7 +27,13 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 
 	buildkit := readFile(t, filepath.Join(root, "host", "autback-buildkit.service"))
-	for _, required := range []string{"/etc/autback/buildkitd.toml", "--config /etc/buildkit/buildkitd.toml", "--log-driver local"} {
+	for _, required := range []string{
+		"docker volume create --label autback.managed=true autback-buildkit-state",
+		"--label autback.managed=true",
+		"/etc/autback/buildkitd.toml",
+		"--config /etc/buildkit/buildkitd.toml",
+		"--log-driver local",
+	} {
 		if !strings.Contains(buildkit, required) {
 			t.Errorf("BuildKit service missing %q", required)
 		}
@@ -37,7 +43,12 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 
 	cas := readFile(t, filepath.Join(root, "host", "autback-cas.service"))
-	for _, required := range []string{"--max_size ${AUTBACK_CAS_MAX_SIZE}", "--max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT}", "--log-driver local"} {
+	for _, required := range []string{
+		"--label autback.managed=true",
+		"--max_size ${AUTBACK_CAS_MAX_SIZE}",
+		"--max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT}",
+		"--log-driver local",
+	} {
 		if !strings.Contains(cas, required) {
 			t.Errorf("CAS service missing %q", required)
 		}

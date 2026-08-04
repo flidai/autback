@@ -28,8 +28,11 @@ type Config struct {
 }
 
 type Client struct {
-	engine engine
-	close  func() error
+	engine   engine
+	runtime  swarmEngine
+	images   imageEngine
+	capacity capacityEngine
+	close    func() error
 }
 
 func New(config Config) (*Client, error) {
@@ -41,7 +44,7 @@ func New(config Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Docker Engine client: %w", err)
 	}
-	return &Client{engine: api, close: api.Close}, nil
+	return &Client{engine: api, runtime: api, images: api, capacity: api, close: api.Close}, nil
 }
 
 func newClient(api engine) *Client { return &Client{engine: api} }

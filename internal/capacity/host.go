@@ -2,7 +2,6 @@ package capacity
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -31,7 +29,22 @@ type ImagePolicy struct {
 
 type Commands interface {
 	Run(context.Context, ...string) error
-	Output(context.Context, ...string) ([]byte, error)
+}
+
+type Runtime interface {
+	PruneContainers(context.Context, time.Duration, bool) error
+	PruneNetworks(context.Context, time.Duration) error
+	PruneVolumes(context.Context) error
+	PruneImages(context.Context, time.Duration) error
+	ListImages(context.Context) ([]RuntimeImage, error)
+	RemoveImage(context.Context, string) error
+}
+
+type RuntimeImage struct {
+	ID          string
+	RepoTags    []string
+	RepoDigests []string
+	CreatedAt   time.Time
 }
 
 type HostConfig struct {
@@ -40,6 +53,7 @@ type HostConfig struct {
 	CacheRoot    string
 	LockPath     string
 	Store        CapacityStore
+	Runtime      Runtime
 	Commands     Commands
 	Emergency    func(context.Context) error
 	Now          func() time.Time
@@ -97,19 +111,34 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 		return h.finishReport(ctx, before, report, errors.Join(reclaimErrors...))
 	}
 
-	age := dockerAge(request.NormalObjectAge)
+	ageDuration := request.NormalObjectAge
+	if ageDuration <= 0 {
+		ageDuration = 24 * time.Hour
+	}
+	age := dockerAge(ageDuration)
 	containerCommand := []string{"container", "prune", "--force", "--filter", "label=org.testcontainers=true", "--filter", "until=" + age}
 	if request.Pressure {
-		age = "5m"
+		ageDuration = 5 * time.Minute
+		age = dockerAge(ageDuration)
 		containerCommand = []string{"container", "prune", "--force", "--filter", "until=" + age}
 	}
-	for _, command := range [][]string{containerCommand,
-		{"network", "prune", "--force", "--filter", "until=" + age},
-		{"volume", "prune", "--force"},
-	} {
+	runtimeCalls := []struct {
+		command []string
+		run     func() error
+	}{
+		{containerCommand, func() error {
+			return h.config.Runtime.PruneContainers(ctx, ageDuration, request.Pressure)
+		}},
+		{[]string{"network", "prune", "--force", "--filter", "until=" + age}, func() error { return h.config.Runtime.PruneNetworks(ctx, ageDuration) }},
+		{[]string{"volume", "prune", "--force"}, func() error { return h.config.Runtime.PruneVolumes(ctx) }},
+	}
+	for _, runtimeCall := range runtimeCalls {
+		command := runtimeCall.command
 		report.Commands = append(report.Commands, "docker "+joinCommand(command))
 		if !h.config.DryRun {
-			if err := h.config.Commands.Run(ctx, command...); err != nil {
+			if h.config.Runtime == nil {
+				reclaimErrors = append(reclaimErrors, errors.New("Docker capacity runtime is not configured"))
+			} else if err := runtimeCall.run(); err != nil {
 				reclaimErrors = append(reclaimErrors, fmt.Errorf("docker %s: %w", joinCommand(command), err))
 			}
 		}
@@ -128,7 +157,9 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 		imageCommand := []string{"image", "prune", "--force", "--filter", "until=" + age}
 		report.Commands = append(report.Commands, "docker "+joinCommand(imageCommand))
 		if !h.config.DryRun {
-			if err := h.config.Commands.Run(ctx, imageCommand...); err != nil {
+			if h.config.Runtime == nil {
+				reclaimErrors = append(reclaimErrors, errors.New("Docker capacity runtime is not configured"))
+			} else if err := h.config.Runtime.PruneImages(ctx, ageDuration); err != nil {
 				reclaimErrors = append(reclaimErrors, fmt.Errorf("docker %s: %w", joinCommand(imageCommand), err))
 			}
 		}
@@ -161,30 +192,25 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 }
 
 type dockerImage struct {
-	ID          string    `json:"Id"`
-	RepoTags    []string  `json:"RepoTags"`
-	RepoDigests []string  `json:"RepoDigests"`
-	Created     time.Time `json:"Created"`
-	lastUsed    time.Time
-	protected   bool
+	RuntimeImage
+	lastUsed  time.Time
+	protected bool
 }
 
 func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([]string, error) {
-	idsOutput, err := h.config.Commands.Output(ctx, "image", "ls", "--quiet", "--no-trunc")
+	if h.config.Runtime == nil {
+		return nil, errors.New("Docker capacity runtime is not configured")
+	}
+	runtimeImages, err := h.config.Runtime.ListImages(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list Docker images: %w", err)
 	}
-	ids := strings.Fields(string(idsOutput))
-	if len(ids) == 0 {
+	if len(runtimeImages) == 0 {
 		return nil, nil
 	}
-	inspectOutput, err := h.config.Commands.Output(ctx, append([]string{"image", "inspect"}, ids...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Docker images: %w", err)
-	}
-	var images []dockerImage
-	if err := json.Unmarshal(inspectOutput, &images); err != nil {
-		return nil, fmt.Errorf("decode Docker images: %w", err)
+	images := make([]dockerImage, 0, len(runtimeImages))
+	for _, image := range runtimeImages {
+		images = append(images, dockerImage{RuntimeImage: image})
 	}
 	policies, err := h.config.Store.CapacityImagePolicies(ctx)
 	if err != nil {
@@ -195,7 +221,7 @@ func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([
 		byReference[policy.Reference] = policy
 	}
 	for index := range images {
-		images[index].lastUsed = images[index].Created
+		images[index].lastUsed = images[index].CreatedAt
 		for _, reference := range append(append([]string(nil), images[index].RepoTags...), images[index].RepoDigests...) {
 			policy, ok := byReference[reference]
 			if !ok {
@@ -224,7 +250,7 @@ func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([
 		if !h.config.DryRun {
 			// Docker refuses removal while any container references the image. That
 			// runtime ownership protection is intentional, so a conflict is skipped.
-			_ = h.config.Commands.Run(ctx, command...)
+			_ = h.config.Runtime.RemoveImage(ctx, image.ID)
 		}
 		if targetFreeBytes > 0 {
 			snapshot, snapshotErr := h.Snapshot(ctx)

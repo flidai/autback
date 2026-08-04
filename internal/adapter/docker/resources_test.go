@@ -87,7 +87,7 @@ func TestClientReturnsTypedDaemonFailure(t *testing.T) {
 }
 
 func TestClientNegotiatesOldestAndNewestSupportedEngineAPIs(t *testing.T) {
-	for _, apiVersion := range []string{client.MinAPIVersion, client.MaxAPIVersion} {
+	for _, apiVersion := range []string{minimumRuntimeAPI, client.MaxAPIVersion} {
 		t.Run(apiVersion, func(t *testing.T) {
 			var mu sync.Mutex
 			var paths []string
@@ -105,10 +105,14 @@ func TestClientNegotiatesOldestAndNewestSupportedEngineAPIs(t *testing.T) {
 					_, _ = response.Write([]byte("[]"))
 				case strings.HasSuffix(request.URL.Path, "/containers/json"):
 					_, _ = response.Write([]byte("[]"))
+				case strings.HasSuffix(request.URL.Path, "/containers/prune"):
+					_, _ = response.Write([]byte(`{"ContainersDeleted":[],"SpaceReclaimed":0}`))
 				case strings.HasSuffix(request.URL.Path, "/networks"):
 					_, _ = response.Write([]byte("[]"))
 				case strings.HasSuffix(request.URL.Path, "/volumes"):
 					_, _ = response.Write([]byte(`{"Volumes":[],"Warnings":[]}`))
+				case strings.HasSuffix(request.URL.Path, "/info"):
+					_, _ = response.Write([]byte(`{"Swarm":{"LocalNodeState":"active"}}`))
 				default:
 					http.NotFound(response, request)
 				}
@@ -122,9 +126,18 @@ func TestClientNegotiatesOldestAndNewestSupportedEngineAPIs(t *testing.T) {
 			if _, err := api.Inventory(context.Background()); err != nil {
 				t.Fatal(err)
 			}
+			if err := api.Check(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := api.ListResults(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := api.PruneContainers(context.Background(), time.Hour, true); err != nil {
+				t.Fatal(err)
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			for _, suffix := range []string{"/services", "/containers/json", "/networks", "/volumes"} {
+			for _, suffix := range []string{"/services", "/containers/json", "/containers/prune", "/networks", "/volumes", "/info"} {
 				want := "/v" + apiVersion + suffix
 				found := false
 				for _, path := range paths {

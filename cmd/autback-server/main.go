@@ -36,7 +36,6 @@ import (
 	"github.com/flidai/autback/internal/control/swarmscheduler"
 	"github.com/flidai/autback/internal/hostmetrics"
 	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
-	"github.com/flidai/autback/internal/swarm"
 	"github.com/flidai/autback/internal/version"
 )
 
@@ -99,19 +98,18 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	dockerConfig := swarm.Config{Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")}
-	docker := swarm.New(dockerConfig)
-	if err := docker.Check(processCtx); err != nil {
-		return err
-	}
-	resourceDocker, err := dockeradapter.New(dockeradapter.Config{Host: dockerConfig.Host})
+	dockerHost := env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")
+	docker, err := dockeradapter.New(dockeradapter.Config{Host: dockerHost})
 	if err != nil {
 		return err
 	}
-	defer resourceDocker.Close()
+	defer docker.Close()
+	if err := docker.Check(processCtx); err != nil {
+		return err
+	}
 	resourceManager := operationcleanup.NewResourceManager(operationcleanup.ResourceManagerConfig{
 		Store:       store,
-		Runtime:     resourceDocker,
+		Runtime:     docker,
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})
@@ -127,7 +125,7 @@ func run(ctx context.Context) error {
 		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
-	capacityController := newCapacityController(dataDir, store, scheduler, resourceManager, false)
+	capacityController := newCapacityController(dataDir, store, scheduler, docker, resourceManager, false)
 	status, capacityErr := capacityController.Maintain(processCtx, capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(dataDir, "capacity.json"), status)
 	if capacityErr != nil {
@@ -404,23 +402,22 @@ func maintainWorker(args []string) {
 	_ = flags.Parse(args)
 	store := openStore(*dataDir)
 	defer store.Close()
-	docker := swarm.New(swarm.Config{Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
+	docker, err := dockeradapter.New(dockeradapter.Config{Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer docker.Close()
 	if err := docker.Check(context.Background()); err != nil {
 		log.Fatal(err)
 	}
 	scheduler := swarmscheduler.New(swarmscheduler.Config{Client: docker})
-	resourceDocker, err := dockeradapter.New(dockeradapter.Config{Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resourceDocker.Close()
 	resourceManager := operationcleanup.NewResourceManager(operationcleanup.ResourceManagerConfig{
 		Store:       store,
-		Runtime:     resourceDocker,
+		Runtime:     docker,
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})
-	controller := newCapacityController(*dataDir, store, scheduler, resourceManager, *dryRun)
+	controller := newCapacityController(*dataDir, store, scheduler, docker, resourceManager, *dryRun)
 	status, err := controller.Maintain(context.Background(), capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(*dataDir, "capacity.json"), status)
 	if *jsonOutput {
@@ -435,7 +432,7 @@ func maintainWorker(args []string) {
 	}
 }
 
-func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler *swarmscheduler.Scheduler, cleaner operationcleanup.Cleaner, dryRun bool) *capacity.Controller {
+func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler *swarmscheduler.Scheduler, runtime capacity.Runtime, cleaner operationcleanup.Cleaner, dryRun bool) *capacity.Controller {
 	// Destructive Docker cleanup is valid only on a worker whose daemon is an
 	// Autback ownership boundary. Local development defaults to observation.
 	dryRun = dryRun || os.Getenv("AUTBACK_WORKER_OWNERSHIP") != "exclusive"
@@ -445,6 +442,7 @@ func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler
 		CacheRoot:    env("AUTBACK_CACHE_ROOT", filepath.Join(dataDir, "cache")),
 		LockPath:     filepath.Join(dataDir, "capacity.lock"),
 		Store:        store,
+		Runtime:      runtime,
 		Commands: capacity.DockerCommands{
 			Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock"),
 		},

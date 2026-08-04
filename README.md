@@ -132,7 +132,8 @@ candidates while preserving raw logs and an exact source fingerprint.
 - `api/rtest/v1`: the frozen deployed v1 protobuf ABI for the Connect control API.
 - `internal/control`: projects, credentials, OIDC, authorization, audit, PKI, and scheduling.
 - `internal/cas`, `internal/workspace`: standard CAS transfer and exact Git input selection.
-- `internal/swarm`: server-private Docker job specifications and lifecycle operations.
+- `internal/control/swarmscheduler`: the server-owned Swarm scheduling port and job contract.
+- `internal/adapter/docker`: typed, version-negotiated Docker Engine adapters for jobs, capacity, and cleanup.
 - `internal/buildkit`: thin native Buildx remote-builder wrapper.
 - `internal/console`, `web`: authenticated Gomponents/Pagestream transport and Lit console UI.
 - `cmd/autback-job-entrypoint`: CAS materialization, timeout, process-group, and result boundary.

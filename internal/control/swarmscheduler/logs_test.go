@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/flidai/autback/internal/swarm"
 )
 
 func TestCompletedLogsPreferDurableJobFile(t *testing.T) {
@@ -19,7 +17,7 @@ func TestCompletedLogsPreferDurableJobFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "job.log"), []byte("durable output\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scheduler := New(Config{Client: swarm.New(swarm.Config{Binary: "does-not-exist"}), JobsRoot: root})
+	scheduler := New(Config{JobsRoot: root})
 	var output bytes.Buffer
 	if err := scheduler.Logs(context.Background(), "job-one", false, &output); err != nil {
 		t.Fatal(err)

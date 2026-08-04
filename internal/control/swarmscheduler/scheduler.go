@@ -10,11 +10,10 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
-	"github.com/flidai/autback/internal/swarm"
 )
 
 type Config struct {
-	Client             *swarm.Client
+	Client             Client
 	CASAddress         string
 	CASInstance        string
 	JobsRoot           string
@@ -22,6 +21,47 @@ type Config struct {
 	CacheRoot          string
 	HostUID            string
 	HostGID            string
+}
+
+type Client interface {
+	Check(context.Context) error
+	ValidateImage(context.Context, string) error
+	Create(context.Context, Spec) (string, error)
+	Status(context.Context, string) (protocol.Job, error)
+	Logs(context.Context, string, bool, io.Writer) error
+	Cancel(context.Context, string) error
+	ListResults(context.Context) ([]JobResult, error)
+	Remove(context.Context, string) error
+}
+
+type Spec struct {
+	ID                 string
+	Image              string
+	CASAddress         string
+	CASInstance        string
+	RootDigest         string
+	JobsRoot           string
+	Command            []string
+	WorkingDirectory   string
+	Environment        map[string]string
+	EntrypointHostPath string
+	Timeout            time.Duration
+	CacheRoot          string
+	ProjectID          string
+	Caches             []CacheMount
+	HostUID            string
+	HostGID            string
+}
+
+type CacheMount struct {
+	Name   string
+	Target string
+}
+
+type JobResult struct {
+	ID  string
+	Job protocol.Job
+	Err error
 }
 
 type Scheduler struct {
@@ -44,12 +84,12 @@ func (s *Scheduler) Create(ctx context.Context, job control.Job) error {
 	return err
 }
 
-func specForJob(config Config, job control.Job) swarm.Spec {
-	caches := make([]swarm.CacheMount, 0, len(job.Caches))
+func specForJob(config Config, job control.Job) Spec {
+	caches := make([]CacheMount, 0, len(job.Caches))
 	for _, cache := range job.Caches {
-		caches = append(caches, swarm.CacheMount{Name: cache.Name, Target: cache.Target})
+		caches = append(caches, CacheMount{Name: cache.Name, Target: cache.Target})
 	}
-	return swarm.Spec{
+	return Spec{
 		ID:    job.ID,
 		Image: job.Image, CASAddress: config.CASAddress, CASInstance: config.CASInstance,
 		RootDigest: job.RootDigest, JobsRoot: config.JobsRoot, Command: job.Command,

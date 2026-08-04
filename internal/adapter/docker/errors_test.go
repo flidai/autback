@@ -2,6 +2,8 @@ package docker
 
 import (
 	"errors"
+	"net/url"
+	"syscall"
 	"testing"
 
 	"github.com/containerd/errdefs"
@@ -16,6 +18,7 @@ func TestClassifyEngineErrors(t *testing.T) {
 		{"none", nil, ErrorNone},
 		{"not found", errdefs.ErrNotFound, ErrorNotFound},
 		{"daemon unavailable", errdefs.ErrUnavailable, ErrorRetryable},
+		{"daemon connection refused", &url.Error{Op: "GET", URL: "http://docker/info", Err: syscall.ECONNREFUSED}, ErrorRetryable},
 		{"malformed resource", errdefs.ErrDataLoss, ErrorPoisoned},
 		{"unsupported API", errdefs.ErrNotImplemented, ErrorContract},
 		{"permission", errors.New("permission denied"), ErrorPermanent},

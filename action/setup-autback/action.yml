@@ -5,7 +5,7 @@ inputs:
   version:
     description: Exact autback release version to install.
     required: false
-    default: "0.1.9"
+    default: "0.1.10"
   repository:
     description: GitHub repository that owns v* release assets.
     required: false

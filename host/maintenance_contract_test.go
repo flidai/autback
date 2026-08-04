@@ -14,9 +14,15 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 		t.Fatalf("legacy shell janitor still exists: %v", err)
 	}
 	maintenance := readFile(t, filepath.Join(root, "host", "autback-maintenance.service"))
-	for _, required := range []string{"User=autback", "SupplementaryGroups=docker", "autback-server maintain --json"} {
+	for _, required := range []string{"User=autback", "SupplementaryGroups=docker", "AmbientCapabilities=CAP_DAC_OVERRIDE", "CapabilityBoundingSet=CAP_DAC_OVERRIDE", "ProtectSystem=strict", "ReadWritePaths=/var/lib/autback", "autback-server maintain --json"} {
 		if !strings.Contains(maintenance, required) {
 			t.Errorf("maintenance service missing %q", required)
+		}
+	}
+	server := readFile(t, filepath.Join(root, "host", "autback-server.service"))
+	for _, required := range []string{"AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE", "CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE", "ProtectSystem=strict", "ReadWritePaths=/var/lib/autback"} {
+		if !strings.Contains(server, required) {
+			t.Errorf("server service missing %q", required)
 		}
 	}
 

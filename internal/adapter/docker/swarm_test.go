@@ -78,6 +78,77 @@ func TestTypedSwarmListResultsSurfacesMalformedService(t *testing.T) {
 	}
 }
 
+func TestRuntimeTaskStatusClassifiesEverySwarmState(t *testing.T) {
+	tests := []struct {
+		state    swarm.TaskState
+		exitCode int
+		want     protocol.Status
+	}{
+		{state: swarm.TaskStateNew, want: protocol.StatusQueued},
+		{state: swarm.TaskStateAllocated, want: protocol.StatusQueued},
+		{state: swarm.TaskStatePending, want: protocol.StatusQueued},
+		{state: swarm.TaskStateAssigned, want: protocol.StatusQueued},
+		{state: swarm.TaskStateAccepted, want: protocol.StatusQueued},
+		{state: swarm.TaskStatePreparing, want: protocol.StatusQueued},
+		{state: swarm.TaskStateReady, want: protocol.StatusQueued},
+		{state: swarm.TaskStateStarting, want: protocol.StatusQueued},
+		{state: swarm.TaskStateRunning, want: protocol.StatusRunning},
+		{state: swarm.TaskStateComplete, want: protocol.StatusSucceeded},
+		{state: swarm.TaskStateComplete, exitCode: 2, want: protocol.StatusFailed},
+		{state: swarm.TaskStateShutdown, want: protocol.StatusLost},
+		{state: swarm.TaskStateFailed, exitCode: 1, want: protocol.StatusFailed},
+		{state: swarm.TaskStateFailed, exitCode: 124, want: protocol.StatusTimedOut},
+		{state: swarm.TaskStateRejected, exitCode: 1, want: protocol.StatusFailed},
+		{state: swarm.TaskStateRemove, want: protocol.StatusLost},
+		{state: swarm.TaskStateOrphaned, want: protocol.StatusLost},
+		{state: swarm.TaskState("future-terminal-state"), want: protocol.StatusLost},
+	}
+	for _, test := range tests {
+		t.Run(string(test.state)+fmt.Sprintf("-%d", test.exitCode), func(t *testing.T) {
+			if got := runtimeTaskStatus(test.state, test.exitCode, false); got != test.want {
+				t.Fatalf("runtimeTaskStatus(%q, %d, false) = %q, want %q", test.state, test.exitCode, got, test.want)
+			}
+		})
+	}
+	for _, state := range []swarm.TaskState{swarm.TaskStateNew, swarm.TaskStateRunning, swarm.TaskStateComplete, swarm.TaskStateShutdown, swarm.TaskState("future")} {
+		if got := runtimeTaskStatus(state, 0, true); got != protocol.StatusCancelled {
+			t.Fatalf("runtimeTaskStatus(%q, 0, true) = %q, want cancelled", state, got)
+		}
+	}
+}
+
+func TestTypedSwarmTerminalizesTasksWithoutContainerStatus(t *testing.T) {
+	tests := []struct {
+		state swarm.TaskState
+		want  protocol.Status
+	}{
+		{state: swarm.TaskStateComplete, want: protocol.StatusFailed},
+		{state: swarm.TaskStateFailed, want: protocol.StatusFailed},
+		{state: swarm.TaskStateRejected, want: protocol.StatusFailed},
+		{state: swarm.TaskStateShutdown, want: protocol.StatusLost},
+		{state: swarm.TaskStateRemove, want: protocol.StatusLost},
+		{state: swarm.TaskStateOrphaned, want: protocol.StatusLost},
+		{state: swarm.TaskState("future-terminal-state"), want: protocol.StatusLost},
+	}
+	for _, test := range tests {
+		t.Run(string(test.state), func(t *testing.T) {
+			createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+			finishedAt := createdAt.Add(time.Minute)
+			service := managedService("service-id", "job-1", createdAt)
+			api := &fakeSwarmEngine{tasks: map[string][]swarm.Task{
+				service.ID: {{ID: "task-1", Meta: swarm.Meta{CreatedAt: createdAt, UpdatedAt: finishedAt}, Status: swarm.TaskStatus{State: test.state, Timestamp: finishedAt}}},
+			}}
+			job, err := newRuntimeClient(api, nil).status(context.Background(), service, service.Spec.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if job.Status != test.want || job.FinishedAt == nil || job.ExitCode == nil || *job.ExitCode == 0 || job.ErrorMessage == "" {
+				t.Fatalf("job = %#v, want terminal %q with failure diagnostics", job, test.want)
+			}
+		})
+	}
+}
+
 func TestTypedSwarmCheckRecoversAfterDaemonOutage(t *testing.T) {
 	api := &fakeSwarmEngine{apiVersion: client.MaxAPIVersion, infoErr: errdefs.ErrUnavailable}
 	runtime := newRuntimeClient(api, nil)

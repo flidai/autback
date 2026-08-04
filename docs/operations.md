@@ -65,10 +65,15 @@ worker.
 Queued operations consume control-plane state only. CAS and BuildKit credentials and Swarm
 services are created only after admission. Job preparation itself is durable: the CLI waits
 for a CAS connection, uploads while renewing its preparation lease, and only then starts the
-runtime. A one-second reconciliation loop terminalizes completed
-or lost detached jobs. A durable cleanup coordinator then releases the reservation and
-admits the next FIFO entry. Queue state, cleanup attempts/errors, and the active lease are
-persisted in `/var/lib/autback/control.db` and survive a server restart.
+runtime. A one-second reconciliation loop terminalizes completed or lost detached jobs.
+Docker's pre-run task states remain queued, `running` remains running, and every documented
+terminal state is mapped explicitly. `shutdown`, `remove`, and `orphaned` are reported as
+lost unless cancellation was requested; an unknown future state also fails closed as lost
+and retains its raw value for diagnosis instead of holding FIFO capacity. Terminal tasks
+that never created a container receive a synthetic non-zero exit code so rejection and
+node-drain paths still converge. A durable cleanup coordinator then releases the
+reservation and admits the next FIFO entry. Queue state, cleanup attempts/errors, and the
+active lease are persisted in `/var/lib/autback/control.db` and survive a server restart.
 Job preparations and queued/running builds use renewable leases so a killed or disconnected
 client cannot block the FIFO indefinitely. The CLI renews them while waiting, uploading, or
 running Buildx. The server cancels either after two minutes without a heartbeat by default

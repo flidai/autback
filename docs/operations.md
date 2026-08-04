@@ -97,6 +97,11 @@ to converge. A daemon-wide list failure is never interpreted as proof that every
 was lost; durable job state is preserved and retried when Docker recovers. Docker cleanup
 uses negotiated Engine APIs and treats typed not-found responses as idempotent success.
 
+The CLI removes its ephemeral native Buildx remote-driver record with an independent
+15-second deadline and three bounded attempts, even when the build context was cancelled.
+An already-missing builder is success; a persistent removal failure is returned instead of
+being silently discarded, so automation can retry without leaking local builder records.
+
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
 rollback project images, applies recorded image last use, and reduces project caches from

@@ -78,6 +78,15 @@ Job preparations and queued/running builds use renewable leases so a killed or d
 client cannot block the FIFO indefinitely. The CLI renews them while waiting, uploading, or
 running Buildx. The server cancels either after two minutes without a heartbeat by default
 (`AUTBACK_JOB_PREPARATION_LEASE_TIMEOUT` and `AUTBACK_BUILD_LEASE_TIMEOUT`).
+Heartbeat RPCs have per-attempt deadlines and retry transient transport failures with
+bounded exponential backoff and jitter. The default retry budget is two heartbeat intervals
+(60 seconds), which stays inside the default two-minute server lease; authorization,
+revocation, and terminal-state failures are not retried. Each successful heartbeat returns
+a fresh operation-scoped data-plane certificate. The CLI publishes it to an ephemeral
+loopback proxy, so CAS and Buildx keep a stable local endpoint while every new upstream
+connection uses the latest credential. Existing streams continue uninterrupted; a CAS or
+BuildKit reconnect after certificate rotation no longer reuses expired TLS state.
+
 CAS data lives under `/var/lib/autback/cas`; workspaces live under `/var/lib/autback/jobs`;
 explicit project caches live under `/var/lib/autback/cache/<project-id>/<cache-name>`;
 BuildKit uses `autback-buildkit-state`. CAS and BuildKit content caches are intentionally

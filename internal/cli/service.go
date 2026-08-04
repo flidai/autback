@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
 	"github.com/flidai/autback/internal/projectlink"
 	"github.com/flidai/autback/internal/protocol"
+	backoff "github.com/flidai/autback/internal/retry"
 	"github.com/flidai/autback/internal/workspace"
 	"golang.org/x/term"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -1084,48 +1084,16 @@ func runLeaseHeartbeat(ctx context.Context, policy heartbeatPolicy, heartbeat fu
 			}
 			return err
 		}
-		failureStarted := time.Time{}
-		retryDelay := policy.InitialRetryDelay
-		for {
-			attemptCtx, cancel := context.WithTimeout(ctx, policy.RequestTimeout)
-			err := heartbeat(attemptCtx)
-			cancel()
-			if err == nil {
-				break
-			}
+		err := backoff.Do(ctx, backoff.Policy{
+			InitialDelay: policy.InitialRetryDelay, MaxDelay: policy.MaxRetryDelay, MaxAttempts: 1000,
+			MaxElapsed: policy.FailureBudget, AttemptTimeout: policy.RequestTimeout,
+			Wait: policy.Wait, Now: policy.Now, Jitter: policy.Jitter,
+		}, heartbeat, transientHeartbeatError)
+		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if !transientHeartbeatError(err) {
-				return err
-			}
-			now := policy.Now()
-			if failureStarted.IsZero() {
-				failureStarted = now
-			}
-			remaining := policy.FailureBudget - now.Sub(failureStarted)
-			if remaining <= 0 {
-				return fmt.Errorf("heartbeat retry budget exhausted after %s: %w", policy.FailureBudget, err)
-			}
-			delay := policy.Jitter(retryDelay)
-			if delay <= 0 {
-				delay = retryDelay
-			}
-			if delay > remaining {
-				delay = remaining
-			}
-			if waitErr := policy.Wait(ctx, delay); waitErr != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				return errors.Join(err, waitErr)
-			}
-			if retryDelay < policy.MaxRetryDelay {
-				retryDelay *= 2
-				if retryDelay > policy.MaxRetryDelay {
-					retryDelay = policy.MaxRetryDelay
-				}
-			}
+			return fmt.Errorf("heartbeat: %w", err)
 		}
 	}
 }
@@ -1152,9 +1120,6 @@ func normalizeHeartbeatPolicy(policy heartbeatPolicy) heartbeatPolicy {
 	if policy.Now == nil {
 		policy.Now = time.Now
 	}
-	if policy.Jitter == nil {
-		policy.Jitter = jitterHeartbeatDelay
-	}
 	return policy
 }
 
@@ -1165,14 +1130,6 @@ func transientHeartbeatError(err error) bool {
 	default:
 		return false
 	}
-}
-
-func jitterHeartbeatDelay(delay time.Duration) time.Duration {
-	spread := delay / 5
-	if spread <= 0 {
-		return delay
-	}
-	return delay - spread + time.Duration(rand.Int64N(int64(2*spread)+1))
 }
 
 func waitForHeartbeat(ctx context.Context, delay time.Duration) error {

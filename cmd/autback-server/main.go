@@ -25,6 +25,7 @@ import (
 	secretstore "github.com/flidai/autback/internal/adapter/secretstore"
 	appserver "github.com/flidai/autback/internal/app/server"
 	"github.com/flidai/autback/internal/capacity"
+	casadapter "github.com/flidai/autback/internal/cas"
 	"github.com/flidai/autback/internal/console"
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/control/controlapi"
@@ -241,7 +242,12 @@ func run(ctx context.Context) error {
 		RequiredBuildClientCapability: version.CapabilityBuildLeaseHeartbeat,
 		RequiredJobClientCapability:   version.CapabilityDurableJobPrepare,
 		Ready:                         func() bool { return !draining.Load() },
-		GitHubDirectory:               githubHumanAuth,
+		ReadinessDependencies: []controlapi.ReadinessDependency{
+			{Name: "CAS", Check: func(ctx context.Context) error { return casadapter.Check(ctx, casInternal, casInstance) }},
+			{Name: "BuildKit", Check: buildCache.Check},
+		},
+		ReadinessProbeTimeout: durationEnv("AUTBACK_READINESS_PROBE_TIMEOUT", 500*time.Millisecond),
+		GitHubDirectory:       githubHumanAuth,
 	})
 	if err != nil {
 		return err

@@ -53,6 +53,11 @@ type GitHubDirectory interface {
 	Resolve(context.Context, string) (control.ExternalIdentity, error)
 }
 
+type ReadinessDependency struct {
+	Name  string
+	Check func(context.Context) error
+}
+
 type Config struct {
 	Store                         *controlsqlite.Store
 	Scheduler                     control.Scheduler
@@ -68,6 +73,8 @@ type Config struct {
 	RequiredBuildClientCapability string
 	RequiredJobClientCapability   string
 	Ready                         func() bool
+	ReadinessDependencies         []ReadinessDependency
+	ReadinessProbeTimeout         time.Duration
 	GitHubDirectory               GitHubDirectory
 }
 
@@ -84,6 +91,14 @@ func New(config Config) (http.Handler, error) {
 	}
 	if config.CredentialTTL == 0 {
 		config.CredentialTTL = 15 * time.Minute
+	}
+	if config.ReadinessProbeTimeout <= 0 {
+		config.ReadinessProbeTimeout = 500 * time.Millisecond
+	}
+	for _, dependency := range config.ReadinessDependencies {
+		if strings.TrimSpace(dependency.Name) == "" || dependency.Check == nil {
+			return nil, errors.New("readiness dependency name and check are required")
+		}
 	}
 	if config.CredentialTTL < time.Minute || config.CredentialTTL > 2*time.Hour {
 		return nil, errors.New("credential TTL must be between 1 minute and 2 hours")
@@ -111,6 +126,15 @@ func New(config Config) (http.Handler, error) {
 		if config.Capacity != nil {
 			if err := config.Capacity.Check(ctx); err != nil {
 				http.Error(response, "worker capacity unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		for _, dependency := range config.ReadinessDependencies {
+			probeCtx, cancelProbe := context.WithTimeout(ctx, config.ReadinessProbeTimeout)
+			err := dependency.Check(probeCtx)
+			cancelProbe()
+			if err != nil {
+				http.Error(response, dependency.Name+" unavailable", http.StatusServiceUnavailable)
 				return
 			}
 		}

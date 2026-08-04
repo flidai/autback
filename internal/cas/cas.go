@@ -39,7 +39,15 @@ func CheckConnection(ctx context.Context, connection Connection) error {
 	if err != nil {
 		return err
 	}
-	return grpcClient.Close()
+	defer grpcClient.Close()
+	capabilities, err := grpcClient.GetCapabilities(ctx)
+	if err != nil {
+		return fmt.Errorf("probe REAPI CAS capabilities: %w", err)
+	}
+	if capabilities == nil || capabilities.CacheCapabilities == nil {
+		return errors.New("probe REAPI CAS capabilities: server returned no cache capabilities")
+	}
+	return nil
 }
 
 func Upload(ctx context.Context, service, instance, root string, files []string) (UploadResult, error) {

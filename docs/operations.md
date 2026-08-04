@@ -43,9 +43,13 @@ the project, job, and reference but never the value. Inspect `job.secret.access`
 investigating use.
 
 `/healthz` is process liveness. `/readyz` returns success only when the process is accepting
-work and both SQLite and Docker Swarm respond, so it is the endpoint to use for alerts and
-deployment verification. It returns `503` as soon as shutdown starts, before listeners or
-durable state are closed.
+work and SQLite, Docker Swarm, capacity, the internal REAPI CAS, and BuildKit all respond,
+so it is the endpoint to use for alerts and deployment verification. Each data-plane probe
+has a 500 ms default budget (`AUTBACK_READINESS_PROBE_TIMEOUT`); a failure returns a concise
+dependency-specific reason without including the underlying address or credentials. The
+next probe recovers automatically after the dependency does. Readiness returns `503` as
+soon as shutdown starts, before listeners or durable state are closed; `/healthz` remains
+green so a transient dependency outage does not cause a destructive restart loop.
 
 Autback uses one coordinated 15-second shutdown budget. It first marks readiness as
 draining and rejects new FIFO admission, then cancels and joins HTTP, both mTLS proxies,
@@ -56,11 +60,12 @@ shutdown; after restart, reconciliation recovers their status and resumes durabl
 ## Capacity
 
 The reused CPX32 has 4 vCPU and 8 GB RAM. Builds and commands enter one durable FIFO, and
-the control plane admits exactly one operation at a time. The admitted operation can use
-the VM's available CPU and memory; there are no per-job Swarm reservations/limits or a
-separate BuildKit memory cap. A command may run its own tasks concurrently, so repositories
-control useful parallelism without allowing independent submissions to oversubscribe the
-worker.
+the control plane admits exactly one operation at a time. The default cgroup policy leaves
+one CPU and 2 GiB outside the workload slice, applies CPU/memory reservations and limits
+plus a PID cap to each Swarm job, and separately bounds BuildKit, CAS, and the server. The
+outer workload slice also contains sibling Testcontainers workloads created through the
+Docker socket. Install-time `AUTBACK_WORKLOAD_*`, `AUTBACK_JOB_*`, and
+`AUTBACK_BUILDKIT_*` settings adapt the envelope to other worker shapes.
 
 Queued operations consume control-plane state only. CAS and BuildKit credentials and Swarm
 services are created only after admission. Job preparation itself is durable: the CLI waits
@@ -86,6 +91,10 @@ a fresh operation-scoped data-plane certificate. The CLI publishes it to an ephe
 loopback proxy, so CAS and Buildx keep a stable local endpoint while every new upstream
 connection uses the latest credential. Existing streams continue uninterrupted; a CAS or
 BuildKit reconnect after certificate rotation no longer reuses expired TLS state.
+The same retry implementation handles Buildx cleanup and other bounded transient recovery:
+delays grow exponentially, are jittered and capped, attempts and elapsed time are bounded,
+and cancellation interrupts both an attempt and its wait. Only the final exhausted or
+permanent error is surfaced, avoiding a noisy log entry for every attempt.
 
 CAS data lives under `/var/lib/autback/cas`; workspaces live under `/var/lib/autback/jobs`;
 explicit project caches live under `/var/lib/autback/cache/<project-id>/<cache-name>`;

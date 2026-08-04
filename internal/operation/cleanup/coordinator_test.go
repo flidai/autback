@@ -98,6 +98,44 @@ func TestCoordinatorRetriesFailedCleanupAndRecordsAttempts(t *testing.T) {
 	}
 }
 
+func TestCoordinatorDrainWaitsWithoutReportingExpectedCancellation(t *testing.T) {
+	store, first, _ := cleanupFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	var reported atomic.Int32
+	coordinator := cleanup.New(store, cleanup.CleanerFunc(func(ctx context.Context, _ control.Operation) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}),
+		cleanup.WithContext(ctx),
+		cleanup.WithErrorHandler(func(error) { reported.Add(1) }),
+	)
+
+	if err := coordinator.Request(context.Background(), control.OperationJob, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start")
+	}
+	coordinator.Drain()
+	cancel()
+	waitCtx, stopWaiting := context.WithTimeout(context.Background(), time.Second)
+	defer stopWaiting()
+	if err := coordinator.Wait(waitCtx); err != nil {
+		t.Fatalf("Wait error = %v", err)
+	}
+	if reported.Load() != 0 {
+		t.Fatalf("reported errors during normal drain = %d, want 0", reported.Load())
+	}
+	operation, err := store.Operation(context.Background(), control.OperationJob, first.ID)
+	if err != nil || operation.State != control.OperationCleaning {
+		t.Fatalf("operation after interrupted cleanup = %#v, %v; want cleaning for restart recovery", operation, err)
+	}
+}
+
 func cleanupFixture(t *testing.T) (*controlsqlite.Store, control.Job, control.Job) {
 	t.Helper()
 	store, err := controlsqlite.Open(t.TempDir(), []byte("test-pepper-that-is-at-least-32-bytes"))

@@ -67,6 +67,21 @@ The data planes remain upstream protocols:
 - Swarm node certificates identify workers independently from users. Only the control
   plane can reach the Swarm manager API.
 
+### Process lifecycle
+
+The control plane binds the HTTPS, CAS proxy, and BuildKit proxy listeners before it starts
+any serving or background component. A bind failure therefore aborts startup before
+`/readyz` can be advertised. Metrics collection, reconciliation, capacity maintenance,
+FIFO dispatch, both mTLS proxies, and the HTTP server then run under one process context.
+
+SIGTERM, SIGINT, or the first unexpected component exit starts the same bounded drain:
+readiness becomes unavailable, the dispatcher rejects new admission, and every component
+receives cancellation. Listeners stop in reverse startup order, admission and durable
+cleanup goroutines are joined, and SQLite closes only after every component has returned.
+Normal cancellation is not an operational error. Swarm jobs are intentionally detached
+from this process context; they continue running and the reconciler converges their state
+after restart.
+
 ## Authentication and authorization
 
 ### Local clients

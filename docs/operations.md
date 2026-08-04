@@ -23,8 +23,16 @@ The actual bazel-remote and BuildKit daemons listen only on `127.0.0.1:50051` an
 `127.0.0.1:1234`. The private CA key, token pepper, SQLite control state, and audit data
 live under `/var/lib/autback` with service-user-only permissions.
 
-`/healthz` is process liveness. `/readyz` returns success only when both SQLite and
-Docker Swarm respond, so it is the endpoint to use for alerts and deployment verification.
+`/healthz` is process liveness. `/readyz` returns success only when the process is accepting
+work and both SQLite and Docker Swarm respond, so it is the endpoint to use for alerts and
+deployment verification. It returns `503` as soon as shutdown starts, before listeners or
+durable state are closed.
+
+Autback uses one coordinated 15-second shutdown budget. It first marks readiness as
+draining and rejects new FIFO admission, then cancels and joins HTTP, both mTLS proxies,
+metrics, reconciliation, capacity maintenance, dispatcher admission, and cleanup workers.
+SQLite closes last. Active Swarm jobs are detached and are not cancelled by process
+shutdown; after restart, reconciliation recovers their status and resumes durable cleanup.
 
 ## Capacity
 

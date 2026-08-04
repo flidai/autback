@@ -63,6 +63,7 @@ type Config struct {
 	AllowUnpinnedImages           bool
 	Capacity                      Capacity
 	RequiredBuildClientCapability string
+	Ready                         func() bool
 }
 
 type Server struct {
@@ -88,6 +89,10 @@ func New(config Config) (http.Handler, error) {
 	mux.Handle(path, handler)
 	mux.HandleFunc("GET /healthz", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /readyz", func(response http.ResponseWriter, request *http.Request) {
+		if config.Ready != nil && !config.Ready() {
+			http.Error(response, "control plane is draining", http.StatusServiceUnavailable)
+			return
+		}
 		ctx, cancel := context.WithTimeout(request.Context(), 2*time.Second)
 		defer cancel()
 		if err := config.Store.Check(ctx); err != nil {

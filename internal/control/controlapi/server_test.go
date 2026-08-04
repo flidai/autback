@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -772,6 +773,7 @@ type fixture struct {
 	bootstrap control.BootstrapResult
 	scheduler *fakeScheduler
 	server    *httptest.Server
+	draining  *atomic.Bool
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -808,18 +810,20 @@ func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.
 	}
 	scheduler := &fakeScheduler{jobs: map[string]protocol.Job{}}
 	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacity))
+	draining := &atomic.Bool{}
 	handler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
 		CASEndpoint: "cas.example:50051", CASInstance: "autback", BuildKitEndpoint: "buildkit.example:1234",
 		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier, Capacity: capacity,
 		RequiredBuildClientCapability: capability,
+		Ready:                         func() bool { return !draining.Load() },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return &fixture{store: store, bootstrap: bootstrap, scheduler: scheduler, server: server}
+	return &fixture{store: store, bootstrap: bootstrap, scheduler: scheduler, server: server, draining: draining}
 }
 
 func TestAdmissionRejectsBeforeIssuingDataPlaneCredentialsWhenCapacityIsExhausted(t *testing.T) {
@@ -888,6 +892,16 @@ func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("ready status = %d", response.StatusCode)
 	}
+	fixture.draining.Store(true)
+	response, err = http.Get(fixture.server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("draining status = %d", response.StatusCode)
+	}
+	fixture.draining.Store(false)
 
 	fixture.scheduler.checkErr = errors.New("swarm unavailable")
 	response, err = http.Get(fixture.server.URL + "/readyz")

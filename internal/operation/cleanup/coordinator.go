@@ -54,9 +54,11 @@ type Coordinator struct {
 	onError     func(error)
 	onCompleted func(control.Operation)
 
-	mu      sync.Mutex
-	running bool
-	pending bool
+	mu       sync.Mutex
+	running  bool
+	pending  bool
+	draining bool
+	wg       sync.WaitGroup
 }
 
 func New(store Store, cleaner Cleaner, options ...Option) *Coordinator {
@@ -87,14 +89,46 @@ func (c *Coordinator) Request(ctx context.Context, kind control.OperationKind, i
 // until the coordinator context ends.
 func (c *Coordinator) Advance() {
 	c.mu.Lock()
+	if c.draining {
+		c.mu.Unlock()
+		return
+	}
 	c.pending = true
 	if c.running {
 		c.mu.Unlock()
 		return
 	}
 	c.running = true
+	c.wg.Add(1)
 	c.mu.Unlock()
-	go c.advance()
+	go func() {
+		defer c.wg.Done()
+		c.advance()
+	}()
+}
+
+// Drain prevents new cleanup workers from starting. Cleanup requested after
+// draining remains durable and is resumed by the next process.
+func (c *Coordinator) Drain() {
+	c.mu.Lock()
+	c.draining = true
+	c.mu.Unlock()
+}
+
+// Wait joins cleanup work that started before Drain. Call Drain before Wait so
+// the wait group cannot acquire new workers.
+func (c *Coordinator) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (c *Coordinator) advance() {
@@ -105,6 +139,10 @@ func (c *Coordinator) advance() {
 
 		claimed, err := c.RunOnce(c.ctx)
 		if err != nil {
+			if isContextCancellation(err, c.ctx) {
+				c.finish()
+				return
+			}
 			if c.onError != nil {
 				c.onError(err)
 			}
@@ -137,6 +175,9 @@ func (c *Coordinator) RunOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if err := c.cleaner.Cleanup(ctx, *operation); err != nil {
+		if isContextCancellation(err, ctx) {
+			return true, err
+		}
 		recordErr := c.store.RecordOperationCleanupFailure(ctx, operation.Kind, operation.ID, err.Error())
 		return true, errors.Join(fmt.Errorf("clean %s %s: %w", operation.Kind, operation.ID, err), recordErr)
 	}
@@ -169,4 +210,8 @@ func wait(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func isContextCancellation(err error, ctx context.Context) bool {
+	return ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }

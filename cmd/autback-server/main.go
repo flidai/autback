@@ -15,9 +15,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	appserver "github.com/flidai/autback/internal/app/server"
 	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/console"
 	"github.com/flidai/autback/internal/control"
@@ -52,32 +54,52 @@ func main() {
 		}
 		return
 	}
-	serve()
+	if err := serve(); err != nil {
+		log.Printf("autback server: %v", err)
+		os.Exit(1)
+	}
 }
 
-func serve() {
-	startedAt := time.Now().UTC()
+func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	return run(ctx)
+}
+
+func run(ctx context.Context) error {
+	startedAt := time.Now().UTC()
+	processCtx, stopProcess := context.WithCancel(ctx)
+	defer stopProcess()
 	dataDir := env("AUTBACK_DATA_DIR", "/var/lib/autback")
-	store := openStore(dataDir)
-	defer store.Close()
-	initialized, err := store.Initialized(ctx)
+	store, err := openStoreE(dataDir)
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+	closeStore := true
+	defer func() {
+		if closeStore {
+			_ = store.Close()
+		}
+	}()
+	initialized, err := store.Initialized(processCtx)
+	if err != nil {
+		return err
 	}
 	if !initialized {
-		log.Fatal("autback is not bootstrapped; run autback-server bootstrap before starting the service")
+		return errors.New("autback is not bootstrapped; run autback-server bootstrap before starting the service")
 	}
-	names := splitNames(env("AUTBACK_SERVER_NAMES", "localhost,127.0.0.1"))
+	names, err := splitNames(env("AUTBACK_SERVER_NAMES", "localhost,127.0.0.1"))
+	if err != nil {
+		return err
+	}
 	pkiDir := env("AUTBACK_PKI_DIR", filepath.Join(dataDir, "pki"))
 	authority, err := pki.Ensure(pkiDir, names)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	docker := swarm.New(swarm.Config{Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
-	if err := docker.Check(ctx); err != nil {
-		log.Fatal(err)
+	if err := docker.Check(processCtx); err != nil {
+		return err
 	}
 	casInternal := env("AUTBACK_CAS_INTERNAL", "127.0.0.1:50051")
 	casListen := env("AUTBACK_CAS_LISTEN", ":50052")
@@ -92,14 +114,14 @@ func serve() {
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
 	capacityController := newCapacityController(dataDir, store, scheduler, false)
-	status, capacityErr := capacityController.Maintain(ctx, capacity.TriggerManual)
+	status, capacityErr := capacityController.Maintain(processCtx, capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(dataDir, "capacity.json"), status)
 	if capacityErr != nil {
 		log.Printf("initial capacity reconciliation: %v", capacityErr)
 	}
 	sampler, err := hostmetrics.NewLinuxSampler(hostmetrics.LinuxSamplerConfig{DiskPath: dataDir})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	resourceCollector, err := hostmetrics.NewCollector(hostmetrics.CollectorConfig{
 		Store: store, Sampler: sampler,
@@ -109,30 +131,27 @@ func serve() {
 		OnError:         func(err error) { log.Printf("resource metrics: %v", err) },
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	go resourceCollector.Run(ctx)
 	dispatch := dispatcher.New(store, scheduler,
 		dispatcher.WithCapacity(capacityController),
-		dispatcher.WithAdvanceContext(ctx),
+		dispatcher.WithAdvanceContext(processCtx),
 		dispatcher.WithErrorHandler(func(err error) { log.Printf("advance FIFO: %v", err) }),
 	)
-	dispatch.Advance()
 	reconcile := reconciler.New(reconciler.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch,
 		ServiceRetention:  durationEnv("AUTBACK_SERVICE_RETENTION", time.Hour),
 		AdmissionGrace:    durationEnv("AUTBACK_ADMISSION_GRACE", 15*time.Second),
 		BuildLeaseTimeout: durationEnv("AUTBACK_BUILD_LEASE_TIMEOUT", 2*time.Minute),
 	})
-	go runReconciler(ctx, reconcile, durationEnv("AUTBACK_RECONCILE_INTERVAL", time.Second))
-	go runCapacityController(ctx, capacityController, filepath.Join(dataDir, "capacity.json"), durationEnv("AUTBACK_CAPACITY_CHECK_INTERVAL", 5*time.Second), durationEnv("AUTBACK_MAINTENANCE_INTERVAL", time.Minute))
 	var verifier controlapi.OIDCVerifier
 	if audience := os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
-		verifier, err = githuboidc.New(ctx, env("AUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
+		verifier, err = githuboidc.New(processCtx, env("AUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
+	draining := &atomic.Bool{}
 	controlHandler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority, OIDCVerifier: verifier,
 		CASEndpoint: env("AUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
@@ -141,51 +160,110 @@ func serve() {
 		AllowUnpinnedImages:           os.Getenv("AUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
 		Capacity:                      capacityController,
 		RequiredBuildClientCapability: version.CapabilityBuildLeaseHeartbeat,
+		Ready:                         func() bool { return !draining.Load() },
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	consoleSource, err := console.NewSQLiteSource(console.SQLiteSourceConfig{
 		Store: store, Scheduler: scheduler, Version: controlapi.Version, StartedAt: startedAt,
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	consoleHandler, err := console.New(console.Config{Source: consoleSource})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	handler := serviceHandler(controlHandler, consoleHandler)
-	errorsChannel := make(chan error, 3)
 	active := func(kind pki.Operation, id string) bool {
 		return store.OperationActive(context.Background(), string(kind), id)
 	}
-	go func() {
-		errorsChannel <- mtlsproxy.ListenAndServe(ctx, casListen, casInternal, authority.ServerTLSConfig(pki.OperationJob, active))
-	}()
-	go func() {
-		errorsChannel <- mtlsproxy.ListenAndServe(ctx, buildKitListen, buildKitInternal, authority.ServerTLSConfig(pki.OperationBuild, active))
-	}()
+	casListener, err := net.Listen("tcp", casListen)
+	if err != nil {
+		return fmt.Errorf("listen for CAS proxy: %w", err)
+	}
+	defer casListener.Close()
+	buildKitListener, err := net.Listen("tcp", buildKitListen)
+	if err != nil {
+		return fmt.Errorf("listen for BuildKit proxy: %w", err)
+	}
+	defer buildKitListener.Close()
 	server := &http.Server{
 		Addr: env("AUTBACK_LISTEN", ":8443"), Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: 2 * time.Minute, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
 	}
-	go func() {
-		errorsChannel <- server.ListenAndServeTLS(filepath.Join(pkiDir, "server.pem"), filepath.Join(pkiDir, "server-key.pem"))
-	}()
-	log.Printf("autback control plane listening on %s; CAS mTLS on %s; BuildKit mTLS on %s", server.Addr, casListen, buildKitListen)
-	select {
-	case err := <-errorsChannel:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) && ctx.Err() == nil {
-			log.Fatal(err)
+	controlListener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen for control plane: %w", err)
+	}
+	defer controlListener.Close()
+
+	group := appserver.New(appserver.Config{
+		ShutdownTimeout: 15 * time.Second,
+		OnDrain: func() {
+			draining.Store(true)
+			dispatch.Drain()
+			stopProcess()
+		},
+	})
+	group.Add(appserver.Component{Name: "resource metrics", Run: func(ctx context.Context) error {
+		resourceCollector.Run(ctx)
+		return nil
+	}})
+	group.Add(appserver.Component{Name: "reconciler", Run: func(ctx context.Context) error {
+		runReconciler(ctx, reconcile, durationEnv("AUTBACK_RECONCILE_INTERVAL", time.Second))
+		return nil
+	}})
+	group.Add(appserver.Component{Name: "capacity controller", Run: func(ctx context.Context) error {
+		runCapacityController(ctx, capacityController, filepath.Join(dataDir, "capacity.json"), durationEnv("AUTBACK_CAPACITY_CHECK_INTERVAL", 5*time.Second), durationEnv("AUTBACK_MAINTENANCE_INTERVAL", time.Minute))
+		return nil
+	}})
+	group.Add(appserver.Component{
+		Name: "dispatcher",
+		Run: func(ctx context.Context) error {
+			<-ctx.Done()
+			return nil
+		},
+		Stop: dispatch.Wait,
+	})
+	group.Add(appserver.Component{
+		Name: "CAS mTLS proxy",
+		Run: func(ctx context.Context) error {
+			return mtlsproxy.Serve(ctx, casListener, casInternal, authority.ServerTLSConfig(pki.OperationJob, active))
+		},
+		Stop: func(context.Context) error { return closeListener(casListener) },
+	})
+	group.Add(appserver.Component{
+		Name: "BuildKit mTLS proxy",
+		Run: func(ctx context.Context) error {
+			return mtlsproxy.Serve(ctx, buildKitListener, buildKitInternal, authority.ServerTLSConfig(pki.OperationBuild, active))
+		},
+		Stop: func(context.Context) error { return closeListener(buildKitListener) },
+	})
+	group.Add(appserver.Component{
+		Name: "control HTTP server",
+		Run: func(ctx context.Context) error {
+			err := server.ServeTLS(controlListener, filepath.Join(pkiDir, "server.pem"), filepath.Join(pkiDir, "server-key.pem"))
+			if errors.Is(err, http.ErrServerClosed) || ctx.Err() != nil {
+				return nil
+			}
+			return err
+		},
+		Stop: server.Shutdown,
+	})
+
+	dispatch.Advance()
+	log.Printf("autback control plane listening on %s; CAS mTLS on %s; BuildKit mTLS on %s", controlListener.Addr(), casListener.Addr(), buildKitListener.Addr())
+	if err := group.Run(processCtx); err != nil {
+		// A timed-out goroutine may still hold a Store reference. Let process
+		// exit close its descriptors instead of racing sql.DB.Close against it.
+		if errors.Is(err, appserver.ErrJoinTimeout) {
+			closeStore = false
 		}
-	case <-ctx.Done():
+		return err
 	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := server.Shutdown(shutdown); err != nil {
-		log.Printf("shutdown: %v", err)
-	}
+	return nil
 }
 
 func runCapacityController(ctx context.Context, controller *capacity.Controller, statusPath string, pressureInterval, maintenanceInterval time.Duration) {
@@ -391,18 +469,34 @@ func writeCapacityStatus(path string, status capacity.Status) {
 }
 
 func openStore(dataDir string) *controlsqlite.Store {
-	pepper, err := secret.Ensure(filepath.Join(dataDir, "control", "token-pepper"), 32)
-	if err != nil {
-		log.Fatal(err)
-	}
-	store, err := controlsqlite.Open(filepath.Join(dataDir, "control"), pepper)
+	store, err := openStoreE(dataDir)
 	if err != nil {
 		log.Fatal(err)
 	}
 	return store
 }
 
-func splitNames(value string) []string {
+func openStoreE(dataDir string) (*controlsqlite.Store, error) {
+	pepper, err := secret.Ensure(filepath.Join(dataDir, "control", "token-pepper"), 32)
+	if err != nil {
+		return nil, err
+	}
+	store, err := controlsqlite.Open(filepath.Join(dataDir, "control"), pepper)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+func closeListener(listener net.Listener) error {
+	err := listener.Close()
+	if errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
+}
+
+func splitNames(value string) ([]string, error) {
 	var names []string
 	for _, item := range strings.Split(value, ",") {
 		if name := strings.TrimSpace(item); name != "" {
@@ -410,9 +504,9 @@ func splitNames(value string) []string {
 		}
 	}
 	if len(names) == 0 {
-		log.Fatal("AUTBACK_SERVER_NAMES must contain at least one DNS name or IP address")
+		return nil, errors.New("AUTBACK_SERVER_NAMES must contain at least one DNS name or IP address")
 	}
-	return names
+	return names, nil
 }
 
 func endpoint(serverName, listen string) string {

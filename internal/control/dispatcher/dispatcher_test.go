@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,6 +217,65 @@ func TestDispatcherLeavesFIFOQueuedWhenCapacityIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDispatcherDrainStopsNewAdmission(t *testing.T) {
+	ctx := context.Background()
+	store, projectID := queueFixture(t)
+	job := queueJob(t, store, projectID, "draining")
+	scheduler := &fakeScheduler{}
+	d := dispatcher.New(store, scheduler)
+
+	d.Drain()
+	if err := d.RunOnce(ctx); !errors.Is(err, dispatcher.ErrDraining) {
+		t.Fatalf("RunOnce error = %v, want %v", err, dispatcher.ErrDraining)
+	}
+	d.Advance()
+	time.Sleep(10 * time.Millisecond)
+	if scheduled := scheduler.createdJobs(); len(scheduled) != 0 {
+		t.Fatalf("scheduled while draining = %#v", scheduled)
+	}
+	if state, err := store.OperationState(ctx, control.OperationJob, job.ID); err != nil || state != control.OperationQueued {
+		t.Fatalf("queued operation = %s, %v", state, err)
+	}
+}
+
+func TestDispatcherDrainWaitsForInFlightAdmission(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store, projectID := queueFixture(t)
+	job := queueJob(t, store, projectID, "in-flight-drain")
+	scheduler := &blockingScheduler{started: make(chan struct{})}
+	var reported atomic.Int32
+	d := dispatcher.New(store, scheduler,
+		dispatcher.WithAdvanceContext(ctx),
+		dispatcher.WithErrorHandler(func(error) { reported.Add(1) }),
+	)
+
+	d.Advance()
+	select {
+	case <-scheduler.started:
+	case <-time.After(time.Second):
+		t.Fatal("admission did not start")
+	}
+	d.Drain()
+	waitCtx, stopWaiting := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer stopWaiting()
+	if err := d.Wait(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait error before cancellation = %v, want deadline exceeded", err)
+	}
+
+	cancel()
+	waitCtx, stopWaiting = context.WithTimeout(context.Background(), time.Second)
+	defer stopWaiting()
+	if err := d.Wait(waitCtx); err != nil {
+		t.Fatalf("Wait error after cancellation = %v", err)
+	}
+	if reported.Load() != 0 {
+		t.Fatalf("reported errors during normal drain = %d, want 0", reported.Load())
+	}
+	if state, err := store.OperationState(context.Background(), control.OperationJob, job.ID); err != nil || state != control.OperationAdmitting {
+		t.Fatalf("operation after interrupted admission = %s, %v; want admitting for restart reconciliation", state, err)
+	}
+}
+
 type activationFailStore struct {
 	*controlsqlite.Store
 	err error
@@ -241,6 +301,18 @@ type fakeScheduler struct {
 	cancelled []string
 	onCreate  func(control.Job) error
 }
+
+type blockingScheduler struct {
+	started chan struct{}
+}
+
+func (s *blockingScheduler) Create(ctx context.Context, _ control.Job) error {
+	close(s.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (*blockingScheduler) Cancel(context.Context, string) error { return nil }
 
 type observingScheduler struct {
 	store             *controlsqlite.Store

@@ -22,6 +22,19 @@ func TestEndpointUsesThePublicServerNameAndListenerPort(t *testing.T) {
 	}
 }
 
+func TestSplitNamesRejectsEmptyConfiguration(t *testing.T) {
+	if _, err := splitNames(" , \t,"); err == nil {
+		t.Fatal("splitNames error = nil")
+	}
+	names, err := splitNames(" autback.example.com, 127.0.0.1 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || names[0] != "autback.example.com" || names[1] != "127.0.0.1" {
+		t.Fatalf("names = %#v", names)
+	}
+}
+
 func TestServiceHandlerKeepsTheConsoleOutsideTheConnectControlPlane(t *testing.T) {
 	controlHandler := http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("X-Handler", "control")

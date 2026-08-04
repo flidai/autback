@@ -69,6 +69,50 @@ func TestExternalIdentityBindingRequiresAnAdminDevice(t *testing.T) {
 	}
 }
 
+func TestRevokeExternalIdentityEndsHumanAndDeviceAccess(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", TokenName: "owner-device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.Authenticate(ctx, bootstrap.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := store.CreateUser(ctx, owner, "Coworker", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BindExternalIdentity(ctx, owner, member.ID, control.ExternalIdentity{Provider: "github", Subject: "12345678", Login: "coworker"}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateBrowserSession(ctx, member.ID, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := store.CreateDeviceToken(ctx, owner, control.CreateDeviceToken{Name: "coworker-laptop", UserID: member.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.RevokeExternalIdentity(ctx, owner, member.ID, "github"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ExternalIdentity(ctx, "github", "12345678"); !errors.Is(err, control.ErrNotFound) {
+		t.Fatalf("ExternalIdentity error = %v, want not found", err)
+	}
+	if _, err := store.UserByExternalIdentity(ctx, "github", "12345678", "coworker"); !errors.Is(err, control.ErrForbidden) {
+		t.Fatalf("UserByExternalIdentity error = %v, want forbidden", err)
+	}
+	if _, err := store.Authenticate(ctx, session.Token); !errors.Is(err, control.ErrUnauthenticated) {
+		t.Fatalf("browser session authentication = %v, want unauthenticated", err)
+	}
+	if _, err := store.Authenticate(ctx, device.Secret); !errors.Is(err, control.ErrUnauthenticated) {
+		t.Fatalf("device authentication = %v, want unauthenticated", err)
+	}
+}
+
 func TestOAuthLoginStateIsShortLivedAndSingleUse(t *testing.T) {
 	store := openStore(t)
 	ctx := context.Background()

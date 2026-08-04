@@ -4,11 +4,31 @@ set -euo pipefail
 
 cas_image='buchgr/bazel-remote-cache@sha256:d9b104d02bea731f5a8ce6d3c518f814953ef54c2e0218744ce7643ff9d85ca8'
 buildkit_image='moby/buildkit@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f'
-server_names="${AUTBACK_SERVER_NAMES:?AUTBACK_SERVER_NAMES is required}"
+existing_service_env=/etc/autback/service.env
+read_existing_setting() {
+  local name="$1"
+  [[ -f "$existing_service_env" ]] || return 0
+  sed -n "s/^${name}=//p" "$existing_service_env" | tail -n 1
+}
+server_names="${AUTBACK_SERVER_NAMES:-$(read_existing_setting AUTBACK_SERVER_NAMES)}"
+[[ -n "$server_names" ]] || { printf 'AUTBACK_SERVER_NAMES is required for the first install\n' >&2; exit 1; }
 public_name="${server_names%%,*}"
-public_url="${AUTBACK_PUBLIC_URL:-}"
-acme_domain="${AUTBACK_ACME_DOMAIN:-}"
-acme_email="${AUTBACK_ACME_EMAIL:-}"
+public_url="${AUTBACK_PUBLIC_URL:-$(read_existing_setting AUTBACK_PUBLIC_URL)}"
+acme_domain="${AUTBACK_ACME_DOMAIN:-$(read_existing_setting AUTBACK_ACME_DOMAIN)}"
+acme_email="${AUTBACK_ACME_EMAIL:-$(read_existing_setting AUTBACK_ACME_EMAIL)}"
+oidc_audiences="${AUTBACK_GITHUB_OIDC_AUDIENCES:-$(read_existing_setting AUTBACK_GITHUB_OIDC_AUDIENCES)}"
+if [[ -z "$oidc_audiences" ]]; then
+  oidc_audiences="$(read_existing_setting AUTBACK_GITHUB_OIDC_AUDIENCE)"
+  IFS=',' read -ra configured_names <<<"$server_names"
+  for name in "${configured_names[@]}"; do
+    name="$(xargs <<<"$name")"
+    audience="https://${name}"
+    case ",${oidc_audiences}," in
+      *",${audience},"*) ;;
+      *) oidc_audiences="${oidc_audiences:+${oidc_audiences},}${audience}" ;;
+    esac
+  done
+fi
 project_slug="${AUTBACK_BOOTSTRAP_PROJECT:-default}"
 project_name="${AUTBACK_BOOTSTRAP_PROJECT_NAME:-Default}"
 
@@ -79,7 +99,7 @@ chmod 0600 /etc/autback/buildkitd.toml
   printf 'AUTBACK_BUILDKIT_LISTEN=:1235\n'
   printf 'AUTBACK_BUILDKIT_ENDPOINT=%s:1235\n' "$public_name"
   printf 'AUTBACK_JOB_ENTRYPOINT=/usr/local/lib/autback/autback-job-entrypoint\n'
-  printf 'AUTBACK_GITHUB_OIDC_AUDIENCE=https://%s\n' "$public_name"
+  printf 'AUTBACK_GITHUB_OIDC_AUDIENCES=%s\n' "$oidc_audiences"
   [[ -z "$public_url" ]] || printf 'AUTBACK_PUBLIC_URL=%s\n' "$public_url"
   [[ -z "$acme_domain" ]] || printf 'AUTBACK_ACME_DOMAIN=%s\n' "$acme_domain"
   [[ -z "$acme_email" ]] || printf 'AUTBACK_ACME_EMAIL=%s\n' "$acme_email"

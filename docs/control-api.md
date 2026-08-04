@@ -50,6 +50,13 @@ GitHub's API, and stores the returned immutable numeric subject against one Autb
 The mutable login is metadata only. A duplicate GitHub subject or a second GitHub identity
 for the same Autback user is rejected.
 
+`RevokeGitHubIdentity` is the corresponding administrator-device operation. It removes
+the identity binding and atomically revokes that user's browser sessions, device tokens,
+and approved-but-unexchanged device logins. The user and project memberships remain so an
+administrator can deliberately bind the account again. Browser-session credentials cannot
+authorize any authenticated Connect RPC even when copied into an Authorization header;
+they are an audience-limited console credential, not a CLI credential.
+
 ### Recovery enrollment
 
 `CreateEnrollmentCode` requires an administrator's device credential and names the target

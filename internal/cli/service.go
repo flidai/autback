@@ -94,7 +94,7 @@ func runService(ctx context.Context, settings config.Config, explicitToken strin
 
 func serviceAdmin(ctx context.Context, api autbackv1connect.ControlServiceClient, args []string, streams IO) int {
 	if len(args) < 2 {
-		return failUsage(streams.Stderr, "admin requires user create, project create, member add, or enrollment create")
+		return failUsage(streams.Stderr, "admin requires user create, project create, identity github, identity revoke, member add, or enrollment create")
 	}
 	resource, command, args := args[0], args[1], args[2:]
 	values := map[string]string{}
@@ -137,6 +137,15 @@ func serviceAdmin(ctx context.Context, api autbackv1connect.ControlServiceClient
 			return fail(streams.Stderr, err)
 		}
 		return encode(streams, response.Msg.Identity)
+	case "identity revoke":
+		if values["--user"] == "" {
+			return failUsage(streams.Stderr, "admin identity revoke requires --user")
+		}
+		if _, err := api.RevokeGitHubIdentity(ctx, connect.NewRequest(&autbackv1.RevokeGitHubIdentityRequest{UserId: values["--user"]})); err != nil {
+			return fail(streams.Stderr, err)
+		}
+		fmt.Fprintln(streams.Stdout, "Revoked GitHub identity and active human credentials for "+values["--user"])
+		return 0
 	case "member add":
 		if values["--project"] == "" || values["--user"] == "" {
 			return failUsage(streams.Stderr, "admin member add requires --project and --user")
@@ -168,7 +177,7 @@ func serviceAdmin(ctx context.Context, api autbackv1connect.ControlServiceClient
 		fmt.Fprintf(streams.Stderr, "Enrollment for %s expires at %s and can be used once.\n", response.Msg.Enrollment.DeviceName, response.Msg.Enrollment.ExpiresAt.AsTime().Format(time.RFC3339))
 		return 0
 	default:
-		return failUsage(streams.Stderr, "admin requires user create, project create, member add, or enrollment create")
+		return failUsage(streams.Stderr, "admin requires user create, project create, identity github, identity revoke, member add, or enrollment create")
 	}
 }
 

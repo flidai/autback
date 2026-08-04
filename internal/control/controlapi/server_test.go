@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -929,6 +930,61 @@ func TestAdminBindsGitHubLoginToAnAutbackUserByImmutableID(t *testing.T) {
 	resolved, err := fixture.store.UserByExternalIdentity(context.Background(), "github", "12345678", "yacobolo")
 	if err != nil || resolved.ID != member.Msg.User.Id {
 		t.Fatalf("resolved=%#v err=%v", resolved, err)
+	}
+}
+
+func TestAdminRevokesGitHubIdentityAndAllHumanCredentials(t *testing.T) {
+	fixture := newFixtureWithDirectory(t, fakeGitHubDirectory{identity: control.ExternalIdentity{Provider: "github", Subject: "12345678", Login: "yacobolo"}})
+	client := fixture.client(fixture.bootstrap.Token)
+	member, err := client.CreateUser(context.Background(), connect.NewRequest(&autbackv1.CreateUserRequest{Name: "Jacob"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.BindGitHubIdentity(context.Background(), connect.NewRequest(&autbackv1.BindGitHubIdentityRequest{UserId: member.Msg.User.Id, Login: "Yacobolo"})); err != nil {
+		t.Fatal(err)
+	}
+	session, err := fixture.store.CreateBrowserSession(context.Background(), member.Msg.User.Id, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := fixture.store.Authenticate(context.Background(), fixture.bootstrap.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := fixture.store.CreateDeviceToken(context.Background(), owner, control.CreateDeviceToken{Name: "jacob-laptop", UserID: member.Msg.User.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.RevokeGitHubIdentity(context.Background(), connect.NewRequest(&autbackv1.RevokeGitHubIdentityRequest{UserId: member.Msg.User.Id})); err != nil {
+		t.Fatal(err)
+	}
+	for name, token := range map[string]string{"browser": session.Token, "device": device.Secret} {
+		if _, err := fixture.store.Authenticate(context.Background(), token); !errors.Is(err, control.ErrUnauthenticated) {
+			t.Fatalf("%s authentication error = %v, want unauthenticated", name, err)
+		}
+	}
+	events, err := fixture.store.ListAuditEvents(context.Background(), owner, "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(events, func(event control.AuditEvent) bool {
+		return event.Action == "identity.github.revoke" && event.TargetID == member.Msg.User.Id
+	}) {
+		t.Fatalf("audit events = %#v", events)
+	}
+}
+
+func TestBrowserSessionCannotAuthorizeControlAPI(t *testing.T) {
+	fixture := newFixture(t)
+	session, err := fixture.store.CreateBrowserSession(context.Background(), fixture.bootstrap.User.ID, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = fixture.client(session.Token).ListProjects(context.Background(), connect.NewRequest(&autbackv1.ListProjectsRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("ListProjects error = %v, want unauthenticated", err)
 	}
 }
 

@@ -151,7 +151,17 @@ func (s *server) logout(response http.ResponseWriter, request *http.Request) {
 	}
 	cookie, err := request.Cookie(sessionCookie)
 	if err == nil && cookie.Value != "" {
-		_ = s.store.RevokeBrowserSession(request.Context(), cookie.Value)
+		principal, authenticated := s.browserPrincipal(request)
+		if authenticated {
+			if err := s.store.RevokeBrowserSession(request.Context(), cookie.Value); err != nil {
+				http.Error(response, "sign out unavailable", http.StatusInternalServerError)
+				return
+			}
+			if err := s.store.Audit(request.Context(), principal, "", "auth.browser.logout", principal.UserID, nil); err != nil {
+				http.Error(response, "sign out unavailable", http.StatusInternalServerError)
+				return
+			}
+		}
 	}
 	http.SetCookie(response, &http.Cookie{
 		Name: sessionCookie, Path: "/", MaxAge: -1,
@@ -221,6 +231,12 @@ func (s *server) callback(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "login unavailable", http.StatusInternalServerError)
 		return
 	}
+	sessionPrincipal := control.Principal{Kind: control.PrincipalBrowser, UserID: user.ID, Admin: user.Admin}
+	if err := s.store.Audit(request.Context(), sessionPrincipal, "", "auth.github.login", user.ID, map[string]string{"github_id": identity.Subject, "github_login": identity.Login}); err != nil {
+		_ = s.store.RevokeBrowserSession(request.Context(), session.Token)
+		http.Error(response, "login unavailable", http.StatusInternalServerError)
+		return
+	}
 	http.SetCookie(response, &http.Cookie{
 		Name: sessionCookie, Value: session.Token, Path: "/", Expires: session.ExpiresAt,
 		Secure: s.publicURL.Scheme == "https", HttpOnly: true, SameSite: http.SameSiteLaxMode,
@@ -271,8 +287,17 @@ func (s *server) approveDevice(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "invalid approval", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.ApproveDeviceLogin(request.Context(), request.Form.Get("code"), principal, s.now().UTC()); err != nil {
+	login, err := s.store.DeviceLoginByUserCode(request.Context(), request.Form.Get("code"), s.now().UTC())
+	if err != nil {
 		s.render(response, http.StatusNotFound, "Login request unavailable", h.P(g.Text("This device login request is invalid, expired, or already approved.")))
+		return
+	}
+	if err := s.store.ApproveDeviceLogin(request.Context(), login.UserCode, principal, s.now().UTC()); err != nil {
+		s.render(response, http.StatusNotFound, "Login request unavailable", h.P(g.Text("This device login request is invalid, expired, or already approved.")))
+		return
+	}
+	if err := s.store.Audit(request.Context(), principal, "", "auth.device.approve", principal.UserID, map[string]string{"device_login_id": login.ID, "device_name": login.DeviceName}); err != nil {
+		http.Error(response, "approve device unavailable", http.StatusInternalServerError)
 		return
 	}
 	s.render(response, http.StatusOK, "Device approved", h.P(g.Text("The device is approved. You can close this window and return to the terminal.")))
@@ -320,6 +345,12 @@ func (s *server) exchangeDevice(response http.ResponseWriter, request *http.Requ
 	}
 	if err != nil {
 		writeJSON(response, http.StatusUnauthorized, deviceTokenResponse{Status: "invalid_or_expired"})
+		return
+	}
+	principal := control.Principal{Kind: control.PrincipalDevice, TokenID: issued.Metadata.ID, UserID: issued.Metadata.UserID}
+	if err := s.store.Audit(request.Context(), principal, "", "auth.device.issue", issued.Metadata.ID, map[string]string{"device_name": issued.Metadata.Name}); err != nil {
+		_ = s.store.RevokeDeviceToken(request.Context(), principal, issued.Metadata.ID)
+		http.Error(response, "issue device credential", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(response, http.StatusOK, deviceTokenResponse{Status: "authorized", Token: issued.Secret, TokenID: issued.Metadata.ID})

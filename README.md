@@ -79,6 +79,8 @@ is retained only as display metadata:
 autback admin user create --name coworker
 autback admin member add --project example --user usr...
 autback admin identity github --user usr... --login coworker-github-login
+# Later, revoke the binding and every active human credential:
+autback admin identity revoke --user usr...
 ```
 
 The coworker runs `autback login`. The CLI opens Autback's GitHub sign-in and approval page,

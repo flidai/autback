@@ -170,8 +170,15 @@ An upgrade stops the maintenance timer, any active maintenance invocation, and t
 control plane before pulling infrastructure images, preventing the outgoing lifecycle
 controller from pruning a layer being installed for the incoming version.
 When a public domain is configured, the server obtains and renews its control-plane
-certificate with ACME TLS-ALPN on port 443. CAS and BuildKit continue using Autback's
-private operation-scoped PKI.
+certificate with ACME TLS-ALPN on port 443. During an IP-to-domain migration the same
+listener continues serving Autback's private certificate to legacy IP/no-SNI clients and
+can accept GitHub OIDC tokens for both the old and new audiences. By default the installer
+derives this audience set from every configured server name; it can be pinned explicitly
+with `AUTBACK_GITHUB_OIDC_AUDIENCES`. After clients and Actions variables have moved to the
+domain, remove the IP name and old audience in a later deploy.
+CAS and BuildKit continue using Autback's private operation-scoped PKI. Subsequent deploys
+read the installed non-secret service settings before applying overrides, so omitting the
+OAuth/ACME variables does not silently disable an already configured public console.
 
 Before deployment:
 
@@ -208,6 +215,8 @@ autback admin identity github --user usr... --login coworker-github-login
 autback login
 autback token list
 autback token revoke <token-id>
+# Offboard the coworker and revoke all browser/device credentials:
+autback admin identity revoke --user usr...
 ```
 
 The initial owner must also be bound once. Its user ID is available on the existing

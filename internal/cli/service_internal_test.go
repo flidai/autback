@@ -254,6 +254,17 @@ func TestServiceAdminBindsGitHubIdentity(t *testing.T) {
 	}
 }
 
+func TestServiceAdminRevokesGitHubIdentity(t *testing.T) {
+	service := &identityService{}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	var stdout, stderr bytes.Buffer
+	code := serviceAdmin(context.Background(), client, []string{"identity", "revoke", "--user", "usr1"}, IO{Stdout: &stdout, Stderr: &stderr})
+	if code != 0 || service.revokedUserID != "usr1" || !strings.Contains(stdout.String(), "Revoked GitHub identity") {
+		t.Fatalf("code=%d revoked_user=%q stdout=%q stderr=%q", code, service.revokedUserID, stdout.String(), stderr.String())
+	}
+}
+
 func TestServiceInitWritesOnlyAnAuthorizedProjectLink(t *testing.T) {
 	service := &projectListService{projects: []*autbackv1.Project{
 		{Id: "prj1", Slug: "one", Name: "One"}, {Id: "prj2", Slug: "two", Name: "Two"},
@@ -619,8 +630,14 @@ type enrollmentService struct {
 
 type identityService struct {
 	autbackv1connect.UnimplementedControlServiceHandler
-	userID string
-	login  string
+	userID        string
+	login         string
+	revokedUserID string
+}
+
+func (s *identityService) RevokeGitHubIdentity(_ context.Context, request *connect.Request[autbackv1.RevokeGitHubIdentityRequest]) (*connect.Response[autbackv1.RevokeGitHubIdentityResponse], error) {
+	s.revokedUserID = request.Msg.UserId
+	return connect.NewResponse(&autbackv1.RevokeGitHubIdentityResponse{}), nil
 }
 
 func (s *identityService) BindGitHubIdentity(_ context.Context, request *connect.Request[autbackv1.BindGitHubIdentityRequest]) (*connect.Response[autbackv1.BindGitHubIdentityResponse], error) {

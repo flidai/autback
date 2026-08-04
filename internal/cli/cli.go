@@ -165,6 +165,7 @@ func usage(output io.Writer) {
   autback trust github revoke <trust-id>
   autback admin user create --name <name> [--admin]
   autback admin identity github --user <user-id> --login <github-login>
+  autback admin identity revoke --user <user-id>
   autback admin project create --slug <slug> --name <name>
   autback admin member add --project <project> --user <user-id>
   autback admin enrollment create --user <user-id> --device <name> [--expires 10m]

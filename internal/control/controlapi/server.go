@@ -178,6 +178,23 @@ func (s *Server) BindGitHubIdentity(ctx context.Context, request *connect.Reques
 	return connect.NewResponse(&autbackv1.BindGitHubIdentityResponse{Identity: externalIdentityProto(identity)}), nil
 }
 
+func (s *Server) RevokeGitHubIdentity(ctx context.Context, request *connect.Request[autbackv1.RevokeGitHubIdentityRequest]) (*connect.Response[autbackv1.RevokeGitHubIdentityResponse], error) {
+	principal, err := s.authenticate(ctx, request.Header())
+	if err != nil {
+		return nil, err
+	}
+	if principal.Kind != control.PrincipalDevice || !principal.Admin {
+		return nil, connectError(control.ErrForbidden)
+	}
+	if err := s.config.Store.RevokeExternalIdentity(ctx, principal, request.Msg.UserId, "github"); err != nil {
+		return nil, connectError(err)
+	}
+	if err := s.config.Store.Audit(ctx, principal, "", "identity.github.revoke", request.Msg.UserId, nil); err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&autbackv1.RevokeGitHubIdentityResponse{}), nil
+}
+
 func (s *Server) CreateProject(ctx context.Context, request *connect.Request[autbackv1.CreateProjectRequest]) (*connect.Response[autbackv1.CreateProjectResponse], error) {
 	principal, err := s.authenticate(ctx, request.Header())
 	if err != nil {
@@ -981,6 +998,9 @@ func (s *Server) authenticate(ctx context.Context, header http.Header) (control.
 	principal, err := s.config.Store.Authenticate(ctx, token)
 	if err != nil {
 		return control.Principal{}, connectError(err)
+	}
+	if principal.Kind == control.PrincipalBrowser {
+		return control.Principal{}, connect.NewError(connect.CodeUnauthenticated, control.ErrUnauthenticated)
 	}
 	return principal, nil
 }

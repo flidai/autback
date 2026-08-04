@@ -539,6 +539,38 @@ func (s *Store) BindExternalIdentity(ctx context.Context, principal control.Prin
 	return identity, err
 }
 
+func (s *Store) RevokeExternalIdentity(ctx context.Context, principal control.Principal, userID, provider string) error {
+	if principal.Kind != control.PrincipalDevice || !principal.Admin {
+		return control.ErrForbidden
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	userID = strings.TrimSpace(userID)
+	if provider == "" || userID == "" {
+		return errors.New("identity provider and user are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM external_identities WHERE provider=? AND user_id=?`, provider, userID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	now := unix(time.Now().UTC())
+	if _, err := tx.ExecContext(ctx, `UPDATE access_tokens SET revoked_at=? WHERE user_id=? AND kind IN (?,?) AND revoked_at IS NULL`,
+		now, userID, control.PrincipalBrowser, control.PrincipalDevice); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE device_logins SET consumed_at=? WHERE user_id=? AND consumed_at IS NULL`, now, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ExternalIdentity(ctx context.Context, provider, subject string) (control.ExternalIdentity, error) {
 	var identity control.ExternalIdentity
 	var created int64

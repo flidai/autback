@@ -5,17 +5,28 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/flidai/autback/internal/control/pki"
 )
 
-func TestControlTLSUsesACMEForTheExactPublicServerName(t *testing.T) {
-	config, certificate, key, err := controlTLS(t.TempDir(), t.TempDir(), []string{"console.autback.dev", "62.238.54.70"}, "console.autback.dev", "ops@example.com")
+func TestControlTLSUsesACMEForThePublicNameAndPrivatePKIForLegacyClients(t *testing.T) {
+	pkiDir := filepath.Join(t.TempDir(), "pki")
+	if _, err := pki.Ensure(pkiDir, []string{"console.autback.dev", "62.238.54.70"}); err != nil {
+		t.Fatal(err)
+	}
+	config, certificate, key, err := controlTLS(t.TempDir(), pkiDir, []string{"console.autback.dev", "62.238.54.70"}, "console.autback.dev", "ops@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if certificate != "" || key != "" || config.GetCertificate == nil || config.MinVersion != tls.VersionTLS13 {
+	if certificate != "" || key != "" || config.GetCertificate == nil || config.MinVersion != tls.VersionTLS13 || len(config.Certificates) != 1 {
 		t.Fatalf("config=%#v certificate=%q key=%q", config, certificate, key)
+	}
+	legacy, err := config.GetCertificate(&tls.ClientHelloInfo{ServerName: "62.238.54.70"})
+	if err != nil || legacy == nil || len(legacy.Certificate) == 0 {
+		t.Fatalf("legacy certificate=%#v err=%v", legacy, err)
 	}
 	foundALPN := false
 	for _, protocol := range config.NextProtos {
@@ -24,7 +35,7 @@ func TestControlTLSUsesACMEForTheExactPublicServerName(t *testing.T) {
 	if !foundALPN {
 		t.Fatalf("ACME ALPN missing from %#v", config.NextProtos)
 	}
-	if _, _, _, err := controlTLS(t.TempDir(), t.TempDir(), []string{"62.238.54.70"}, "console.autback.dev", ""); err == nil {
+	if _, _, _, err := controlTLS(t.TempDir(), pkiDir, []string{"62.238.54.70"}, "console.autback.dev", ""); err == nil {
 		t.Fatal("ACME domain outside AUTBACK_SERVER_NAMES was accepted")
 	}
 }

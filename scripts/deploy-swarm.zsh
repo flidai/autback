@@ -8,14 +8,23 @@ source "${0:A:h}/lib.zsh"
 
 host="${AUTBACK_SERVER_IP}"
 ssh_user="${AUTBACK_SSH_USER:-root}"
-server_names="${AUTBACK_SERVER_NAMES:-${host}}"
-public_url="${AUTBACK_PUBLIC_URL:-}"
-acme_domain="${AUTBACK_ACME_DOMAIN:-}"
-acme_email="${AUTBACK_ACME_EMAIL:-}"
 project_slug="${AUTBACK_PROJECT:-default}"
 project_name="${AUTBACK_PROJECT_NAME:-Default}"
 ssh_args
 ssh "${reply[@]}" "${ssh_user}@${host}" 'docker version >/dev/null'
+
+remote_service_setting() {
+  local name="$1"
+  [[ "$name" != *[^A-Z0-9_]* ]] || return 1
+  ssh "${reply[@]}" "${ssh_user}@${host}" "sudo -n sed -n 's/^${name}=//p' /etc/autback/service.env 2>/dev/null" | tail -n 1
+}
+
+server_names="${AUTBACK_SERVER_NAMES:-$(remote_service_setting AUTBACK_SERVER_NAMES)}"
+server_names="${server_names:-${host}}"
+public_url="${AUTBACK_PUBLIC_URL:-$(remote_service_setting AUTBACK_PUBLIC_URL)}"
+acme_domain="${AUTBACK_ACME_DOMAIN:-$(remote_service_setting AUTBACK_ACME_DOMAIN)}"
+acme_email="${AUTBACK_ACME_EMAIL:-$(remote_service_setting AUTBACK_ACME_EMAIL)}"
+oidc_audiences="${AUTBACK_GITHUB_OIDC_AUDIENCES:-$(remote_service_setting AUTBACK_GITHUB_OIDC_AUDIENCES)}"
 
 build_dir="${AUTBACK_TMP_DIR}/service-build"
 config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/autback"
@@ -65,7 +74,7 @@ if [[ -n "${AUTBACK_GITHUB_CLIENT_ID:-}" || -n "${AUTBACK_GITHUB_CLIENT_SECRET:-
 fi
 
 ssh "${reply[@]}" "${ssh_user}@${host}" \
-  "sudo -n env AUTBACK_SERVER_NAMES=${(q)server_names} AUTBACK_PUBLIC_URL=${(q)public_url} AUTBACK_ACME_DOMAIN=${(q)acme_domain} AUTBACK_ACME_EMAIL=${(q)acme_email} AUTBACK_BOOTSTRAP_PROJECT=${(q)project_slug} AUTBACK_BOOTSTRAP_PROJECT_NAME=${(q)project_name} bash /tmp/install-swarm.sh"
+  "sudo -n env AUTBACK_SERVER_NAMES=${(q)server_names} AUTBACK_PUBLIC_URL=${(q)public_url} AUTBACK_ACME_DOMAIN=${(q)acme_domain} AUTBACK_ACME_EMAIL=${(q)acme_email} AUTBACK_GITHUB_OIDC_AUDIENCES=${(q)oidc_audiences} AUTBACK_BOOTSTRAP_PROJECT=${(q)project_slug} AUTBACK_BOOTSTRAP_PROJECT_NAME=${(q)project_name} bash /tmp/install-swarm.sh"
 
 umask 077
 ssh "${reply[@]}" "${ssh_user}@${host}" 'sudo -n cat /var/lib/autback/pki/ca.pem' > "${ca_file}"

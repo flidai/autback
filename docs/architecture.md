@@ -117,8 +117,9 @@ CAS, BuildKit, Docker, Swarm, or a worker.
 The public console uses the same immutable GitHub identity mapping but creates a separate
 short-lived Autback browser session. Its Secure, HttpOnly cookie authorizes only server-
 rendered `/app` documents and live update streams; browser code never receives a device
-token and never calls the Connect control API. Signing out revokes the stored browser
-session. Every execution and governance mutation remains a CLI command.
+token and never calls the Connect control API. The Connect boundary also rejects browser
+principals if a session value is manually presented as a bearer token. Signing out revokes
+the stored browser session. Every execution and governance mutation remains a CLI command.
 
 ### GitHub Actions
 

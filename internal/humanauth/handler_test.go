@@ -80,6 +80,7 @@ func TestCallbackCreatesAnAutbackBrowserSessionForALinkedGitHubIdentity(t *testi
 	if principal.Kind != control.PrincipalBrowser || principal.UserID != bootstrap.User.ID {
 		t.Fatalf("principal = %#v", principal)
 	}
+	requireAuditAction(t, store, owner, "auth.github.login", bootstrap.User.ID)
 }
 
 func TestCallbackRejectsAnUnprovisionedGitHubIdentity(t *testing.T) {
@@ -153,6 +154,12 @@ func TestDeviceLoginRequiresBrowserApprovalAndReturnsOneDeviceToken(t *testing.T
 	if err != nil || principal.Kind != control.PrincipalDevice || principal.UserID != bootstrap.User.ID {
 		t.Fatalf("device principal=%#v err=%v", principal, err)
 	}
+	owner, err := store.Authenticate(context.Background(), bootstrap.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAuditAction(t, store, owner, "auth.device.approve", bootstrap.User.ID)
+	requireAuditAction(t, store, owner, "auth.device.issue", token.TokenID)
 	second := exchangeDevice(t, handler, issued.DeviceCode)
 	if second.Code != http.StatusUnauthorized {
 		t.Fatalf("second exchange status=%d body=%q", second.Code, second.Body.String())
@@ -200,6 +207,11 @@ func TestLogoutRevokesBrowserSessionAndClearsCookie(t *testing.T) {
 	if _, err := store.Authenticate(context.Background(), session.Token); !errors.Is(err, control.ErrUnauthenticated) {
 		t.Fatalf("authenticate logged-out session: %v", err)
 	}
+	owner, err := store.Authenticate(context.Background(), bootstrap.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAuditAction(t, store, owner, "auth.browser.logout", bootstrap.User.ID)
 }
 
 func TestDeviceLoginCreationIsRateLimitedPerClient(t *testing.T) {
@@ -301,4 +313,18 @@ func exchangeDevice(t *testing.T, handler http.Handler, deviceCode string) *http
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/auth/cli/token", strings.NewReader(string(body))))
 	return response
+}
+
+func requireAuditAction(t *testing.T, store *controlsqlite.Store, principal control.Principal, action, targetID string) {
+	t.Helper()
+	events, err := store.ListAuditEvents(context.Background(), principal, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Action == action && event.TargetID == targetID {
+			return
+		}
+	}
+	t.Fatalf("audit action %q for %q not found in %#v", action, targetID, events)
 }

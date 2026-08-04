@@ -186,8 +186,12 @@ func run(ctx context.Context) error {
 		JobPreparationLeaseTimeout: durationEnv("AUTBACK_JOB_PREPARATION_LEASE_TIMEOUT", 2*time.Minute),
 	})
 	var verifier controlapi.OIDCVerifier
-	if audience := os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCE"); audience != "" {
-		verifier, err = githuboidc.New(processCtx, env("AUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audience)
+	audienceConfig := os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCES")
+	if audienceConfig == "" {
+		audienceConfig = os.Getenv("AUTBACK_GITHUB_OIDC_AUDIENCE")
+	}
+	if audiences := splitValues(audienceConfig); len(audiences) > 0 {
+		verifier, err = githuboidc.NewWithAudiences(processCtx, env("AUTBACK_GITHUB_OIDC_ISSUER", githuboidc.Issuer), audiences)
 		if err != nil {
 			return err
 		}
@@ -358,6 +362,18 @@ func controlTLS(acmeDir, pkiDir string, names []string, acmeDomain, email string
 	}
 	config := manager.TLSConfig()
 	config.MinVersion = tls.VersionTLS13
+	privateCertificate, err := tls.LoadX509KeyPair(filepath.Join(pkiDir, "server.pem"), filepath.Join(pkiDir, "server-key.pem"))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("load private control certificate: %w", err)
+	}
+	config.Certificates = []tls.Certificate{privateCertificate}
+	acmeCertificate := config.GetCertificate
+	config.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if strings.EqualFold(hello.ServerName, acmeDomain) {
+			return acmeCertificate(hello)
+		}
+		return &config.Certificates[0], nil
+	}
 	return config, "", "", nil
 }
 
@@ -621,16 +637,21 @@ func closeListener(listener net.Listener) error {
 }
 
 func splitNames(value string) ([]string, error) {
-	var names []string
-	for _, item := range strings.Split(value, ",") {
-		if name := strings.TrimSpace(item); name != "" {
-			names = append(names, name)
-		}
-	}
+	names := splitValues(value)
 	if len(names) == 0 {
 		return nil, errors.New("AUTBACK_SERVER_NAMES must contain at least one DNS name or IP address")
 	}
 	return names, nil
+}
+
+func splitValues(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }
 
 func endpoint(serverName, listen string) string {

@@ -20,14 +20,22 @@ entity kind, and entity ID, and retains the newest 10,000 records.
 
 ## Access boundary
 
-`autback console` reads the named device token from the operating-system keyring and starts
-a random loopback proxy. A one-time capability URL establishes an HttpOnly, SameSite=Strict
-local session. The proxy accepts only `GET` and `HEAD` below `/app`, injects the device token
-upstream, and refuses every Connect API path. The browser never receives the device token.
+The public console redirects unauthenticated `/app` requests through GitHub OAuth with
+PKCE. GitHub supplies an immutable account ID; Autback maps that ID to a pre-provisioned
+user and creates its own short-lived, revocable browser session. The secure HttpOnly,
+SameSite=Lax cookie is valid only for the Autback service and is never a CLI credential.
+Signing out revokes that session server-side.
+
+`autback console` remains a private alternative. It reads the named device token from the
+operating-system keyring and starts a random loopback proxy. A one-time capability URL
+establishes an HttpOnly, SameSite=Strict local session. The proxy accepts only `GET` and
+`HEAD` below `/app`, injects the device token upstream, and refuses every Connect API path.
+The browser never receives the device token.
 
 The server authenticates and authorizes every document and update stream. Static console
-assets are public but contain no state. There are no browser mutation routes, forms,
-control buttons, or client-side calls to Connect.
+assets are public but contain no state. Except for authentication and device approval,
+there are no browser mutation routes, forms, control buttons, or client-side calls to
+Connect. Execution and governance remain CLI-only.
 
 ## Routes and signals
 

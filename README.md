@@ -69,27 +69,36 @@ The control plane serves Connect over HTTPS on 443. Protocol-transparent mTLS ga
 The CLI never receives Docker access. Swarm remains private to the server and provides
 detached job identity, logs, status, cancellation, and resource-aware queuing.
 
-## Enroll a developer laptop
+## Sign in from a developer laptop
 
-An administrator creates the user, grants project membership, and generates a ten-minute
-single-use code:
+An administrator creates the Autback user, grants project membership, and binds the
+user's immutable GitHub account ID. The GitHub login is resolved once by the server and
+is retained only as display metadata:
 
 ```console
 autback admin user create --name coworker
 autback admin member add --project example --user usr...
-autback admin enrollment create --user usr... --device coworker-laptop --expires 10m
+autback admin identity github --user usr... --login coworker-github-login
+# Later, revoke the binding and every active human credential:
+autback admin identity revoke --user usr...
 ```
 
-The coworker runs `autback login` and enters that code at the hidden prompt. autback exchanges
-it once and stores the resulting named device token in macOS Keychain, Linux Secret
-Service, or Windows Credential Manager through the operating-system keyring. `autback logout`
-removes the local entry; `autback token revoke <id>` independently revokes one laptop.
+The coworker runs `autback login`. The CLI opens Autback's GitHub sign-in and approval page,
+then receives one independent device token and stores it in macOS Keychain, Linux Secret
+Service, or Windows Credential Manager through the operating-system keyring. GitHub proves
+human identity; it never becomes the durable CLI credential. `autback logout` removes the
+local entry and `autback token revoke <id>` revokes one laptop server-side. A single-use
+enrollment code remains available only as the documented recovery path through
+`autback login --recovery-code`.
 
 ## Read-only governance console
 
-Run `autback console` to open the live service console. The CLI creates an ephemeral,
-random loopback session and injects the device credential into proxied `/app` requests;
-the browser never receives the Keychain token and cannot reach the Connect control API.
+Open the configured public service URL or run `autback console` to open the live service
+console. The public console authenticates through GitHub and keeps an independent,
+revocable Autback browser session in a secure HttpOnly cookie. The CLI command remains a
+private loopback alternative that injects the device credential into proxied `/app`
+requests; the browser never receives the Keychain token in either model and cannot reach
+the Connect control API.
 The console is deliberately read-only: all execution, cancellation, enrollment, trust,
 and image commands remain in the CLI and audit log.
 

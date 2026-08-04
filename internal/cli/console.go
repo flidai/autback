@@ -52,7 +52,7 @@ func serviceConsole(ctx context.Context, settings config.Config, explicitToken s
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute}
 	openURL := "http://" + listener.Addr().String() + "/session/" + session
 	fmt.Fprintln(streams.Stdout, openURL)
-	if err := openBrowser(openURL); err != nil {
+	if err := streams.OpenURL(openURL); err != nil {
 		fmt.Fprintln(streams.Stderr, "Open the console URL in a browser; automatic opening failed:", err)
 	}
 	errorsChannel := make(chan error, 1)

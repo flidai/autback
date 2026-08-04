@@ -38,6 +38,32 @@ func TestVerifierChecksOIDCAndExtractsImmutableGitHubClaims(t *testing.T) {
 	}
 }
 
+func TestVerifierAcceptsEachAudienceDuringAServiceURLMigration(t *testing.T) {
+	issuer, sign := testIssuer(t)
+	verifier, err := githuboidc.NewWithAudiences(context.Background(), issuer, []string{"https://62.238.54.70", "https://console.autback.dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	claims := map[string]any{
+		"iss": issuer, "sub": "repo:flidai/leapview:environment:autback",
+		"iat": now.Add(-time.Minute).Unix(), "nbf": now.Add(-time.Minute).Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"repository_owner_id": "100", "repository_id": "200", "repository": "flidai/leapview",
+		"workflow_ref": "flidai/leapview/.github/workflows/ci.yml@refs/heads/main", "ref": "refs/heads/main",
+		"environment": "autback", "event_name": "workflow_dispatch",
+	}
+	for _, audience := range []string{"https://62.238.54.70", "https://console.autback.dev"} {
+		claims["aud"] = audience
+		if _, err := verifier.Verify(context.Background(), sign(t, claims)); err != nil {
+			t.Fatalf("audience %q was rejected: %v", audience, err)
+		}
+	}
+	claims["aud"] = "https://attacker.example"
+	if _, err := verifier.Verify(context.Background(), sign(t, claims)); err == nil {
+		t.Fatal("unconfigured audience was accepted")
+	}
+}
+
 func TestVerifierRejectsInvalidStandardClaimsAndSignatures(t *testing.T) {
 	issuer, sign := testIssuer(t)
 	verifier, err := githuboidc.New(context.Background(), issuer, "https://autback.example")

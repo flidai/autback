@@ -124,6 +124,7 @@ export const consoleStyles = css`
     border-top: 1px solid var(--line);
   }
   .identity { display: flex; align-items: center; gap: 10px; }
+  .identity > div { min-width: 0; }
   .avatar {
     display: grid;
     width: 28px;
@@ -138,6 +139,13 @@ export const consoleStyles = css`
   }
   .identity-name { color: var(--text); font-size: 12px; font-weight: 600; }
   .identity-role { color: var(--text-faint); font-size: 10px; }
+  .sign-out {
+    margin-left: auto;
+    color: var(--text-faint);
+    font-size: 10px;
+    text-decoration: none;
+  }
+  .sign-out:hover { color: var(--text); }
 
   .workspace { min-width: 0; }
   .topbar {

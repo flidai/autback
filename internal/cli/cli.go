@@ -26,6 +26,8 @@ type IO struct {
 	Stderr  io.Writer
 	Dir     string
 	Keyring authclient.Keyring
+	OpenURL func(string) error
+	Wait    func(context.Context, time.Duration) error
 }
 
 func Run(ctx context.Context, args []string, streams IO) int {
@@ -123,6 +125,21 @@ func defaults(streams IO) IO {
 	if streams.Keyring == nil {
 		streams.Keyring = authclient.SystemKeyring{}
 	}
+	if streams.OpenURL == nil {
+		streams.OpenURL = openBrowser
+	}
+	if streams.Wait == nil {
+		streams.Wait = func(ctx context.Context, duration time.Duration) error {
+			timer := time.NewTimer(duration)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		}
+	}
 	return streams
 }
 
@@ -137,7 +154,7 @@ func usage(output io.Writer) {
   autback [--token <token>] image history [--project <project>]
   autback [--token <token>] image overrides [--project <project>] <allow|deny>
   autback [--token <token>] image build [--project <project>] --tag <registry/repository:tag> [--file Dockerfile] [-- <buildx arguments...>]
-  autback login
+  autback login [--device <name>] [--no-open]
   autback logout
   autback console
   autback token create --name <device> [--user <id>] [--expires 720h]
@@ -147,6 +164,8 @@ func usage(output io.Writer) {
   autback trust github list --project <project>
   autback trust github revoke <trust-id>
   autback admin user create --name <name> [--admin]
+  autback admin identity github --user <user-id> --login <github-login>
+  autback admin identity revoke --user <user-id>
   autback admin project create --slug <slug> --name <name>
   autback admin member add --project <project> --user <user-id>
   autback admin enrollment create --user <user-id> --device <name> [--expires 10m]

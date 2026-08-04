@@ -24,6 +24,30 @@ func TestConsoleRequiresAnAuthenticatedDevice(t *testing.T) {
 	}
 }
 
+func TestPublicConsoleRedirectsToLoginAndAcceptsABrowserSession(t *testing.T) {
+	source := &fakeSource{snapshot: exampleSnapshot()}
+	handler, err := New(Config{Source: source, LoginURL: "/auth/login", SessionCookieName: "autback_session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/app/projects/example", nil))
+	if unauthenticated.Code != http.StatusSeeOther || unauthenticated.Header().Get("Location") != "/auth/login?return_to=%2Fapp%2Fprojects%2Fexample" {
+		t.Fatalf("status=%d location=%q", unauthenticated.Code, unauthenticated.Header().Get("Location"))
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/app", nil)
+	request.AddCookie(&http.Cookie{Name: "autback_session", Value: "browser-token"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `human-auth="true"`) {
+		t.Fatalf("public console did not expose its sign-out mode: %s", response.Body.String())
+	}
+}
+
 func TestConsoleDocumentIsAStreamFirstReadOnlyShell(t *testing.T) {
 	source := &fakeSource{snapshot: exampleSnapshot()}
 	handler, err := New(Config{Source: source})
@@ -116,7 +140,7 @@ func TestUpdatesStreamBackendClockWithoutControlChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	request := httptest.NewRequest(http.MethodGet, "/app/updates?route=overview", nil).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer device-token")
@@ -264,6 +288,9 @@ type fakeSource struct {
 }
 
 func (f *fakeSource) Authenticate(_ context.Context, token string) (control.Principal, error) {
+	if token == "browser-token" {
+		return control.Principal{Kind: control.PrincipalBrowser, UserID: "usr_owner", Admin: true}, nil
+	}
 	if token != "device-token" {
 		return control.Principal{}, control.ErrUnauthenticated
 	}

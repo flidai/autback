@@ -90,12 +90,17 @@ Each laptop receives its own named, revocable, opaque token for one user. Tokens
 an expiry and are stored server-side only as a keyed digest. Compromise of one laptop does
 not require rotating every user or CI credential.
 
-An administrator enrolls a new laptop with a high-entropy code that expires within 30
-minutes and locks after five failed attempts. `autback login` reads the code from a hidden
-terminal prompt or stdin, exchanges it once for the ordinary per-device token, and stores
-that durable token in the operating-system credential store. The durable token is never
-placed in a command argument, repository file, or enrollment message. Browser OAuth can
-be added later without changing the resulting device-token model.
+An administrator binds an Autback user to GitHub's immutable numeric account ID.
+`autback login` begins a short-lived OAuth authorization-code flow with PKCE and opens the
+Autback device approval page. GitHub proves the person; Autback performs membership and
+role authorization. After approval, the CLI exchanges its one-time device code exactly
+once for an ordinary per-device token and stores that token in the operating-system
+credential store. The GitHub access token is never returned to the CLI or retained as an
+Autback credential. GitHub username changes do not change identity.
+
+The original high-entropy enrollment code remains a break-glass recovery mechanism. It
+expires within 30 minutes, locks after five failed attempts, and is accepted only by
+`autback login --recovery-code`. It is not the normal onboarding path.
 
 Credential resolution is deterministic:
 
@@ -104,8 +109,17 @@ Credential resolution is deterministic:
 3. the operating-system credential store populated by `autback login`;
 4. GitHub OIDC exchange when the Actions identity variables are present.
 
-A static token may authenticate a person to the control plane. It is never forwarded to
+A device token may authenticate a person to the control plane. It is never forwarded to
 CAS, BuildKit, Docker, Swarm, or a worker.
+
+### Browser console
+
+The public console uses the same immutable GitHub identity mapping but creates a separate
+short-lived Autback browser session. Its Secure, HttpOnly cookie authorizes only server-
+rendered `/app` documents and live update streams; browser code never receives a device
+token and never calls the Connect control API. The Connect boundary also rejects browser
+principals if a session value is manually presented as a bearer token. Signing out revokes
+the stored browser session. Every execution and governance mutation remains a CLI command.
 
 ### GitHub Actions
 
@@ -128,10 +142,11 @@ short-lived credentials needed for that operation. Job credentials are project- 
 operation-scoped, expire quickly, and cannot create other jobs. Logs, status, cancellation,
 and artifacts are authorized again by project rather than possession of a Docker identity.
 
-The initial identity model has only four credential classes: user device tokens, GitHub
-project trust relationships, job/build credentials, and worker identities. Organization
-tokens, general service accounts, browser device flows, and complex roles are deferred
-until a demonstrated consumer requires them.
+The identity model has five credential classes: user device tokens, short-lived browser
+sessions, GitHub Actions project sessions, job/build credentials, and worker identities.
+GitHub human identities and Actions trust policies are authorization relationships, not
+credentials. Organization tokens, general service accounts, and complex roles remain
+deferred until a demonstrated consumer requires them.
 
 The current protocol-transparent CAS gateway validates that the certificate names an
 active job, but bazel-remote still uses one shared CAS namespace. It does not inspect

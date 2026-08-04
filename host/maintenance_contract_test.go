@@ -56,6 +56,37 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 }
 
+func TestPublicConsoleSecretsRemainOutsideTheCommittedServiceEnvironment(t *testing.T) {
+	root := repositoryRoot(t)
+	service := readFile(t, filepath.Join(root, "host", "autback-server.service"))
+	if !strings.Contains(service, "EnvironmentFile=-/etc/autback/auth.env") {
+		t.Fatal("server does not load the root-owned optional authentication environment")
+	}
+	install := readFile(t, filepath.Join(root, "host", "install-swarm.sh"))
+	for _, required := range []string{"AUTBACK_PUBLIC_URL", "AUTBACK_ACME_DOMAIN", "AUTBACK_ACME_EMAIL"} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installer does not persist %s", required)
+		}
+	}
+	if strings.Contains(install, "AUTBACK_GITHUB_CLIENT_SECRET") {
+		t.Fatal("installer accepts the GitHub client secret through process arguments")
+	}
+	for _, required := range []string{"existing_service_env=/etc/autback/service.env", "read_existing_setting", "AUTBACK_GITHUB_OIDC_AUDIENCES", "oidc_audiences"} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installer does not preserve migration configuration through %q", required)
+		}
+	}
+	if strings.Contains(install, "AUTBACK_GITHUB_OIDC_AUDIENCE=https://%s") {
+		t.Fatal("installer still replaces the OIDC audience with one server name")
+	}
+	deploy := readFile(t, filepath.Join(root, "scripts", "deploy-swarm.zsh"))
+	for _, required := range []string{"/etc/autback/service.env", "remote_service_setting", "AUTBACK_GITHUB_OIDC_AUDIENCES"} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("deployment does not preserve installed service configuration through %q", required)
+		}
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, source, _, ok := runtime.Caller(0)

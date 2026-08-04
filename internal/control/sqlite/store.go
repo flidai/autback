@@ -118,6 +118,17 @@ CREATE TABLE IF NOT EXISTS project_members (
   created_at INTEGER NOT NULL,
   PRIMARY KEY(project_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS external_identities (
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  login TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  last_authenticated_at INTEGER,
+  PRIMARY KEY(provider, subject),
+  UNIQUE(provider, user_id)
+);
+CREATE INDEX IF NOT EXISTS external_identities_login_idx ON external_identities(provider, login);
 CREATE TABLE IF NOT EXISTS access_tokens (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -144,6 +155,28 @@ CREATE TABLE IF NOT EXISTS enrollment_codes (
   max_attempts INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS enrollment_codes_expiry_idx ON enrollment_codes(expires_at, consumed_at);
+CREATE TABLE IF NOT EXISTS oauth_login_states (
+  id TEXT PRIMARY KEY,
+  digest TEXT NOT NULL,
+  return_to TEXT NOT NULL,
+  code_verifier TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  consumed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS oauth_login_states_expiry_idx ON oauth_login_states(expires_at, consumed_at);
+CREATE TABLE IF NOT EXISTS device_logins (
+  id TEXT PRIMARY KEY,
+  user_code TEXT NOT NULL UNIQUE,
+  device_name TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  consumed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS device_logins_expiry_idx ON device_logins(expires_at, consumed_at);
 CREATE TABLE IF NOT EXISTS github_trusts (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -480,6 +513,296 @@ func (s *Store) CreateUser(ctx context.Context, principal control.Principal, nam
 	user := control.User{ID: id, Name: name, Admin: admin, CreatedAt: now}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO users(id,name,admin,created_at) VALUES(?,?,?,?)`, user.ID, user.Name, boolInt(user.Admin), unix(now))
 	return user, err
+}
+
+func (s *Store) BindExternalIdentity(ctx context.Context, principal control.Principal, userID string, identity control.ExternalIdentity) (control.ExternalIdentity, error) {
+	if principal.Kind != control.PrincipalDevice || !principal.Admin {
+		return control.ExternalIdentity{}, control.ErrForbidden
+	}
+	identity.Provider = strings.ToLower(strings.TrimSpace(identity.Provider))
+	identity.Subject = strings.TrimSpace(identity.Subject)
+	identity.Login = strings.TrimSpace(identity.Login)
+	if identity.Provider == "" || identity.Subject == "" || identity.Login == "" || userID == "" {
+		return control.ExternalIdentity{}, errors.New("identity provider, subject, login, and user are required")
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id=?`, userID).Scan(&exists); err != nil {
+		return control.ExternalIdentity{}, control.ErrNotFound
+	}
+	identity.UserID = userID
+	identity.CreatedAt = time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO external_identities(provider,subject,login,user_id,created_at) VALUES(?,?,?,?,?)`,
+		identity.Provider, identity.Subject, identity.Login, identity.UserID, unix(identity.CreatedAt))
+	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
+		return control.ExternalIdentity{}, control.ErrAlreadyExists
+	}
+	return identity, err
+}
+
+func (s *Store) RevokeExternalIdentity(ctx context.Context, principal control.Principal, userID, provider string) error {
+	if principal.Kind != control.PrincipalDevice || !principal.Admin {
+		return control.ErrForbidden
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	userID = strings.TrimSpace(userID)
+	if provider == "" || userID == "" {
+		return errors.New("identity provider and user are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM external_identities WHERE provider=? AND user_id=?`, provider, userID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	now := unix(time.Now().UTC())
+	if _, err := tx.ExecContext(ctx, `UPDATE access_tokens SET revoked_at=? WHERE user_id=? AND kind IN (?,?) AND revoked_at IS NULL`,
+		now, userID, control.PrincipalBrowser, control.PrincipalDevice); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE device_logins SET consumed_at=? WHERE user_id=? AND consumed_at IS NULL`, now, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ExternalIdentity(ctx context.Context, provider, subject string) (control.ExternalIdentity, error) {
+	var identity control.ExternalIdentity
+	var created int64
+	var authenticated sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT provider,subject,login,user_id,created_at,last_authenticated_at FROM external_identities WHERE provider=? AND subject=?`,
+		strings.ToLower(strings.TrimSpace(provider)), strings.TrimSpace(subject)).
+		Scan(&identity.Provider, &identity.Subject, &identity.Login, &identity.UserID, &created, &authenticated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return control.ExternalIdentity{}, control.ErrNotFound
+	}
+	identity.CreatedAt = fromUnix(created)
+	identity.LastAuthenticatedAt = nullableTime(authenticated)
+	return identity, err
+}
+
+func (s *Store) UserByExternalIdentity(ctx context.Context, provider, subject, login string) (control.User, error) {
+	provider, subject, login = strings.ToLower(strings.TrimSpace(provider)), strings.TrimSpace(subject), strings.TrimSpace(login)
+	if provider == "" || subject == "" || login == "" {
+		return control.User{}, control.ErrUnauthenticated
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.User{}, err
+	}
+	defer tx.Rollback()
+	var user control.User
+	var admin int
+	var created int64
+	err = tx.QueryRowContext(ctx, `SELECT u.id,u.name,u.admin,u.created_at FROM users u JOIN external_identities i ON i.user_id=u.id WHERE i.provider=? AND i.subject=?`, provider, subject).
+		Scan(&user.ID, &user.Name, &admin, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return control.User{}, control.ErrForbidden
+	}
+	if err != nil {
+		return control.User{}, err
+	}
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `UPDATE external_identities SET login=?,last_authenticated_at=? WHERE provider=? AND subject=?`, login, unix(now), provider, subject); err != nil {
+		return control.User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return control.User{}, err
+	}
+	user.Admin, user.CreatedAt = admin != 0, fromUnix(created)
+	return user, nil
+}
+
+func (s *Store) CreateBrowserSession(ctx context.Context, userID string, expiresAt time.Time) (control.BrowserSession, error) {
+	now := time.Now().UTC()
+	if userID == "" || !expiresAt.After(now) || expiresAt.After(now.Add(30*24*time.Hour)) {
+		return control.BrowserSession{}, errors.New("browser session user and expiry within 30 days are required")
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id=?`, userID).Scan(&exists); err != nil {
+		return control.BrowserSession{}, control.ErrNotFound
+	}
+	id, secret, digest, err := s.newToken("ws")
+	if err != nil {
+		return control.BrowserSession{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO access_tokens(id,kind,user_id,name,digest,created_at,expires_at) VALUES(?,?,?,?,?,?,?)`,
+		id, control.PrincipalBrowser, userID, "browser-session", digest, unix(now), unix(expiresAt))
+	if err != nil {
+		return control.BrowserSession{}, err
+	}
+	return control.BrowserSession{Token: secret, UserID: userID, ExpiresAt: expiresAt.UTC()}, nil
+}
+
+func (s *Store) RevokeBrowserSession(ctx context.Context, token string) error {
+	kind, id, ok := parseToken(token)
+	if !ok || kind != control.PrincipalBrowser {
+		return control.ErrUnauthenticated
+	}
+	principal, err := s.Authenticate(ctx, token)
+	if err != nil || principal.Kind != control.PrincipalBrowser || principal.TokenID != id {
+		return control.ErrUnauthenticated
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE access_tokens SET revoked_at=? WHERE id=? AND kind=? AND revoked_at IS NULL`,
+		unix(time.Now().UTC()), id, control.PrincipalBrowser)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return control.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CreateOAuthLoginState(ctx context.Context, returnTo, codeVerifier string, expiresAt time.Time) (control.OAuthLoginState, error) {
+	now := time.Now().UTC()
+	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") || strings.TrimSpace(codeVerifier) == "" || !expiresAt.After(now) || expiresAt.After(now.Add(15*time.Minute)) {
+		return control.OAuthLoginState{}, errors.New("valid local return path, verifier, and expiry within 15 minutes are required")
+	}
+	id, state, digest, err := s.newOpaque("ols")
+	if err != nil {
+		return control.OAuthLoginState{}, err
+	}
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM oauth_login_states WHERE expires_at<=? OR consumed_at IS NOT NULL`, unix(now))
+	issued := control.OAuthLoginState{State: state, ReturnTo: returnTo, CodeVerifier: codeVerifier, CreatedAt: now, ExpiresAt: expiresAt.UTC()}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_login_states(id,digest,return_to,code_verifier,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
+		id, digest, issued.ReturnTo, issued.CodeVerifier, unix(issued.CreatedAt), unix(issued.ExpiresAt))
+	return issued, err
+}
+
+func (s *Store) ConsumeOAuthLoginState(ctx context.Context, state string, now time.Time) (control.OAuthLoginState, error) {
+	id, ok := parseOpaque(state, "ols")
+	if !ok {
+		return control.OAuthLoginState{}, control.ErrUnauthenticated
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.OAuthLoginState{}, err
+	}
+	defer tx.Rollback()
+	var login control.OAuthLoginState
+	var digest string
+	var created, expires int64
+	var consumed sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT digest,return_to,code_verifier,created_at,expires_at,consumed_at FROM oauth_login_states WHERE id=?`, id).
+		Scan(&digest, &login.ReturnTo, &login.CodeVerifier, &created, &expires, &consumed)
+	if err != nil || consumed.Valid || !now.UTC().Before(fromUnix(expires)) || !hmac.Equal([]byte(s.digest(state)), []byte(digest)) {
+		return control.OAuthLoginState{}, control.ErrUnauthenticated
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE oauth_login_states SET consumed_at=? WHERE id=? AND consumed_at IS NULL`, unix(now.UTC()), id); err != nil {
+		return control.OAuthLoginState{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return control.OAuthLoginState{}, err
+	}
+	login.State, login.CreatedAt, login.ExpiresAt = state, fromUnix(created), fromUnix(expires)
+	return login, nil
+}
+
+func (s *Store) CreateDeviceLogin(ctx context.Context, deviceName string, expiresAt time.Time) (control.IssuedDeviceLogin, error) {
+	now := time.Now().UTC()
+	deviceName = strings.TrimSpace(deviceName)
+	if deviceName == "" || len(deviceName) > 128 || !expiresAt.After(now) || expiresAt.After(now.Add(15*time.Minute)) {
+		return control.IssuedDeviceLogin{}, errors.New("device name and expiry within 15 minutes are required")
+	}
+	id, code, digest, err := s.newOpaque("dlc")
+	if err != nil {
+		return control.IssuedDeviceLogin{}, err
+	}
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM device_logins WHERE expires_at<=? OR consumed_at IS NOT NULL`, unix(now))
+	userCode, err := randomUserCode()
+	if err != nil {
+		return control.IssuedDeviceLogin{}, err
+	}
+	login := control.DeviceLogin{ID: id, UserCode: userCode, DeviceName: deviceName, CreatedAt: now, ExpiresAt: expiresAt.UTC()}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO device_logins(id,user_code,device_name,digest,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
+		login.ID, login.UserCode, login.DeviceName, digest, unix(login.CreatedAt), unix(login.ExpiresAt))
+	if err != nil {
+		return control.IssuedDeviceLogin{}, err
+	}
+	return control.IssuedDeviceLogin{Login: login, DeviceCode: code}, nil
+}
+
+func (s *Store) DeviceLoginByUserCode(ctx context.Context, userCode string, now time.Time) (control.DeviceLogin, error) {
+	var login control.DeviceLogin
+	var created, expires int64
+	var approved, consumed sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT id,user_code,device_name,created_at,expires_at,approved_at,consumed_at FROM device_logins WHERE user_code=?`,
+		strings.ToUpper(strings.TrimSpace(userCode))).
+		Scan(&login.ID, &login.UserCode, &login.DeviceName, &created, &expires, &approved, &consumed)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (consumed.Valid || !now.UTC().Before(fromUnix(expires))) {
+		return control.DeviceLogin{}, control.ErrNotFound
+	}
+	if err != nil {
+		return control.DeviceLogin{}, err
+	}
+	login.CreatedAt, login.ExpiresAt = fromUnix(created), fromUnix(expires)
+	login.ApprovedAt, login.ConsumedAt = nullableTime(approved), nullableTime(consumed)
+	return login, nil
+}
+
+func (s *Store) ApproveDeviceLogin(ctx context.Context, userCode string, principal control.Principal, now time.Time) error {
+	if principal.Kind != control.PrincipalBrowser || principal.UserID == "" {
+		return control.ErrForbidden
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE device_logins SET user_id=?,approved_at=? WHERE user_code=? AND approved_at IS NULL AND consumed_at IS NULL AND expires_at>?`,
+		principal.UserID, unix(now.UTC()), strings.ToUpper(strings.TrimSpace(userCode)), unix(now.UTC()))
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ExchangeDeviceLogin(ctx context.Context, deviceCode string, now time.Time) (control.IssuedDeviceToken, error) {
+	id, ok := parseOpaque(deviceCode, "dlc")
+	if !ok {
+		return control.IssuedDeviceToken{}, control.ErrUnauthenticated
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.IssuedDeviceToken{}, err
+	}
+	defer tx.Rollback()
+	var deviceName, digest, userID string
+	var expires int64
+	var approved, consumed sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT device_name,digest,COALESCE(user_id,''),expires_at,approved_at,consumed_at FROM device_logins WHERE id=?`, id).
+		Scan(&deviceName, &digest, &userID, &expires, &approved, &consumed)
+	if err != nil || consumed.Valid || !now.UTC().Before(fromUnix(expires)) || !hmac.Equal([]byte(s.digest(deviceCode)), []byte(digest)) {
+		return control.IssuedDeviceToken{}, control.ErrUnauthenticated
+	}
+	if !approved.Valid || userID == "" {
+		return control.IssuedDeviceToken{}, control.ErrLoginPending
+	}
+	tokenID, secret, tokenDigest, err := s.newToken("dt")
+	if err != nil {
+		return control.IssuedDeviceToken{}, err
+	}
+	createdAt := now.UTC()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO access_tokens(id,kind,user_id,name,digest,created_at) VALUES(?,?,?,?,?,?)`,
+		tokenID, control.PrincipalDevice, userID, deviceName, tokenDigest, unix(createdAt)); err != nil {
+		return control.IssuedDeviceToken{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE device_logins SET consumed_at=? WHERE id=? AND consumed_at IS NULL`, unix(createdAt), id)
+	if err != nil {
+		return control.IssuedDeviceToken{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.IssuedDeviceToken{}, control.ErrUnauthenticated
+	}
+	if err := tx.Commit(); err != nil {
+		return control.IssuedDeviceToken{}, err
+	}
+	return control.IssuedDeviceToken{Metadata: control.DeviceToken{ID: tokenID, Name: deviceName, UserID: userID, CreatedAt: createdAt}, Secret: secret}, nil
 }
 
 func (s *Store) CreateProject(ctx context.Context, principal control.Principal, slug, name string) (control.Project, error) {
@@ -1918,6 +2241,40 @@ func (s *Store) newToken(kind string) (string, string, string, error) {
 	return id, secret, s.digest(secret), nil
 }
 
+func (s *Store) newOpaque(kind string) (string, string, string, error) {
+	id, err := randomID(kind)
+	if err != nil {
+		return "", "", "", err
+	}
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return "", "", "", err
+	}
+	secret := "autback_" + kind + "_" + id + "_" + base64.RawURLEncoding.EncodeToString(secretBytes)
+	return id, secret, s.digest(secret), nil
+}
+
+func parseOpaque(value, kind string) (string, bool) {
+	parts := strings.SplitN(value, "_", 4)
+	returnValue := ""
+	if len(parts) == 4 && parts[0] == "autback" && parts[1] == kind && parts[2] != "" && parts[3] != "" {
+		returnValue = parts[2]
+	}
+	return returnValue, returnValue != ""
+}
+
+func randomUserCode() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	value := make([]byte, 8)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	for index := range value {
+		value[index] = alphabet[int(value[index])%len(alphabet)]
+	}
+	return string(value[:4]) + "-" + string(value[4:]), nil
+}
+
 func (s *Store) digest(token string) string {
 	mac := hmac.New(sha256.New, s.pepper)
 	_, _ = mac.Write([]byte(token))
@@ -1934,6 +2291,8 @@ func parseToken(token string) (control.PrincipalKind, string, bool) {
 		return control.PrincipalDevice, parts[2], true
 	case "gh":
 		return control.PrincipalGitHub, parts[2], true
+	case "ws":
+		return control.PrincipalBrowser, parts[2], true
 	default:
 		return "", "", false
 	}

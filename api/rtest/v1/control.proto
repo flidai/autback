@@ -12,6 +12,8 @@ service ControlService {
   rpc GetServiceInfo(GetServiceInfoRequest) returns (GetServiceInfoResponse);
 
   rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc BindGitHubIdentity(BindGitHubIdentityRequest) returns (BindGitHubIdentityResponse);
+  rpc RevokeGitHubIdentity(RevokeGitHubIdentityRequest) returns (RevokeGitHubIdentityResponse);
   rpc CreateProject(CreateProjectRequest) returns (CreateProjectResponse);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc AddProjectMember(AddProjectMemberRequest) returns (AddProjectMemberResponse);
@@ -437,3 +439,27 @@ message CancelBuildRequest {
 message CancelBuildResponse {
   Build build = 1;
 }
+
+message ExternalIdentity {
+  string provider = 1;
+  string subject = 2;
+  string login = 3;
+  string user_id = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp last_authenticated_at = 6;
+}
+
+message BindGitHubIdentityRequest {
+  string user_id = 1;
+  string login = 2;
+}
+
+message BindGitHubIdentityResponse {
+  ExternalIdentity identity = 1;
+}
+
+message RevokeGitHubIdentityRequest {
+  string user_id = 1;
+}
+
+message RevokeGitHubIdentityResponse {}

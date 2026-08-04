@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,9 +30,11 @@ type Source interface {
 }
 
 type Config struct {
-	Source        Source
-	ClockInterval time.Duration
-	Now           func() time.Time
+	Source            Source
+	ClockInterval     time.Duration
+	Now               func() time.Time
+	LoginURL          string
+	SessionCookieName string
 }
 
 func New(config Config) (http.Handler, error) {
@@ -48,7 +51,10 @@ func New(config Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	server := &server{source: config.Source, clockInterval: config.ClockInterval, now: config.Now}
+	if config.SessionCookieName == "" {
+		config.SessionCookieName = "autback_session"
+	}
+	server := &server{source: config.Source, clockInterval: config.ClockInterval, now: config.Now, loginURL: config.LoginURL, sessionCookieName: config.SessionCookieName}
 	mux := http.NewServeMux()
 	mux.Handle("GET /app/assets/", http.StripPrefix("/app/assets/", http.FileServer(http.FS(assetFS))))
 	mux.HandleFunc("GET /app", server.page(Route{Kind: RouteOverview}))
@@ -64,9 +70,11 @@ func New(config Config) (http.Handler, error) {
 }
 
 type server struct {
-	source        Source
-	clockInterval time.Duration
-	now           func() time.Time
+	source            Source
+	clockInterval     time.Duration
+	now               func() time.Time
+	loginURL          string
+	sessionCookieName string
 }
 
 func (s *server) page(route Route) http.HandlerFunc {
@@ -111,6 +119,7 @@ func (s *server) renderPage(response http.ResponseWriter, request *http.Request,
 			g.Attr("project", route.Project),
 			g.Attr("operation-kind", route.OperationKind),
 			g.Attr("operation-id", route.OperationID),
+			g.Attr("human-auth", strconv.FormatBool(s.loginURL != "")),
 		)},
 	})
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -191,12 +200,17 @@ func (s *server) authenticate(response http.ResponseWriter, request *http.Reques
 	value := request.Header.Get("Authorization")
 	token, ok := strings.CutPrefix(value, "Bearer ")
 	if !ok || token == "" || strings.ContainsAny(token, " \t\r\n") {
-		response.Header().Set("WWW-Authenticate", `Bearer realm="autback-console"`)
-		http.Error(response, "authentication required; open the console through the autback CLI", http.StatusUnauthorized)
-		return control.Principal{}, false
+		if cookie, err := request.Cookie(s.sessionCookieName); err == nil {
+			token = cookie.Value
+		}
 	}
 	principal, err := s.source.Authenticate(request.Context(), token)
-	if err != nil || principal.Kind != control.PrincipalDevice {
+	if err != nil || principal.Kind != control.PrincipalDevice && principal.Kind != control.PrincipalBrowser {
+		if s.loginURL != "" && request.Method == http.MethodGet {
+			target := s.loginURL + "?" + url.Values{"return_to": {request.URL.RequestURI()}}.Encode()
+			http.Redirect(response, request, target, http.StatusSeeOther)
+			return control.Principal{}, false
+		}
 		response.Header().Set("WWW-Authenticate", `Bearer realm="autback-console"`)
 		http.Error(response, "authentication required; open the console through the autback CLI", http.StatusUnauthorized)
 		return control.Principal{}, false

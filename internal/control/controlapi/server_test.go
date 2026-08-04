@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -912,6 +913,90 @@ func TestGitHubOIDCExchangeReturnsProjectScopedTemporaryToken(t *testing.T) {
 	}
 }
 
+func TestAdminBindsGitHubLoginToAnAutbackUserByImmutableID(t *testing.T) {
+	fixture := newFixtureWithDirectory(t, fakeGitHubDirectory{identity: control.ExternalIdentity{Provider: "github", Subject: "12345678", Login: "yacobolo"}})
+	client := fixture.client(fixture.bootstrap.Token)
+	member, err := client.CreateUser(context.Background(), connect.NewRequest(&autbackv1.CreateUserRequest{Name: "Jacob"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := client.BindGitHubIdentity(context.Background(), connect.NewRequest(&autbackv1.BindGitHubIdentityRequest{UserId: member.Msg.User.Id, Login: "Yacobolo"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Msg.Identity.Subject != "12345678" || bound.Msg.Identity.Login != "yacobolo" || bound.Msg.Identity.UserId != member.Msg.User.Id {
+		t.Fatalf("identity = %#v", bound.Msg.Identity)
+	}
+	resolved, err := fixture.store.UserByExternalIdentity(context.Background(), "github", "12345678", "yacobolo")
+	if err != nil || resolved.ID != member.Msg.User.Id {
+		t.Fatalf("resolved=%#v err=%v", resolved, err)
+	}
+}
+
+func TestAdminRevokesGitHubIdentityAndAllHumanCredentials(t *testing.T) {
+	fixture := newFixtureWithDirectory(t, fakeGitHubDirectory{identity: control.ExternalIdentity{Provider: "github", Subject: "12345678", Login: "yacobolo"}})
+	client := fixture.client(fixture.bootstrap.Token)
+	member, err := client.CreateUser(context.Background(), connect.NewRequest(&autbackv1.CreateUserRequest{Name: "Jacob"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.BindGitHubIdentity(context.Background(), connect.NewRequest(&autbackv1.BindGitHubIdentityRequest{UserId: member.Msg.User.Id, Login: "Yacobolo"})); err != nil {
+		t.Fatal(err)
+	}
+	session, err := fixture.store.CreateBrowserSession(context.Background(), member.Msg.User.Id, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := fixture.store.Authenticate(context.Background(), fixture.bootstrap.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := fixture.store.CreateDeviceToken(context.Background(), owner, control.CreateDeviceToken{Name: "jacob-laptop", UserID: member.Msg.User.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.RevokeGitHubIdentity(context.Background(), connect.NewRequest(&autbackv1.RevokeGitHubIdentityRequest{UserId: member.Msg.User.Id})); err != nil {
+		t.Fatal(err)
+	}
+	for name, token := range map[string]string{"browser": session.Token, "device": device.Secret} {
+		if _, err := fixture.store.Authenticate(context.Background(), token); !errors.Is(err, control.ErrUnauthenticated) {
+			t.Fatalf("%s authentication error = %v, want unauthenticated", name, err)
+		}
+	}
+	events, err := fixture.store.ListAuditEvents(context.Background(), owner, "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(events, func(event control.AuditEvent) bool {
+		return event.Action == "identity.github.revoke" && event.TargetID == member.Msg.User.Id
+	}) {
+		t.Fatalf("audit events = %#v", events)
+	}
+}
+
+func TestBrowserSessionCannotAuthorizeControlAPI(t *testing.T) {
+	fixture := newFixture(t)
+	session, err := fixture.store.CreateBrowserSession(context.Background(), fixture.bootstrap.User.ID, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = fixture.client(session.Token).ListProjects(context.Background(), connect.NewRequest(&autbackv1.ListProjectsRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("ListProjects error = %v, want unauthenticated", err)
+	}
+}
+
+type fakeGitHubDirectory struct {
+	identity control.ExternalIdentity
+	err      error
+}
+
+func (f fakeGitHubDirectory) Resolve(context.Context, string) (control.ExternalIdentity, error) {
+	return f.identity, f.err
+}
+
 type fixture struct {
 	store     *controlsqlite.Store
 	bootstrap control.BootstrapResult
@@ -937,14 +1022,18 @@ func newFixtureWithBuildCapability(t *testing.T, capability string) *fixture {
 }
 
 func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, capability string) *fixture {
-	return newFixtureWithCapabilitiesAndCapacity(t, verifier, capacity, capability, "")
+	return newFixtureWithOptions(t, verifier, capacity, capability, "", nil)
 }
 
 func newFixtureWithJobCapability(t *testing.T, capability string) *fixture {
-	return newFixtureWithCapabilitiesAndCapacity(t, nil, nil, "", capability)
+	return newFixtureWithOptions(t, nil, nil, "", capability, nil)
 }
 
-func newFixtureWithCapabilitiesAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string) *fixture {
+func newFixtureWithDirectory(t *testing.T, directory controlapi.GitHubDirectory) *fixture {
+	return newFixtureWithOptions(t, nil, nil, "", "", directory)
+}
+
+func newFixtureWithOptions(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string, directory controlapi.GitHubDirectory) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	store, err := controlsqlite.Open(filepath.Join(root, "state"), []byte("test-pepper-that-is-at-least-32-bytes"))
@@ -972,6 +1061,7 @@ func newFixtureWithCapabilitiesAndCapacity(t *testing.T, verifier controlapi.OID
 		RequiredBuildClientCapability: buildCapability,
 		RequiredJobClientCapability:   jobCapability,
 		Ready:                         func() bool { return !draining.Load() },
+		GitHubDirectory:               directory,
 	})
 	if err != nil {
 		t.Fatal(err)

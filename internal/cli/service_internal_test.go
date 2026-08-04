@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -180,7 +181,7 @@ func TestServiceLoginExchangesEnrollmentFromStdinWithoutEchoingSecrets(t *testin
 	keyring := &memoryKeyring{}
 	var stdout, stderr bytes.Buffer
 	settings := config.Config{URL: server.URL, Service: &config.Service{}}
-	result := serviceLogin(context.Background(), settings, "", nil, IO{
+	result := serviceLogin(context.Background(), settings, "", []string{"--recovery-code"}, IO{
 		Stdin: strings.NewReader(code + "\n"), Stdout: &stdout, Stderr: &stderr, Keyring: keyring,
 	})
 	if result != 0 {
@@ -194,6 +195,73 @@ func TestServiceLoginExchangesEnrollmentFromStdinWithoutEchoingSecrets(t *testin
 	}
 	if result := serviceLogout(settings, IO{Stdout: &stdout, Stderr: &stderr, Keyring: keyring}); result != 0 || keyring.token != "" {
 		t.Fatalf("logout result=%d stored=%q", result, keyring.token)
+	}
+}
+
+func TestServiceLoginOpensBrowserAndStoresIssuedDeviceCredential(t *testing.T) {
+	token := "autback_dt_tok456_" + strings.Repeat("b", 43)
+	service := &enrollmentService{token: token}
+	path, connectHandler := autbackv1connect.NewControlServiceHandler(service)
+	mux := http.NewServeMux()
+	mux.Handle(path, connectHandler)
+	mux.HandleFunc("POST /auth/cli/start", func(response http.ResponseWriter, request *http.Request) {
+		var input map[string]string
+		_ = json.NewDecoder(request.Body).Decode(&input)
+		if input["device_name"] != "work-laptop" {
+			t.Fatalf("device name = %q", input["device_name"])
+		}
+		response.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"device_code": "one-time-device-code", "user_code": "ABCD-EFGH",
+			"verification_uri":          "https://console.autback.dev/auth/device",
+			"verification_uri_complete": "https://console.autback.dev/auth/device?code=ABCD-EFGH",
+			"expires_in_seconds":        600, "interval_seconds": 1,
+		})
+	})
+	mux.HandleFunc("POST /auth/cli/token", func(response http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]any{"status": "authorized", "token": token, "token_id": "tok456"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	keyring := &memoryKeyring{}
+	var stdout, stderr bytes.Buffer
+	var opened string
+	settings := config.Config{URL: server.URL, Service: &config.Service{}}
+	result := serviceLogin(context.Background(), settings, "", []string{"--device", "work-laptop"}, IO{
+		Stdout: &stdout, Stderr: &stderr, Keyring: keyring,
+		OpenURL: func(target string) error { opened = target; return nil },
+		Wait:    func(context.Context, time.Duration) error { return nil },
+	})
+	if result != 0 {
+		t.Fatalf("result=%d stderr=%q", result, stderr.String())
+	}
+	if opened != "https://console.autback.dev/auth/device?code=ABCD-EFGH" || keyring.token != token {
+		t.Fatalf("opened=%q stored=%q", opened, keyring.token)
+	}
+	if !strings.Contains(stdout.String(), "ABCD-EFGH") || strings.Contains(stdout.String()+stderr.String(), token) || strings.Contains(stdout.String()+stderr.String(), "one-time-device-code") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestServiceAdminBindsGitHubIdentity(t *testing.T) {
+	service := &identityService{}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	var stdout, stderr bytes.Buffer
+	code := serviceAdmin(context.Background(), client, []string{"identity", "github", "--user", "usr1", "--login", "yacobolo"}, IO{Stdout: &stdout, Stderr: &stderr})
+	if code != 0 || service.userID != "usr1" || service.login != "yacobolo" || !strings.Contains(stdout.String(), "12345678") {
+		t.Fatalf("code=%d user=%q login=%q stdout=%q stderr=%q", code, service.userID, service.login, stdout.String(), stderr.String())
+	}
+}
+
+func TestServiceAdminRevokesGitHubIdentity(t *testing.T) {
+	service := &identityService{}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	var stdout, stderr bytes.Buffer
+	code := serviceAdmin(context.Background(), client, []string{"identity", "revoke", "--user", "usr1"}, IO{Stdout: &stdout, Stderr: &stderr})
+	if code != 0 || service.revokedUserID != "usr1" || !strings.Contains(stdout.String(), "Revoked GitHub identity") {
+		t.Fatalf("code=%d revoked_user=%q stdout=%q stderr=%q", code, service.revokedUserID, stdout.String(), stderr.String())
 	}
 }
 
@@ -558,6 +626,23 @@ type enrollmentService struct {
 	wantCode string
 	gotCode  string
 	token    string
+}
+
+type identityService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	userID        string
+	login         string
+	revokedUserID string
+}
+
+func (s *identityService) RevokeGitHubIdentity(_ context.Context, request *connect.Request[autbackv1.RevokeGitHubIdentityRequest]) (*connect.Response[autbackv1.RevokeGitHubIdentityResponse], error) {
+	s.revokedUserID = request.Msg.UserId
+	return connect.NewResponse(&autbackv1.RevokeGitHubIdentityResponse{}), nil
+}
+
+func (s *identityService) BindGitHubIdentity(_ context.Context, request *connect.Request[autbackv1.BindGitHubIdentityRequest]) (*connect.Response[autbackv1.BindGitHubIdentityResponse], error) {
+	s.userID, s.login = request.Msg.UserId, request.Msg.Login
+	return connect.NewResponse(&autbackv1.BindGitHubIdentityResponse{Identity: &autbackv1.ExternalIdentity{Provider: "github", Subject: "12345678", Login: request.Msg.Login, UserId: request.Msg.UserId}}), nil
 }
 
 func (s *enrollmentService) ExchangeEnrollmentCode(_ context.Context, request *connect.Request[autbackv1.ExchangeEnrollmentCodeRequest]) (*connect.Response[autbackv1.ExchangeEnrollmentCodeResponse], error) {

@@ -40,6 +40,12 @@ const (
 	// ControlServiceCreateUserProcedure is the fully-qualified name of the ControlService's CreateUser
 	// RPC.
 	ControlServiceCreateUserProcedure = "/rtest.v1.ControlService/CreateUser"
+	// ControlServiceBindGitHubIdentityProcedure is the fully-qualified name of the ControlService's
+	// BindGitHubIdentity RPC.
+	ControlServiceBindGitHubIdentityProcedure = "/rtest.v1.ControlService/BindGitHubIdentity"
+	// ControlServiceRevokeGitHubIdentityProcedure is the fully-qualified name of the ControlService's
+	// RevokeGitHubIdentity RPC.
+	ControlServiceRevokeGitHubIdentityProcedure = "/rtest.v1.ControlService/RevokeGitHubIdentity"
 	// ControlServiceCreateProjectProcedure is the fully-qualified name of the ControlService's
 	// CreateProject RPC.
 	ControlServiceCreateProjectProcedure = "/rtest.v1.ControlService/CreateProject"
@@ -120,6 +126,8 @@ const (
 type ControlServiceClient interface {
 	GetServiceInfo(context.Context, *connect.Request[v1.GetServiceInfoRequest]) (*connect.Response[v1.GetServiceInfoResponse], error)
 	CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error)
+	BindGitHubIdentity(context.Context, *connect.Request[v1.BindGitHubIdentityRequest]) (*connect.Response[v1.BindGitHubIdentityResponse], error)
+	RevokeGitHubIdentity(context.Context, *connect.Request[v1.RevokeGitHubIdentityRequest]) (*connect.Response[v1.RevokeGitHubIdentityResponse], error)
 	CreateProject(context.Context, *connect.Request[v1.CreateProjectRequest]) (*connect.Response[v1.CreateProjectResponse], error)
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProjectMember(context.Context, *connect.Request[v1.AddProjectMemberRequest]) (*connect.Response[v1.AddProjectMemberResponse], error)
@@ -169,6 +177,18 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+ControlServiceCreateUserProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("CreateUser")),
+			connect.WithClientOptions(opts...),
+		),
+		bindGitHubIdentity: connect.NewClient[v1.BindGitHubIdentityRequest, v1.BindGitHubIdentityResponse](
+			httpClient,
+			baseURL+ControlServiceBindGitHubIdentityProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("BindGitHubIdentity")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeGitHubIdentity: connect.NewClient[v1.RevokeGitHubIdentityRequest, v1.RevokeGitHubIdentityResponse](
+			httpClient,
+			baseURL+ControlServiceRevokeGitHubIdentityProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("RevokeGitHubIdentity")),
 			connect.WithClientOptions(opts...),
 		),
 		createProject: connect.NewClient[v1.CreateProjectRequest, v1.CreateProjectResponse](
@@ -334,6 +354,8 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 type controlServiceClient struct {
 	getServiceInfo          *connect.Client[v1.GetServiceInfoRequest, v1.GetServiceInfoResponse]
 	createUser              *connect.Client[v1.CreateUserRequest, v1.CreateUserResponse]
+	bindGitHubIdentity      *connect.Client[v1.BindGitHubIdentityRequest, v1.BindGitHubIdentityResponse]
+	revokeGitHubIdentity    *connect.Client[v1.RevokeGitHubIdentityRequest, v1.RevokeGitHubIdentityResponse]
 	createProject           *connect.Client[v1.CreateProjectRequest, v1.CreateProjectResponse]
 	listProjects            *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProjectMember        *connect.Client[v1.AddProjectMemberRequest, v1.AddProjectMemberResponse]
@@ -370,6 +392,16 @@ func (c *controlServiceClient) GetServiceInfo(ctx context.Context, req *connect.
 // CreateUser calls rtest.v1.ControlService.CreateUser.
 func (c *controlServiceClient) CreateUser(ctx context.Context, req *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error) {
 	return c.createUser.CallUnary(ctx, req)
+}
+
+// BindGitHubIdentity calls rtest.v1.ControlService.BindGitHubIdentity.
+func (c *controlServiceClient) BindGitHubIdentity(ctx context.Context, req *connect.Request[v1.BindGitHubIdentityRequest]) (*connect.Response[v1.BindGitHubIdentityResponse], error) {
+	return c.bindGitHubIdentity.CallUnary(ctx, req)
+}
+
+// RevokeGitHubIdentity calls rtest.v1.ControlService.RevokeGitHubIdentity.
+func (c *controlServiceClient) RevokeGitHubIdentity(ctx context.Context, req *connect.Request[v1.RevokeGitHubIdentityRequest]) (*connect.Response[v1.RevokeGitHubIdentityResponse], error) {
+	return c.revokeGitHubIdentity.CallUnary(ctx, req)
 }
 
 // CreateProject calls rtest.v1.ControlService.CreateProject.
@@ -506,6 +538,8 @@ func (c *controlServiceClient) ExchangeEnrollmentCode(ctx context.Context, req *
 type ControlServiceHandler interface {
 	GetServiceInfo(context.Context, *connect.Request[v1.GetServiceInfoRequest]) (*connect.Response[v1.GetServiceInfoResponse], error)
 	CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error)
+	BindGitHubIdentity(context.Context, *connect.Request[v1.BindGitHubIdentityRequest]) (*connect.Response[v1.BindGitHubIdentityResponse], error)
+	RevokeGitHubIdentity(context.Context, *connect.Request[v1.RevokeGitHubIdentityRequest]) (*connect.Response[v1.RevokeGitHubIdentityResponse], error)
 	CreateProject(context.Context, *connect.Request[v1.CreateProjectRequest]) (*connect.Response[v1.CreateProjectResponse], error)
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProjectMember(context.Context, *connect.Request[v1.AddProjectMemberRequest]) (*connect.Response[v1.AddProjectMemberResponse], error)
@@ -551,6 +585,18 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		ControlServiceCreateUserProcedure,
 		svc.CreateUser,
 		connect.WithSchema(controlServiceMethods.ByName("CreateUser")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceBindGitHubIdentityHandler := connect.NewUnaryHandler(
+		ControlServiceBindGitHubIdentityProcedure,
+		svc.BindGitHubIdentity,
+		connect.WithSchema(controlServiceMethods.ByName("BindGitHubIdentity")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceRevokeGitHubIdentityHandler := connect.NewUnaryHandler(
+		ControlServiceRevokeGitHubIdentityProcedure,
+		svc.RevokeGitHubIdentity,
+		connect.WithSchema(controlServiceMethods.ByName("RevokeGitHubIdentity")),
 		connect.WithHandlerOptions(opts...),
 	)
 	controlServiceCreateProjectHandler := connect.NewUnaryHandler(
@@ -715,6 +761,10 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServiceGetServiceInfoHandler.ServeHTTP(w, r)
 		case ControlServiceCreateUserProcedure:
 			controlServiceCreateUserHandler.ServeHTTP(w, r)
+		case ControlServiceBindGitHubIdentityProcedure:
+			controlServiceBindGitHubIdentityHandler.ServeHTTP(w, r)
+		case ControlServiceRevokeGitHubIdentityProcedure:
+			controlServiceRevokeGitHubIdentityHandler.ServeHTTP(w, r)
 		case ControlServiceCreateProjectProcedure:
 			controlServiceCreateProjectHandler.ServeHTTP(w, r)
 		case ControlServiceListProjectsProcedure:
@@ -782,6 +832,14 @@ func (UnimplementedControlServiceHandler) GetServiceInfo(context.Context, *conne
 
 func (UnimplementedControlServiceHandler) CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("rtest.v1.ControlService.CreateUser is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) BindGitHubIdentity(context.Context, *connect.Request[v1.BindGitHubIdentityRequest]) (*connect.Response[v1.BindGitHubIdentityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("rtest.v1.ControlService.BindGitHubIdentity is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) RevokeGitHubIdentity(context.Context, *connect.Request[v1.RevokeGitHubIdentityRequest]) (*connect.Response[v1.RevokeGitHubIdentityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("rtest.v1.ControlService.RevokeGitHubIdentity is not implemented"))
 }
 
 func (UnimplementedControlServiceHandler) CreateProject(context.Context, *connect.Request[v1.CreateProjectRequest]) (*connect.Response[v1.CreateProjectResponse], error) {

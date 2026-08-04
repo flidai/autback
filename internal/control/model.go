@@ -12,6 +12,7 @@ var (
 	ErrForbidden           = errors.New("forbidden")
 	ErrIdempotencyConflict = errors.New("idempotency key was already used with a different request")
 	ErrInvalidPageToken    = errors.New("invalid page token")
+	ErrLoginPending        = errors.New("login pending")
 	ErrNotFound            = errors.New("not found")
 	ErrUnauthenticated     = errors.New("unauthenticated")
 )
@@ -19,9 +20,10 @@ var (
 type PrincipalKind string
 
 const (
-	PrincipalDevice PrincipalKind = "device"
-	PrincipalGitHub PrincipalKind = "github"
-	PrincipalSystem PrincipalKind = "system"
+	PrincipalDevice  PrincipalKind = "device"
+	PrincipalGitHub  PrincipalKind = "github"
+	PrincipalBrowser PrincipalKind = "browser"
+	PrincipalSystem  PrincipalKind = "system"
 )
 
 type Principal struct {
@@ -38,6 +40,46 @@ type User struct {
 	Name      string
 	Admin     bool
 	CreatedAt time.Time
+}
+
+// ExternalIdentity binds an identity provider's immutable subject to an
+// Autback user. Login is display metadata only and may change over time.
+type ExternalIdentity struct {
+	Provider            string
+	Subject             string
+	Login               string
+	UserID              string
+	CreatedAt           time.Time
+	LastAuthenticatedAt *time.Time
+}
+
+type OAuthLoginState struct {
+	State        string
+	ReturnTo     string
+	CodeVerifier string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+}
+
+type BrowserSession struct {
+	Token     string
+	UserID    string
+	ExpiresAt time.Time
+}
+
+type DeviceLogin struct {
+	ID         string
+	UserCode   string
+	DeviceName string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	ApprovedAt *time.Time
+	ConsumedAt *time.Time
+}
+
+type IssuedDeviceLogin struct {
+	Login      DeviceLogin
+	DeviceCode string
 }
 
 type Project struct {

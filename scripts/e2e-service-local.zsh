@@ -201,12 +201,12 @@ coworker_id="$(print -r -- "${coworker_json}" | jq -r '.id')"
 "${build_dir}/autback" admin member add --project example --user "${coworker_id}" > "${proof_dir}/coworker-member.log"
 enrollment_code="$("${build_dir}/autback" admin enrollment create --user "${coworker_id}" --device coworker-laptop --expires 10m 2> "${proof_dir}/enrollment-create.log")"
 print -r -- "${enrollment_code}" | env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" \
-  "${build_dir}/autback" login > "${proof_dir}/enrollment-login.log" 2>&1
+  "${build_dir}/autback" login --recovery-code > "${proof_dir}/enrollment-login.log" 2>&1
 keychain_enrolled=true
 env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" "${build_dir}/autback" doctor > "${proof_dir}/coworker-doctor.log"
 set +e
 print -r -- "${enrollment_code}" | env -u AUTBACK_TOKEN AUTBACK_CONFIG="${config_file}" \
-  "${build_dir}/autback" login > "${proof_dir}/enrollment-reuse.log" 2>&1
+  "${build_dir}/autback" login --recovery-code > "${proof_dir}/enrollment-reuse.log" 2>&1
 enrollment_reuse_exit=$?
 set -e
 [[ ${enrollment_reuse_exit} -ne 0 ]] || { print -u2 'single-use enrollment code was accepted twice'; exit 1; }

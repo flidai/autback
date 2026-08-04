@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/flidai/autback/internal/control/swarmscheduler"
 	"github.com/flidai/autback/internal/protocol"
 	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
@@ -85,6 +87,53 @@ func TestTypedSwarmCheckRecoversAfterDaemonOutage(t *testing.T) {
 	api.info = system.Info{Swarm: swarm.Info{LocalNodeState: swarm.LocalNodeStateActive}}
 	if err := runtime.Check(context.Background()); err != nil {
 		t.Fatalf("Check() after recovery = %v", err)
+	}
+}
+
+func TestTypedSwarmConvergesAfterRestartDuringConcurrentRefreshAndCancellation(t *testing.T) {
+	createdAt := time.Now().UTC()
+	service := managedService("service-id", "job-1", createdAt)
+	api := &fakeSwarmEngine{
+		apiVersion: client.MaxAPIVersion,
+		info:       system.Info{Swarm: swarm.Info{LocalNodeState: swarm.LocalNodeStateActive}},
+		services:   []swarm.Service{{ID: service.ID, Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: service.Spec.Name}}}},
+		inspect:    map[string]swarm.Service{service.ID: service, service.Spec.Name: service},
+		tasks:      map[string][]swarm.Task{service.ID: {{Meta: swarm.Meta{CreatedAt: createdAt}, Status: swarm.TaskStatus{State: swarm.TaskStateRunning}}}},
+	}
+	runtime := newRuntimeClient(api, nil)
+	api.setDaemonError(errdefs.ErrUnavailable)
+	if err := runtime.Check(context.Background()); Classify(err) != ErrorRetryable {
+		t.Fatalf("Check() during outage = %v", err)
+	}
+	if _, err := runtime.ListResults(context.Background()); Classify(err) != ErrorRetryable {
+		t.Fatalf("ListResults() during outage = %v", err)
+	}
+	api.setDaemonError(nil)
+
+	errorsFound := make(chan error, 24)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(3)
+		go func() {
+			defer wait.Done()
+			errorsFound <- runtime.Check(context.Background())
+		}()
+		go func() {
+			defer wait.Done()
+			_, err := runtime.ListResults(context.Background())
+			errorsFound <- err
+		}()
+		go func() {
+			defer wait.Done()
+			errorsFound <- runtime.Cancel(context.Background(), "job-1")
+		}()
+	}
+	wait.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -234,9 +283,11 @@ type serviceUpdate struct {
 }
 
 type fakeSwarmEngine struct {
+	mu            sync.Mutex
 	apiVersion    string
 	info          system.Info
 	infoErr       error
+	listErr       error
 	services      []swarm.Service
 	inspect       map[string]swarm.Service
 	inspectErrors map[string]error
@@ -251,6 +302,8 @@ type fakeSwarmEngine struct {
 }
 
 func (f *fakeSwarmEngine) ClientVersion() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.apiVersion == "" {
 		return client.MaxAPIVersion
 	}
@@ -258,15 +311,21 @@ func (f *fakeSwarmEngine) ClientVersion() string {
 }
 
 func (f *fakeSwarmEngine) Info(context.Context, client.InfoOptions) (client.SystemInfoResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return client.SystemInfoResult{Info: f.info}, f.infoErr
 }
 
 func (f *fakeSwarmEngine) ServiceCreate(_ context.Context, options client.ServiceCreateOptions) (client.ServiceCreateResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.creates = append(f.creates, options)
 	return client.ServiceCreateResult{ID: f.createID}, nil
 }
 
 func (f *fakeSwarmEngine) ServiceInspect(_ context.Context, id string, _ client.ServiceInspectOptions) (client.ServiceInspectResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if err := f.inspectErrors[id]; err != nil {
 		return client.ServiceInspectResult{}, err
 	}
@@ -274,21 +333,31 @@ func (f *fakeSwarmEngine) ServiceInspect(_ context.Context, id string, _ client.
 	if !ok {
 		return client.ServiceInspectResult{}, errors.New("unexpected service inspect: " + id)
 	}
-	return client.ServiceInspectResult{Service: service}, nil
+	return client.ServiceInspectResult{Service: cloneService(service)}, nil
 }
 
 func (f *fakeSwarmEngine) ServiceList(context.Context, client.ServiceListOptions) (client.ServiceListResult, error) {
-	return client.ServiceListResult{Items: f.services}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	services := make([]swarm.Service, len(f.services))
+	for index, service := range f.services {
+		services[index] = cloneService(service)
+	}
+	return client.ServiceListResult{Items: services}, f.listErr
 }
 
 func (f *fakeSwarmEngine) TaskList(_ context.Context, options client.TaskListOptions) (client.TaskListResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for id := range options.Filters["service"] {
-		return client.TaskListResult{Items: f.tasks[id]}, nil
+		return client.TaskListResult{Items: append([]swarm.Task(nil), f.tasks[id]...)}, nil
 	}
 	return client.TaskListResult{}, errors.New("service filter is required")
 }
 
 func (f *fakeSwarmEngine) ServiceUpdate(_ context.Context, id string, options client.ServiceUpdateOptions) (client.ServiceUpdateResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updates = append(f.updates, serviceUpdate{id: id, options: options})
 	if len(f.updateErrors) == 0 {
 		return client.ServiceUpdateResult{}, nil
@@ -299,10 +368,46 @@ func (f *fakeSwarmEngine) ServiceUpdate(_ context.Context, id string, options cl
 }
 
 func (f *fakeSwarmEngine) ServiceRemove(context.Context, string, client.ServiceRemoveOptions) (client.ServiceRemoveResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return client.ServiceRemoveResult{}, f.removeErr
 }
 
 func (f *fakeSwarmEngine) ServiceLogs(_ context.Context, _ string, options client.ServiceLogsOptions) (client.ServiceLogsResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.logOptions = options
 	return io.NopCloser(bytes.NewReader(f.logContent)), nil
+}
+
+func (f *fakeSwarmEngine) setDaemonError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.infoErr = err
+	f.listErr = err
+}
+
+func cloneService(service swarm.Service) swarm.Service {
+	service.Spec.Labels = cloneMap(service.Spec.Labels)
+	if container := service.Spec.TaskTemplate.ContainerSpec; container != nil {
+		containerCopy := *container
+		containerCopy.Command = append([]string(nil), container.Command...)
+		containerCopy.Args = append([]string(nil), container.Args...)
+		containerCopy.Env = append([]string(nil), container.Env...)
+		containerCopy.Mounts = append([]mount.Mount(nil), container.Mounts...)
+		service.Spec.TaskTemplate.ContainerSpec = &containerCopy
+	}
+	if mode := service.Spec.Mode.ReplicatedJob; mode != nil {
+		modeCopy := *mode
+		if mode.MaxConcurrent != nil {
+			value := *mode.MaxConcurrent
+			modeCopy.MaxConcurrent = &value
+		}
+		if mode.TotalCompletions != nil {
+			value := *mode.TotalCompletions
+			modeCopy.TotalCompletions = &value
+		}
+		service.Spec.Mode.ReplicatedJob = &modeCopy
+	}
+	return service
 }

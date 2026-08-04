@@ -40,6 +40,7 @@ func TestResourceManagerCleansRealOperationResources(t *testing.T) {
 	if initializedSwarm {
 		defer exec.Command("docker", "swarm", "leave", "--force").Run() //nolint:errcheck // best-effort test cleanup
 	}
+	waitForSwarmInfrastructure(t, ctx)
 
 	client := New(Config{})
 	store := &integrationBaselineStore{}
@@ -103,6 +104,24 @@ func dockerRun(t *testing.T, ctx context.Context, arguments ...string) {
 func swarmActive(ctx context.Context) bool {
 	output, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.Swarm.LocalNodeState}}").CombinedOutput()
 	return err == nil && strings.TrimSpace(string(output)) == "active"
+}
+
+func waitForSwarmInfrastructure(t *testing.T, ctx context.Context) {
+	t.Helper()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		gatewayReady := exec.CommandContext(ctx, "docker", "network", "inspect", "docker_gwbridge").Run() == nil
+		ingressReady := exec.CommandContext(ctx, "docker", "network", "inspect", "ingress").Run() == nil
+		if gatewayReady && ingressReady {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Docker Swarm infrastructure did not converge: %v", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func dockerCleanup(names ...string) {

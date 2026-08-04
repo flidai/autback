@@ -18,7 +18,7 @@ write_files:
   - path: /etc/docker/daemon.json
     permissions: "0644"
     content: |
-      {"log-driver":"local","log-opts":{"max-size":"20m","max-file":"3"}}
+      {"log-driver":"local","log-opts":{"max-size":"20m","max-file":"3"},"cgroup-parent":"autback-workloads.slice"}
 
 runcmd:
   - [mkdir, -p, /etc/autback, /var/lib/autback/jobs]

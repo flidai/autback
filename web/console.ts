@@ -16,6 +16,9 @@ const EMPTY_RESOURCES: ResourceView = {
   samples: [], sampleCount: 0, activeSampleCount: 0, cpuCores: 0, memoryTotalBytes: 0,
   diskUsageBytes: 0, diskTotalBytes: 0, busyRatio: 0, cpuAverage: 0, cpuPeak: 0,
   memoryAverage: 0, memoryPeak: 0, memoryBytesPeak: 0, queueWaitP95Millis: 0,
+  diskInodesUsed: 0, diskInodesTotal: 0, cpuPressurePeak: 0, memoryPressurePeak: 0,
+  ioPressurePeak: 0, memoryHighEvents: 0, oomEvents: 0, oomKills: 0, pidsCurrent: 0,
+  pidsLimit: 0, unattributedPressureSamples: 0,
 }
 
 const EMPTY: ConsoleSignals = {
@@ -161,11 +164,18 @@ class AutbackConsole extends DatastarLit(LitElement) {
   }
 
   private resourceMetrics(resources: ResourceView): TemplateResult {
+    const attribution = resources.unattributedPressureSamples
+      ? `${resources.unattributedPressureSamples} host-only samples`
+      : 'attributed to active work'
     return html`<section class="metrics" aria-label="Runner capacity summary">
       ${metric('Busy', formatPercent(resources.busyRatio), 'of the selected hour', 'pulse')}
       ${metric('CPU while active', formatPercent(resources.cpuAverage), `${formatPercent(resources.cpuPeak)} peak`, 'cpu')}
       ${metric('Memory while active', formatPercent(resources.memoryAverage), `${formatBytes(resources.memoryBytesPeak)} peak`, 'memory')}
       ${metric('Queue wait p95', formatMilliseconds(resources.queueWaitP95Millis), 'recent runs', 'queue')}
+      ${metric('Memory pressure', formatPercent(resources.memoryPressurePeak), `${resources.memoryHighEvents} high events`, 'memory')}
+      ${metric('I/O pressure', formatPercent(resources.ioPressurePeak), `${formatPercent(resources.cpuPressurePeak)} CPU pressure`, 'cpu')}
+      ${metric('OOM kills', String(resources.oomKills), attribution, 'terminal')}
+      ${metric('Processes', resources.pidsLimit ? `${resources.pidsCurrent} / ${resources.pidsLimit}` : String(resources.pidsCurrent), 'host cgroup', 'pulse')}
     </section>`
   }
 

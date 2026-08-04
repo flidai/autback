@@ -145,11 +145,22 @@ func run(ctx context.Context) error {
 	}
 	casInstance := env("AUTBACK_CAS_INSTANCE", "autback")
 	serverName := names[0]
+	jobResources := swarmscheduler.ResourceEnvelope{
+		CPULimitNano:           int64Env("AUTBACK_JOB_CPU_LIMIT_NANO", 3_000_000_000),
+		CPUReservationNano:     int64Env("AUTBACK_JOB_CPU_RESERVATION_NANO", 1_000_000_000),
+		MemoryLimitBytes:       int64Env("AUTBACK_JOB_MEMORY_LIMIT_BYTES", 5<<30),
+		MemoryReservationBytes: int64Env("AUTBACK_JOB_MEMORY_RESERVATION_BYTES", 1<<30),
+		PIDsLimit:              int64Env("AUTBACK_JOB_PIDS_LIMIT", 4096),
+	}
+	if err := jobResources.Validate(); err != nil {
+		return fmt.Errorf("job resource policy: %w", err)
+	}
 	scheduler := swarmscheduler.New(swarmscheduler.Config{
 		Client: docker, CASAddress: casInternal, CASInstance: casInstance, JobsRoot: jobsRoot,
 		EntrypointHostPath: env("AUTBACK_JOB_ENTRYPOINT", "/usr/local/lib/autback/autback-job-entrypoint"),
 		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
+		Resources: jobResources,
 	})
 	capacityController := newCapacityController(dataDir, store, scheduler, docker, buildCache, lifecycle, false)
 	status, capacityErr := capacityController.Maintain(processCtx, capacity.TriggerManual)
@@ -670,6 +681,18 @@ func durationEnv(name string, fallback time.Duration) time.Duration {
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		log.Fatalf("%s: %v", name, err)
+	}
+	return parsed
+}
+
+func int64Env(name string, fallback int64) int64 {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		log.Fatalf("%s must be a positive integer", name)
 	}
 	return parsed
 }

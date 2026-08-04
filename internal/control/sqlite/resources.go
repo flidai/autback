@@ -28,7 +28,19 @@ CREATE TABLE IF NOT EXISTS resource_samples (
   memory_usage_bytes INTEGER NOT NULL,
   memory_total_bytes INTEGER NOT NULL,
   disk_usage_bytes INTEGER NOT NULL,
-  disk_total_bytes INTEGER NOT NULL
+  disk_total_bytes INTEGER NOT NULL,
+  disk_inodes_used INTEGER NOT NULL DEFAULT 0,
+  disk_inodes_total INTEGER NOT NULL DEFAULT 0,
+  cpu_pressure REAL NOT NULL DEFAULT 0,
+  memory_pressure REAL NOT NULL DEFAULT 0,
+  memory_full_pressure REAL NOT NULL DEFAULT 0,
+  io_pressure REAL NOT NULL DEFAULT 0,
+  io_full_pressure REAL NOT NULL DEFAULT 0,
+  memory_high_events INTEGER NOT NULL DEFAULT 0,
+  oom_events INTEGER NOT NULL DEFAULT 0,
+  oom_kills INTEGER NOT NULL DEFAULT 0,
+  pids_current INTEGER NOT NULL DEFAULT 0,
+  pids_limit INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS resource_samples_time_idx ON resource_samples(observed_at);
 CREATE INDEX IF NOT EXISTS resource_samples_operation_idx ON resource_samples(operation_kind,operation_id,observed_at);
@@ -66,6 +78,52 @@ CREATE TABLE IF NOT EXISTS resource_operation_summaries (
 );
 CREATE INDEX IF NOT EXISTS resource_summaries_project_idx ON resource_operation_summaries(project_id,observed_finished_at DESC);
 `)
+	if err != nil {
+		return err
+	}
+	columns := []struct{ name, kind, fallback string }{
+		{"disk_inodes_used", "INTEGER", "0"}, {"disk_inodes_total", "INTEGER", "0"},
+		{"cpu_pressure", "REAL", "0"}, {"memory_pressure", "REAL", "0"}, {"memory_full_pressure", "REAL", "0"},
+		{"io_pressure", "REAL", "0"}, {"io_full_pressure", "REAL", "0"},
+		{"memory_high_events", "INTEGER", "0"}, {"oom_events", "INTEGER", "0"}, {"oom_kills", "INTEGER", "0"},
+		{"pids_current", "INTEGER", "0"}, {"pids_limit", "INTEGER", "0"},
+	}
+	for _, column := range columns {
+		if err := s.ensureResourceSampleColumn(ctx, column.name, column.kind, column.fallback); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureResourceSampleColumn(ctx context.Context, column, kind, fallback string) error {
+	allowed := map[string]string{
+		"disk_inodes_used": "INTEGER", "disk_inodes_total": "INTEGER", "cpu_pressure": "REAL", "memory_pressure": "REAL",
+		"memory_full_pressure": "REAL", "io_pressure": "REAL", "io_full_pressure": "REAL", "memory_high_events": "INTEGER",
+		"oom_events": "INTEGER", "oom_kills": "INTEGER", "pids_current": "INTEGER", "pids_limit": "INTEGER",
+	}
+	if allowed[column] != kind || fallback != "0" {
+		return errors.New("unsupported resource sample migration column")
+	}
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(resource_samples)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnKind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnKind, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		found = found || name == column
+	}
+	if err := rows.Close(); err != nil || found {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE resource_samples ADD COLUMN `+column+` `+kind+` NOT NULL DEFAULT `+fallback)
 	return err
 }
 
@@ -93,9 +151,12 @@ func (s *Store) AppendResourceSample(ctx context.Context, sample control.Resourc
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO resource_samples(
-observed_at,project_id,operation_kind,operation_id,cpu_utilization,cpu_cores,memory_utilization,memory_usage_bytes,memory_total_bytes,disk_usage_bytes,disk_total_bytes)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)`, sample.ObservedAt.UnixNano(), sample.ProjectID, sample.OperationKind, sample.OperationID,
-		sample.CPUUtilization, sample.CPUCores, sample.MemoryUtilization, sample.MemoryUsageBytes, sample.MemoryTotalBytes, sample.DiskUsageBytes, sample.DiskTotalBytes)
+observed_at,project_id,operation_kind,operation_id,cpu_utilization,cpu_cores,memory_utilization,memory_usage_bytes,memory_total_bytes,disk_usage_bytes,disk_total_bytes,
+disk_inodes_used,disk_inodes_total,cpu_pressure,memory_pressure,memory_full_pressure,io_pressure,io_full_pressure,memory_high_events,oom_events,oom_kills,pids_current,pids_limit)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, sample.ObservedAt.UnixNano(), sample.ProjectID, sample.OperationKind, sample.OperationID,
+		sample.CPUUtilization, sample.CPUCores, sample.MemoryUtilization, sample.MemoryUsageBytes, sample.MemoryTotalBytes, sample.DiskUsageBytes, sample.DiskTotalBytes,
+		sample.DiskInodesUsed, sample.DiskInodesTotal, sample.CPUPressure, sample.MemoryPressure, sample.MemoryFullPressure, sample.IOPressure, sample.IOFullPressure,
+		sample.MemoryHighEvents, sample.OOMEvents, sample.OOMKills, sample.PIDsCurrent, sample.PIDsLimit)
 	if err != nil {
 		return err
 	}
@@ -131,10 +192,10 @@ memory_bytes_peak=MAX(resource_operation_summaries.memory_bytes_peak,excluded.me
 }
 
 func validateResourceSample(sample control.ResourceSample) error {
-	if sample.ObservedAt.IsZero() || sample.CPUCores < 1 || sample.MemoryTotalBytes == 0 || sample.MemoryUsageBytes > sample.MemoryTotalBytes || sample.DiskUsageBytes > sample.DiskTotalBytes {
+	if sample.ObservedAt.IsZero() || sample.CPUCores < 1 || sample.MemoryTotalBytes == 0 || sample.MemoryUsageBytes > sample.MemoryTotalBytes || sample.DiskUsageBytes > sample.DiskTotalBytes || sample.DiskInodesUsed > sample.DiskInodesTotal {
 		return errors.New("resource sample capacities and observation time are invalid")
 	}
-	if !validRatio(sample.CPUUtilization) || !validRatio(sample.MemoryUtilization) {
+	if !validRatio(sample.CPUUtilization) || !validRatio(sample.MemoryUtilization) || !validRatio(sample.CPUPressure) || !validRatio(sample.MemoryPressure) || !validRatio(sample.MemoryFullPressure) || !validRatio(sample.IOPressure) || !validRatio(sample.IOFullPressure) {
 		return errors.New("resource utilization must be between zero and one")
 	}
 	if (sample.OperationID == "") != (sample.OperationKind == "") || sample.OperationID != "" && sample.ProjectID == "" {
@@ -153,7 +214,8 @@ func (s *Store) ListResourceSamples(ctx context.Context, filter control.Resource
 	}
 	where, arguments := resourceWhere(filter, "observed_at")
 	arguments = append(arguments, limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT observed_at,project_id,operation_kind,operation_id,cpu_utilization,cpu_cores,memory_utilization,memory_usage_bytes,memory_total_bytes,disk_usage_bytes,disk_total_bytes
+	rows, err := s.db.QueryContext(ctx, `SELECT observed_at,project_id,operation_kind,operation_id,cpu_utilization,cpu_cores,memory_utilization,memory_usage_bytes,memory_total_bytes,disk_usage_bytes,disk_total_bytes,
+disk_inodes_used,disk_inodes_total,cpu_pressure,memory_pressure,memory_full_pressure,io_pressure,io_full_pressure,memory_high_events,oom_events,oom_kills,pids_current,pids_limit
 FROM resource_samples`+where+` ORDER BY observed_at DESC,id DESC LIMIT ?`, arguments...)
 	if err != nil {
 		return nil, err
@@ -164,7 +226,9 @@ FROM resource_samples`+where+` ORDER BY observed_at DESC,id DESC LIMIT ?`, argum
 		var sample control.ResourceSample
 		var observed int64
 		if err := rows.Scan(&observed, &sample.ProjectID, &sample.OperationKind, &sample.OperationID, &sample.CPUUtilization, &sample.CPUCores,
-			&sample.MemoryUtilization, &sample.MemoryUsageBytes, &sample.MemoryTotalBytes, &sample.DiskUsageBytes, &sample.DiskTotalBytes); err != nil {
+			&sample.MemoryUtilization, &sample.MemoryUsageBytes, &sample.MemoryTotalBytes, &sample.DiskUsageBytes, &sample.DiskTotalBytes,
+			&sample.DiskInodesUsed, &sample.DiskInodesTotal, &sample.CPUPressure, &sample.MemoryPressure, &sample.MemoryFullPressure, &sample.IOPressure, &sample.IOFullPressure,
+			&sample.MemoryHighEvents, &sample.OOMEvents, &sample.OOMKills, &sample.PIDsCurrent, &sample.PIDsLimit); err != nil {
 			return nil, err
 		}
 		sample.ObservedAt = time.Unix(0, observed).UTC()

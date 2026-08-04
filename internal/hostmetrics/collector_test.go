@@ -31,6 +31,35 @@ func TestCollectorAttributesSamplesToTheActiveOperation(t *testing.T) {
 	}
 }
 
+func TestCollectorAttributesOnlyNewCgroupEvents(t *testing.T) {
+	now := time.Date(2026, time.August, 4, 8, 0, 0, 0, time.UTC)
+	store := &collectorStore{scope: control.ResourceScope{ProjectID: "project", OperationKind: control.OperationJob, OperationID: "job"}}
+	samples := []control.ResourceSample{
+		{ObservedAt: now, CPUCores: 1, MemoryTotalBytes: 1, OOMEvents: 4, OOMKills: 2, MemoryHighEvents: 7},
+		{ObservedAt: now.Add(time.Second), CPUCores: 1, MemoryTotalBytes: 1, OOMEvents: 5, OOMKills: 3, MemoryHighEvents: 9},
+	}
+	collector, err := NewCollector(CollectorConfig{Store: store, Sampler: sampleFunc(func(context.Context) (control.ResourceSample, error) {
+		sample := samples[0]
+		samples = samples[1:]
+		return sample, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.CollectOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.appended.OOMKills != 0 || store.appended.OOMEvents != 0 || store.appended.MemoryHighEvents != 0 {
+		t.Fatalf("first sample attributed historical events: %#v", store.appended)
+	}
+	if err := collector.CollectOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.appended.OOMKills != 1 || store.appended.OOMEvents != 1 || store.appended.MemoryHighEvents != 2 || store.appended.OperationID != "job" {
+		t.Fatalf("event deltas = %#v", store.appended)
+	}
+}
+
 type sampleFunc func(context.Context) (control.ResourceSample, error)
 
 func (f sampleFunc) Sample(ctx context.Context) (control.ResourceSample, error) { return f(ctx) }

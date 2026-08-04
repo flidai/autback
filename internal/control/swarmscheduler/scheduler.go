@@ -22,6 +22,28 @@ type Config struct {
 	CacheRoot          string
 	HostUID            string
 	HostGID            string
+	Resources          ResourceEnvelope
+}
+
+// ResourceEnvelope is the worker-owned cgroup budget applied to every Swarm
+// job. The host-wide workload slice remains the outer guard for sibling
+// containers launched through the trusted Docker socket.
+type ResourceEnvelope struct {
+	CPULimitNano           int64
+	CPUReservationNano     int64
+	MemoryLimitBytes       int64
+	MemoryReservationBytes int64
+	PIDsLimit              int64
+}
+
+func (r ResourceEnvelope) Validate() error {
+	if r.CPULimitNano <= 0 || r.CPUReservationNano <= 0 || r.MemoryLimitBytes <= 0 || r.MemoryReservationBytes <= 0 || r.PIDsLimit <= 0 {
+		return errors.New("job CPU, memory, and PID resource limits are required")
+	}
+	if r.CPUReservationNano > r.CPULimitNano || r.MemoryReservationBytes > r.MemoryLimitBytes {
+		return errors.New("job resource reservations cannot exceed limits")
+	}
+	return nil
 }
 
 type Client interface {
@@ -54,6 +76,7 @@ type Spec struct {
 	HasSecrets         bool
 	HostUID            string
 	HostGID            string
+	Resources          ResourceEnvelope
 }
 
 type CacheMount struct {
@@ -85,6 +108,9 @@ func (s *Scheduler) ValidateImage(ctx context.Context, image string) error {
 }
 
 func (s *Scheduler) Create(ctx context.Context, job control.Job) error {
+	if err := s.config.Resources.Validate(); err != nil {
+		return err
+	}
 	if err := prepareCacheDirectories(s.config.CacheRoot, job.ProjectID, job.Caches); err != nil {
 		return err
 	}
@@ -115,6 +141,7 @@ func specForJob(config Config, job control.Job) Spec {
 		Timeout:            job.Timeout,
 		CacheRoot:          config.CacheRoot, ProjectID: job.ProjectID, Caches: caches,
 		HostUID: config.HostUID, HostGID: config.HostGID, Secrets: secretMounts, HasSecrets: len(job.Secrets) > 0,
+		Resources: config.Resources,
 	}
 }
 

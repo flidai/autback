@@ -6,8 +6,8 @@
 
 ## Context
 
-Autback deliberately admits one elastic operation at a time. The operation may use the
-worker's available CPU and memory, but it shares finite storage with Docker images and
+Autback deliberately admits one bounded operation at a time. The operation may use most
+of the worker's CPU and memory, but it shares finite resources with Docker images and
 logs, BuildKit, the REAPI CAS, project caches, job workspaces, and the control plane. The
 original hourly shell janitor used independent age and byte thresholds, parsed Docker Go
 timestamps with platform-specific `date` syntax, and could report success after failing to
@@ -102,6 +102,20 @@ container remain protected even when application metadata is incomplete.
 
 ### Bounded producers
 
+- The Docker daemon's default cgroup parent is `autback-workloads.slice`. That outer
+  slice bounds the Swarm job and every sibling container a trusted integration test
+  creates through the mounted Docker socket. CAS and BuildKit explicitly use
+  `autback-infrastructure.slice`; the server runs in its own bounded systemd service.
+- On the documented four-core, 8 GiB worker, defaults reserve one CPU and 2 GiB of memory
+  from the workload slice. An individual job receives a three-CPU/roughly-5-GiB limit,
+  one CPU and 1 GiB reservations, and 4096 PIDs. The installer derives these limits from
+  the host and accepts `AUTBACK_WORKLOAD_*`, `AUTBACK_JOB_*`, and
+  `AUTBACK_BUILDKIT_*` overrides for other worker shapes. Reservations may not exceed
+  limits and an unbounded job is rejected.
+- `/proc/pressure` CPU, memory, and I/O PSI values, cgroup v2 memory-high/OOM events and
+  PID use, and filesystem byte/inode use are sampled durably. Counter deltas are assigned
+  to the active FIFO operation; pressure observed while idle is explicitly reported as
+  host-only rather than falsely attributed.
 - CAS normal size is `min(25% of the filesystem, 40 GiB)`. Its hard write limit is 5%
   larger, causing uploads to fail instead of exhausting the host.
 - BuildKit uses a generated `buildkitd.toml`: 2 GiB reserved, maximum
@@ -126,8 +140,9 @@ capacity filesystem cannot be measured.
 
 ## Consequences
 
-- Jobs retain elastic CPU and memory access; the controller reserves storage for the OS
-  and control plane rather than assigning fixed per-job disk quotas.
+- Jobs retain access to most of the worker while cgroup envelopes preserve CPU, memory,
+  and process headroom for Docker and the control plane. Disk and inode safety remains a
+  host-wide capacity boundary rather than a per-job quota.
 - Normal cleanup may wait for a long operation to finish. Bounded producers and the hard
   emergency floor keep that delay safe without risking corruption of active work.
 - Warm project images, rollback images, CAS content, and BuildKit records have explicit

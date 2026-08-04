@@ -314,14 +314,26 @@ type ResourceScope struct {
 // and memory utilization are ratios in the inclusive range [0, 1].
 type ResourceSample struct {
 	ResourceScope
-	ObservedAt        time.Time
-	CPUUtilization    float64
-	CPUCores          int
-	MemoryUtilization float64
-	MemoryUsageBytes  uint64
-	MemoryTotalBytes  uint64
-	DiskUsageBytes    uint64
-	DiskTotalBytes    uint64
+	ObservedAt         time.Time
+	CPUUtilization     float64
+	CPUCores           int
+	MemoryUtilization  float64
+	MemoryUsageBytes   uint64
+	MemoryTotalBytes   uint64
+	DiskUsageBytes     uint64
+	DiskTotalBytes     uint64
+	DiskInodesUsed     uint64
+	DiskInodesTotal    uint64
+	CPUPressure        float64
+	MemoryPressure     float64
+	MemoryFullPressure float64
+	IOPressure         float64
+	IOFullPressure     float64
+	MemoryHighEvents   uint64
+	OOMEvents          uint64
+	OOMKills           uint64
+	PIDsCurrent        uint64
+	PIDsLimit          uint64
 }
 
 type ResourceFilter struct {

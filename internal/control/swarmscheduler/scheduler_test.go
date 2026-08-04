@@ -74,3 +74,27 @@ func TestSecretSpecUsesOperationSnapshotAndDedicatedTargets(t *testing.T) {
 		t.Fatalf("secret mounts = %#v", spec.Secrets)
 	}
 }
+
+func TestJobSpecCarriesConfiguredResourceEnvelope(t *testing.T) {
+	envelope := ResourceEnvelope{
+		CPULimitNano: 3_000_000_000, CPUReservationNano: 1_000_000_000,
+		MemoryLimitBytes: 5 << 30, MemoryReservationBytes: 1 << 30, PIDsLimit: 4096,
+	}
+	spec := specForJob(Config{Resources: envelope}, control.Job{ID: "job-1"})
+	if spec.Resources != envelope {
+		t.Fatalf("resources = %#v, want %#v", spec.Resources, envelope)
+	}
+}
+
+func TestResourceEnvelopeRejectsUnboundedOrImpossiblePolicies(t *testing.T) {
+	valid := ResourceEnvelope{CPULimitNano: 2, CPUReservationNano: 1, MemoryLimitBytes: 2, MemoryReservationBytes: 1, PIDsLimit: 1}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	invalid := []ResourceEnvelope{{}, {CPULimitNano: 1, CPUReservationNano: 2, MemoryLimitBytes: 2, MemoryReservationBytes: 1, PIDsLimit: 1}, {CPULimitNano: 2, CPUReservationNano: 1, MemoryLimitBytes: 1, MemoryReservationBytes: 2, PIDsLimit: 1}}
+	for _, envelope := range invalid {
+		if err := envelope.Validate(); err == nil {
+			t.Fatalf("accepted invalid envelope %#v", envelope)
+		}
+	}
+}

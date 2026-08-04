@@ -83,26 +83,40 @@ type QueueView struct {
 // Samples are intentionally bounded and normalized so the browser only renders
 // an authorized read model, never raw host or database state.
 type ResourceView struct {
-	Samples            []ResourceSampleView `json:"samples"`
-	SampleCount        int                  `json:"sampleCount"`
-	ActiveSampleCount  int                  `json:"activeSampleCount"`
-	CPUCores           int                  `json:"cpuCores"`
-	MemoryTotalBytes   uint64               `json:"memoryTotalBytes"`
-	DiskUsageBytes     uint64               `json:"diskUsageBytes"`
-	DiskTotalBytes     uint64               `json:"diskTotalBytes"`
-	BusyRatio          float64              `json:"busyRatio"`
-	CPUAverage         float64              `json:"cpuAverage"`
-	CPUPeak            float64              `json:"cpuPeak"`
-	MemoryAverage      float64              `json:"memoryAverage"`
-	MemoryPeak         float64              `json:"memoryPeak"`
-	MemoryBytesPeak    uint64               `json:"memoryBytesPeak"`
-	QueueWaitP95Millis int64                `json:"queueWaitP95Millis"`
+	Samples                     []ResourceSampleView `json:"samples"`
+	SampleCount                 int                  `json:"sampleCount"`
+	ActiveSampleCount           int                  `json:"activeSampleCount"`
+	CPUCores                    int                  `json:"cpuCores"`
+	MemoryTotalBytes            uint64               `json:"memoryTotalBytes"`
+	DiskUsageBytes              uint64               `json:"diskUsageBytes"`
+	DiskTotalBytes              uint64               `json:"diskTotalBytes"`
+	DiskInodesUsed              uint64               `json:"diskInodesUsed"`
+	DiskInodesTotal             uint64               `json:"diskInodesTotal"`
+	BusyRatio                   float64              `json:"busyRatio"`
+	CPUAverage                  float64              `json:"cpuAverage"`
+	CPUPeak                     float64              `json:"cpuPeak"`
+	MemoryAverage               float64              `json:"memoryAverage"`
+	MemoryPeak                  float64              `json:"memoryPeak"`
+	MemoryBytesPeak             uint64               `json:"memoryBytesPeak"`
+	QueueWaitP95Millis          int64                `json:"queueWaitP95Millis"`
+	CPUPressurePeak             float64              `json:"cpuPressurePeak"`
+	MemoryPressurePeak          float64              `json:"memoryPressurePeak"`
+	IOPressurePeak              float64              `json:"ioPressurePeak"`
+	MemoryHighEvents            uint64               `json:"memoryHighEvents"`
+	OOMEvents                   uint64               `json:"oomEvents"`
+	OOMKills                    uint64               `json:"oomKills"`
+	PIDsCurrent                 uint64               `json:"pidsCurrent"`
+	PIDsLimit                   uint64               `json:"pidsLimit"`
+	UnattributedPressureSamples int                  `json:"unattributedPressureSamples"`
 }
 
 type ResourceSampleView struct {
 	ObservedAt        time.Time `json:"observedAt"`
 	CPUUtilization    float64   `json:"cpuUtilization"`
 	MemoryUtilization float64   `json:"memoryUtilization"`
+	CPUPressure       float64   `json:"cpuPressure"`
+	MemoryPressure    float64   `json:"memoryPressure"`
+	IOPressure        float64   `json:"ioPressure"`
 }
 
 type OperationResourceView struct {

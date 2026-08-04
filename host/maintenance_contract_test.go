@@ -67,6 +67,32 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 }
 
+func TestWorkerResourcePolicyReservesControlPlaneHeadroom(t *testing.T) {
+	root := repositoryRoot(t)
+	server := readFile(t, filepath.Join(root, "host", "autback-server.service"))
+	for _, required := range []string{"MemoryHigh=512M", "MemoryMax=768M", "TasksMax=1024"} {
+		if !strings.Contains(server, required) {
+			t.Errorf("server service missing %q", required)
+		}
+	}
+	buildkit := readFile(t, filepath.Join(root, "host", "autback-buildkit.service"))
+	for _, required := range []string{"--memory ${AUTBACK_BUILDKIT_MEMORY_LIMIT}", "--memory-reservation ${AUTBACK_BUILDKIT_MEMORY_RESERVATION}", "--cpus ${AUTBACK_BUILDKIT_CPU_LIMIT}", "--cgroup-parent autback-infrastructure.slice"} {
+		if !strings.Contains(buildkit, required) {
+			t.Errorf("BuildKit service missing %q", required)
+		}
+	}
+	cas := readFile(t, filepath.Join(root, "host", "autback-cas.service"))
+	if !strings.Contains(cas, "--cgroup-parent autback-infrastructure.slice") {
+		t.Fatal("CAS is not isolated from the workload slice")
+	}
+	install := readFile(t, filepath.Join(root, "host", "install-swarm.sh"))
+	for _, required := range []string{"autback-workloads.slice", `config["cgroup-parent"] = "autback-workloads.slice"`, "AUTBACK_JOB_MEMORY_LIMIT_BYTES", "AUTBACK_JOB_CPU_LIMIT_NANO", "AUTBACK_JOB_PIDS_LIMIT"} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installer resource policy missing %q", required)
+		}
+	}
+}
+
 func TestPublicConsoleSecretsRemainOutsideTheCommittedServiceEnvironment(t *testing.T) {
 	root := repositoryRoot(t)
 	service := readFile(t, filepath.Join(root, "host", "autback-server.service"))

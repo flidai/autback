@@ -149,6 +149,37 @@ func TestTypedSwarmTerminalizesTasksWithoutContainerStatus(t *testing.T) {
 	}
 }
 
+func TestTypedSwarmExplainsResourceExhaustion(t *testing.T) {
+	tests := []struct {
+		name         string
+		exitCode     int
+		runtimeError string
+		want         string
+	}{
+		{name: "oom kill", exitCode: 137, want: "memory/resource envelope"},
+		{name: "pids", exitCode: 1, runtimeError: "fork: resource temporarily unavailable", want: "process/PID limit"},
+		{name: "disk", exitCode: 1, runtimeError: "write output: no space left on device", want: "disk capacity"},
+		{name: "inodes", exitCode: 1, runtimeError: "inode exhaustion: no space left on device", want: "inode capacity"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			createdAt := time.Now().UTC()
+			service := managedService("service-id", "job-1", createdAt)
+			api := &fakeSwarmEngine{tasks: map[string][]swarm.Task{service.ID: {{
+				Meta:   swarm.Meta{CreatedAt: createdAt},
+				Status: swarm.TaskStatus{State: swarm.TaskStateFailed, Timestamp: createdAt.Add(time.Second), Err: test.runtimeError, ContainerStatus: &swarm.ContainerStatus{ExitCode: test.exitCode}},
+			}}}}
+			job, err := newRuntimeClient(api, nil).status(context.Background(), service, service.Spec.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(job.ErrorMessage, test.want) {
+				t.Fatalf("error = %q, want %q", job.ErrorMessage, test.want)
+			}
+		})
+	}
+}
+
 func TestTypedSwarmCheckRecoversAfterDaemonOutage(t *testing.T) {
 	api := &fakeSwarmEngine{apiVersion: client.MaxAPIVersion, infoErr: errdefs.ErrUnavailable}
 	runtime := newRuntimeClient(api, nil)
@@ -264,6 +295,10 @@ func TestTypedSwarmCreatePreservesJobRuntimeContract(t *testing.T) {
 		JobsRoot: "/jobs", CacheRoot: "/cache", CASAddress: "cas:50051", RootDigest: "abc/1",
 		Command: []string{"go", "test", "./..."}, Environment: map[string]string{"Z": "last", "A": "first"},
 		Timeout: time.Minute, HostUID: "1000", HostGID: "1000",
+		Resources: swarmscheduler.ResourceEnvelope{
+			CPULimitNano: 3_000_000_000, CPUReservationNano: 1_000_000_000,
+			MemoryLimitBytes: 5 << 30, MemoryReservationBytes: 1 << 30, PIDsLimit: 4096,
+		},
 		Caches: []swarmscheduler.CacheMount{{Name: "gomod", Target: "/go/pkg/mod"}},
 	}
 	id, err := newRuntimeClient(api, nil).Create(context.Background(), spec)
@@ -287,6 +322,24 @@ func TestTypedSwarmCreatePreservesJobRuntimeContract(t *testing.T) {
 	if len(container.Mounts) != 4 || container.Mounts[3].Source != "/cache/project-1/gomod" {
 		t.Fatalf("mounts = %#v", container.Mounts)
 	}
+	resources := created.Spec.TaskTemplate.Resources
+	if resources == nil || resources.Limits == nil || resources.Reservations == nil {
+		t.Fatalf("resources = %#v", resources)
+	}
+	if resources.Limits.NanoCPUs != spec.Resources.CPULimitNano || resources.Limits.MemoryBytes != spec.Resources.MemoryLimitBytes || resources.Limits.Pids != spec.Resources.PIDsLimit {
+		t.Fatalf("limits = %#v", resources.Limits)
+	}
+	if resources.Reservations.NanoCPUs != spec.Resources.CPUReservationNano || resources.Reservations.MemoryBytes != spec.Resources.MemoryReservationBytes {
+		t.Fatalf("reservations = %#v", resources.Reservations)
+	}
+}
+
+func TestTypedSwarmRejectsUnboundedJob(t *testing.T) {
+	api := &fakeSwarmEngine{}
+	_, err := newRuntimeClient(api, nil).Create(context.Background(), swarmscheduler.Spec{ID: "job", Image: "image"})
+	if Classify(err) != ErrorContract || !strings.Contains(err.Error(), "resource envelope") {
+		t.Fatalf("Create() error = %v, class = %s", err, Classify(err))
+	}
 }
 
 func TestTypedSwarmKeepsSecretValuesOutOfServiceSpec(t *testing.T) {
@@ -294,7 +347,8 @@ func TestTypedSwarmKeepsSecretValuesOutOfServiceSpec(t *testing.T) {
 	spec := swarmscheduler.Spec{
 		ID: "job-1", Image: "example/image@sha256:abc", ProjectID: "project-1", JobsRoot: "/jobs",
 		Timeout: time.Minute, HasSecrets: true,
-		Secrets: []swarmscheduler.SecretMount{{Source: "/jobs/job-1/secrets/001-signing-key", Target: "/run/secrets/signing-key"}},
+		Resources: swarmscheduler.ResourceEnvelope{CPULimitNano: 2, CPUReservationNano: 1, MemoryLimitBytes: 2, MemoryReservationBytes: 1, PIDsLimit: 1},
+		Secrets:   []swarmscheduler.SecretMount{{Source: "/jobs/job-1/secrets/001-signing-key", Target: "/run/secrets/signing-key"}},
 	}
 	if _, err := newRuntimeClient(api, nil).Create(context.Background(), spec); err != nil {
 		t.Fatal(err)

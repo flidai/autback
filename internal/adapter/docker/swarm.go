@@ -108,6 +108,9 @@ func (c *Client) Create(ctx context.Context, spec swarmscheduler.Spec) (string, 
 	if spec.Image == "" {
 		return "", fmt.Errorf("project image is required: %w", errdefs.ErrInvalidArgument)
 	}
+	if err := spec.Resources.Validate(); err != nil {
+		return "", fmt.Errorf("job resource envelope: %v: %w", err, errdefs.ErrOutOfRange)
+	}
 	result, err := c.runtime.ServiceCreate(ctx, client.ServiceCreateOptions{Spec: serviceSpec(spec), QueryRegistry: true})
 	if err != nil {
 		return "", fmt.Errorf("create Swarm job %s: %w", spec.ID, err)
@@ -186,7 +189,15 @@ func serviceSpec(spec swarmscheduler.Spec) engineswarm.ServiceSpec {
 				Env: environment, User: "0:0", Init: &init, Mounts: mounts, StopGracePeriod: &stopGracePeriod,
 			},
 			RestartPolicy: &engineswarm.RestartPolicy{Condition: engineswarm.RestartPolicyConditionNone},
-			Networks:      []engineswarm.NetworkAttachmentConfig{{Target: "host"}},
+			Resources: &engineswarm.ResourceRequirements{
+				Limits: &engineswarm.Limit{
+					NanoCPUs: spec.Resources.CPULimitNano, MemoryBytes: spec.Resources.MemoryLimitBytes, Pids: spec.Resources.PIDsLimit,
+				},
+				Reservations: &engineswarm.Resources{
+					NanoCPUs: spec.Resources.CPUReservationNano, MemoryBytes: spec.Resources.MemoryReservationBytes,
+				},
+			},
+			Networks: []engineswarm.NetworkAttachmentConfig{{Target: "host"}},
 			LogDriver: &engineswarm.Driver{Name: "local", Options: map[string]string{
 				"max-size": "10m", "max-file": "2",
 			}},
@@ -274,6 +285,7 @@ func (c *Client) status(ctx context.Context, service engineswarm.Service, fallba
 		job.FinishedAt = &finished
 		job.ExitCode = &exitCode
 		job.ErrorMessage = task.Status.Err
+		job.ErrorMessage = resourceFailureMessage(exitCode, job.ErrorMessage)
 		if job.ErrorMessage == "" && job.Status != protocol.StatusCancelled {
 			switch {
 			case !hasContainerStatus:
@@ -284,6 +296,27 @@ func (c *Client) status(ctx context.Context, service engineswarm.Service, fallba
 		}
 	}
 	return job, nil
+}
+
+func resourceFailureMessage(exitCode int, runtimeError string) string {
+	lower := strings.ToLower(runtimeError)
+	var diagnosis string
+	switch {
+	case exitCode == 137 || strings.Contains(lower, "oom") || strings.Contains(lower, "out of memory"):
+		diagnosis = "workload exceeded the memory/resource envelope or was OOM-killed; inspect cgroup memory.events and PSI telemetry"
+	case strings.Contains(lower, "pids limit") || strings.Contains(lower, "resource temporarily unavailable") || strings.Contains(lower, "cannot fork"):
+		diagnosis = "workload exceeded its process/PID limit; inspect cgroup pids.current and pids.max"
+	case strings.Contains(lower, "no space left") && strings.Contains(lower, "inode"):
+		diagnosis = "worker inode capacity was exhausted; inspect disk inode telemetry and capacity status"
+	case strings.Contains(lower, "no space left"):
+		diagnosis = "worker disk capacity was exhausted; inspect disk telemetry and capacity status"
+	default:
+		return runtimeError
+	}
+	if runtimeError == "" {
+		return diagnosis
+	}
+	return diagnosis + ": " + runtimeError
 }
 
 func (c *Client) Logs(ctx context.Context, id string, follow bool, output io.Writer) error {

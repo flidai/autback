@@ -67,6 +67,11 @@ cleanup reports `deferred` while a job or build is admitting or running, then re
 the worker is idle. Only the hard emergency floor may stop active work, and it does so
 before any Docker, cache, or BuildKit reclaim begins.
 
+Terminal operation acknowledgements are independent of queue advancement. After durable
+completion is recorded, Autback responds to the client and advances the FIFO in a
+coalesced background loop. Transient capacity or scheduler errors are logged and retried;
+they do not turn a completed build into a client-visible failure.
+
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
 rollback project images, applies recorded image last use, and reduces project caches from

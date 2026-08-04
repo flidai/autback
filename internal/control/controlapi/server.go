@@ -40,6 +40,7 @@ type OIDCVerifier interface {
 
 type Dispatcher interface {
 	RunOnce(context.Context) error
+	Advance()
 	Release(context.Context, control.OperationKind, string) error
 }
 
@@ -603,7 +604,7 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 		credential, issueErr := s.config.Authority.Issue(pki.OperationBuild, build.ID, s.config.CredentialTTL)
 		if issueErr != nil {
 			_, _ = s.config.Store.FinishBuild(ctx, build.ID, control.BuildFailed, 1)
-			_ = s.config.Dispatcher.RunOnce(ctx)
+			s.config.Dispatcher.Advance()
 			return nil, connectError(issueErr)
 		}
 		response.Buildkit = connectionProto(s.config.BuildKitEndpoint, "", credential)
@@ -678,10 +679,10 @@ func (s *Server) CancelBuild(ctx context.Context, request *connect.Request[autba
 	if err != nil {
 		return nil, connectError(err)
 	}
-	_ = s.config.Dispatcher.RunOnce(ctx)
 	if err := s.config.Store.Audit(ctx, principal, build.ProjectID, "build.cancel", build.ID, nil); err != nil {
 		return nil, connectError(err)
 	}
+	s.config.Dispatcher.Advance()
 	return connect.NewResponse(&autbackv1.CancelBuildResponse{Build: buildProto(build)}), nil
 }
 
@@ -710,12 +711,10 @@ func (s *Server) FinishBuild(ctx context.Context, request *connect.Request[autba
 	if err != nil {
 		return nil, connectError(err)
 	}
-	if err := s.config.Dispatcher.RunOnce(ctx); err != nil {
-		return nil, connectError(err)
-	}
 	if err := s.config.Store.Audit(ctx, principal, build.ProjectID, "build.finish", build.ID, map[string]string{"status": string(status)}); err != nil {
 		return nil, connectError(err)
 	}
+	s.config.Dispatcher.Advance()
 	return connect.NewResponse(&autbackv1.FinishBuildResponse{Build: buildProto(build)}), nil
 }
 
@@ -941,9 +940,7 @@ func (s *Server) refreshJob(ctx context.Context, job control.Job) (control.Job, 
 	}
 	job, err = s.config.Store.SyncJob(ctx, job.ID, remote)
 	if err == nil && job.Status.Terminal() {
-		if releaseErr := s.config.Dispatcher.RunOnce(ctx); releaseErr != nil {
-			return control.Job{}, releaseErr
-		}
+		s.config.Dispatcher.Advance()
 	}
 	return job, err
 }

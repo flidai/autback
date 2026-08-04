@@ -261,7 +261,10 @@ func (h *Host) Lock(ctx context.Context) (func(), error) {
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
-				<-timer.C
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			_ = file.Close()
 			return nil, ctx.Err()

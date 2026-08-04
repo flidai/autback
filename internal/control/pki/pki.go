@@ -75,13 +75,30 @@ func Ensure(root string, names []string) (*Authority, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse PKI server certificate: %w", err)
 	}
-	for _, name := range names {
-		if err := leaf.VerifyHostname(name); err != nil {
-			return nil, fmt.Errorf("server certificate does not cover %q: %w", name, err)
+	if !coversNames(leaf, names) {
+		if err := createServerCertificate(ca, caKey, serverCertPath, serverKeyPath, names); err != nil {
+			return nil, fmt.Errorf("reissue PKI server certificate: %w", err)
+		}
+		serverPair, err = tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load reissued PKI server certificate: %w", err)
+		}
+		leaf, err = x509.ParseCertificate(serverPair.Certificate[0])
+		if err != nil {
+			return nil, fmt.Errorf("parse reissued PKI server certificate: %w", err)
 		}
 	}
 	serverPair.Leaf = leaf
 	return &Authority{ca: ca, caKey: caKey, caPEM: caPEM, serverName: names[0], serverKeyPair: serverPair}, nil
+}
+
+func coversNames(certificate *x509.Certificate, names []string) bool {
+	for _, name := range names {
+		if certificate.VerifyHostname(name) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Authority) Issue(kind Operation, id string, ttl time.Duration) (Credential, error) {

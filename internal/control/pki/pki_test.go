@@ -1,11 +1,13 @@
 package pki_test
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,52 @@ import (
 
 	"github.com/flidai/autback/internal/control/pki"
 )
+
+func TestEnsureReissuesOnlyTheServerCertificateWhenNamesExpand(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "pki")
+	if _, err := pki.Ensure(root, []string{"62.238.54.70"}); err != nil {
+		t.Fatal(err)
+	}
+	caBefore, err := os.ReadFile(filepath.Join(root, "ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverBefore, err := os.ReadFile(filepath.Join(root, "server.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pki.Ensure(root, []string{"console.autback.dev", "62.238.54.70"}); err != nil {
+		t.Fatal(err)
+	}
+	caAfter, err := os.ReadFile(filepath.Join(root, "ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverAfter, err := os.ReadFile(filepath.Join(root, "server.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(caBefore, caAfter) {
+		t.Fatal("CA changed while reconciling server names")
+	}
+	if bytes.Equal(serverBefore, serverAfter) {
+		t.Fatal("server certificate was not reissued")
+	}
+	block, _ := pem.Decode(serverAfter)
+	if block == nil {
+		t.Fatal("missing server certificate PEM")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"console.autback.dev", "62.238.54.70"} {
+		if err := certificate.VerifyHostname(name); err != nil {
+			t.Errorf("server certificate does not cover %q: %v", name, err)
+		}
+	}
+}
 
 func TestAuthorityIssuesShortLivedOperationCertificates(t *testing.T) {
 	authority, err := pki.Ensure(filepath.Join(t.TempDir(), "pki"), []string{"localhost", "127.0.0.1"})

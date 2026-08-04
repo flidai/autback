@@ -79,6 +79,9 @@ chmod 0600 /etc/autback/buildkitd.toml
   printf 'AUTBACK_GITHUB_OIDC_AUDIENCE=https://%s\n' "$public_name"
 } >/etc/autback/service.env
 
+systemctl daemon-reload
+systemctl stop autback-maintenance.timer autback-maintenance.service autback-server
+
 docker pull "$cas_image"
 docker pull "$buildkit_image"
 
@@ -100,7 +103,6 @@ if [[ ! -f /var/lib/autback/control/control.db ]]; then
   chmod 0600 /etc/autback/bootstrap-token
 fi
 
-systemctl daemon-reload
 systemctl enable --now autback-cas autback-buildkit autback-server autback-maintenance.timer
 systemctl restart autback-cas autback-buildkit autback-server
 systemctl --no-pager --quiet is-active autback-cas autback-buildkit autback-server autback-maintenance.timer

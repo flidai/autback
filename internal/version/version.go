@@ -2,7 +2,7 @@
 package version
 
 const (
-	Current                       = "0.1.10"
+	Current                       = "0.1.11"
 	ClientVersionHeader           = "Autback-Client-Version"
 	ClientCapabilitiesHeader      = "Autback-Client-Capabilities"
 	CapabilityBuildLeaseHeartbeat = "build-lease-heartbeat"

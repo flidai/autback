@@ -109,6 +109,9 @@ host and SSH identity. It never provisions or replaces infrastructure. It instal
 server and static job entrypoint, starts pinned CAS/BuildKit images, initializes Swarm,
 bootstraps the control database once, copies the private CA locally, stores the one-time
 device token in the OS keychain, then removes the bootstrap handoff file from the host.
+An upgrade stops the maintenance timer, any active maintenance invocation, and the old
+control plane before pulling infrastructure images, preventing the outgoing lifecycle
+controller from pruning a layer being installed for the incoming version.
 
 ```console
 AUTBACK_SERVER_IP=62.238.54.70 \

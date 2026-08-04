@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -27,8 +26,8 @@ type ImagePolicy struct {
 	Protected  bool
 }
 
-type Commands interface {
-	Run(context.Context, ...string) error
+type BuildCache interface {
+	Prune(context.Context, int64) error
 }
 
 type Runtime interface {
@@ -54,7 +53,7 @@ type HostConfig struct {
 	LockPath     string
 	Store        CapacityStore
 	Runtime      Runtime
-	Commands     Commands
+	BuildCache   BuildCache
 	Emergency    func(context.Context) error
 	Now          func() time.Time
 	DryRun       bool
@@ -67,9 +66,6 @@ type Host struct {
 func NewHost(config HostConfig) *Host {
 	if config.Now == nil {
 		config.Now = time.Now
-	}
-	if config.Commands == nil {
-		config.Commands = DockerCommands{}
 	}
 	return &Host{config: config}
 }
@@ -180,11 +176,12 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 	if !request.Pressure {
 		return h.finishReport(ctx, before, report, errors.Join(reclaimErrors...))
 	}
-	keepStorage := "2000"
-	buildkitCommand := []string{"exec", "autback-buildkit", "buildctl", "--addr", "tcp://127.0.0.1:1234", "prune", "--all", "--keep-storage", keepStorage}
-	report.Commands = append(report.Commands, "docker "+joinCommand(buildkitCommand))
+	const maxUsedBytes = int64(2_000_000_000)
+	report.Commands = append(report.Commands, "buildkit prune --all --max-used-space 2000000000")
 	if !h.config.DryRun {
-		if err := h.config.Commands.Run(ctx, buildkitCommand...); err != nil {
+		if h.config.BuildCache == nil {
+			reclaimErrors = append(reclaimErrors, errors.New("BuildKit capacity runtime is not configured"))
+		} else if err := h.config.BuildCache.Prune(ctx, maxUsedBytes); err != nil {
 			reclaimErrors = append(reclaimErrors, fmt.Errorf("prune BuildKit: %w", err))
 		}
 	}
@@ -471,29 +468,4 @@ func joinCommand(arguments []string) string {
 		result += argument
 	}
 	return result
-}
-
-type DockerCommands struct {
-	Binary string
-	Host   string
-}
-
-func (d DockerCommands) Run(ctx context.Context, arguments ...string) error {
-	_, err := d.Output(ctx, arguments...)
-	return err
-}
-
-func (d DockerCommands) Output(ctx context.Context, arguments ...string) ([]byte, error) {
-	binary := d.Binary
-	if binary == "" {
-		binary = "docker"
-	}
-	if d.Host != "" {
-		arguments = append([]string{"--host", d.Host}, arguments...)
-	}
-	output, err := exec.CommandContext(ctx, binary, arguments...).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", err, string(output))
-	}
-	return output, nil
 }

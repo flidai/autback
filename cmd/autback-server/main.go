@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	buildkitadapter "github.com/flidai/autback/internal/adapter/buildkit"
 	dockeradapter "github.com/flidai/autback/internal/adapter/docker"
 	appserver "github.com/flidai/autback/internal/app/server"
 	"github.com/flidai/autback/internal/capacity"
@@ -117,6 +118,16 @@ func run(ctx context.Context) error {
 	casListen := env("AUTBACK_CAS_LISTEN", ":50052")
 	buildKitInternal := env("AUTBACK_BUILDKIT_INTERNAL", "127.0.0.1:1234")
 	buildKitListen := env("AUTBACK_BUILDKIT_LISTEN", ":1235")
+	buildCache, err := buildkitadapter.New(processCtx, buildkitadapter.Config{Address: buildKitInternal})
+	if err != nil {
+		return err
+	}
+	defer buildCache.Close()
+	buildKitCheckCtx, cancelBuildKitCheck := context.WithTimeout(processCtx, 15*time.Second)
+	defer cancelBuildKitCheck()
+	if err := buildCache.Check(buildKitCheckCtx); err != nil {
+		return err
+	}
 	casInstance := env("AUTBACK_CAS_INSTANCE", "autback")
 	serverName := names[0]
 	scheduler := swarmscheduler.New(swarmscheduler.Config{
@@ -125,7 +136,7 @@ func run(ctx context.Context) error {
 		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
-	capacityController := newCapacityController(dataDir, store, scheduler, docker, resourceManager, false)
+	capacityController := newCapacityController(dataDir, store, scheduler, docker, buildCache, resourceManager, false)
 	status, capacityErr := capacityController.Maintain(processCtx, capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(dataDir, "capacity.json"), status)
 	if capacityErr != nil {
@@ -411,13 +422,23 @@ func maintainWorker(args []string) {
 		log.Fatal(err)
 	}
 	scheduler := swarmscheduler.New(swarmscheduler.Config{Client: docker})
+	buildCache, err := buildkitadapter.New(context.Background(), buildkitadapter.Config{Address: env("AUTBACK_BUILDKIT_INTERNAL", "127.0.0.1:1234")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer buildCache.Close()
+	buildKitCheckCtx, cancelBuildKitCheck := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelBuildKitCheck()
+	if err := buildCache.Check(buildKitCheckCtx); err != nil {
+		log.Fatal(err)
+	}
 	resourceManager := operationcleanup.NewResourceManager(operationcleanup.ResourceManagerConfig{
 		Store:       store,
 		Runtime:     docker,
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})
-	controller := newCapacityController(*dataDir, store, scheduler, docker, resourceManager, *dryRun)
+	controller := newCapacityController(*dataDir, store, scheduler, docker, buildCache, resourceManager, *dryRun)
 	status, err := controller.Maintain(context.Background(), capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(*dataDir, "capacity.json"), status)
 	if *jsonOutput {
@@ -432,7 +453,7 @@ func maintainWorker(args []string) {
 	}
 }
 
-func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler *swarmscheduler.Scheduler, runtime capacity.Runtime, cleaner operationcleanup.Cleaner, dryRun bool) *capacity.Controller {
+func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler *swarmscheduler.Scheduler, runtime capacity.Runtime, buildCache capacity.BuildCache, cleaner operationcleanup.Cleaner, dryRun bool) *capacity.Controller {
 	// Destructive Docker cleanup is valid only on a worker whose daemon is an
 	// Autback ownership boundary. Local development defaults to observation.
 	dryRun = dryRun || os.Getenv("AUTBACK_WORKER_OWNERSHIP") != "exclusive"
@@ -443,10 +464,8 @@ func newCapacityController(dataDir string, store *controlsqlite.Store, scheduler
 		LockPath:     filepath.Join(dataDir, "capacity.lock"),
 		Store:        store,
 		Runtime:      runtime,
-		Commands: capacity.DockerCommands{
-			Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock"),
-		},
-		DryRun: dryRun,
+		BuildCache:   buildCache,
+		DryRun:       dryRun,
 		Emergency: func(ctx context.Context) error {
 			operation, err := store.EmergencyStopActiveOperation(ctx, "worker capacity exhausted")
 			if err != nil || operation == nil {

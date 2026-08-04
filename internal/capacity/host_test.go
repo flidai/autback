@@ -54,7 +54,7 @@ func TestHostRemovesOnlyTerminalRetainedJobDirectories(t *testing.T) {
 	}
 	host := NewHost(HostConfig{
 		CapacityPath: root, JobsRoot: jobs, CacheRoot: cache,
-		Store: &fakeCapacityStore{terminal: []string{"job-terminal"}}, Runtime: &recordingRuntime{}, Commands: &recordingCommands{},
+		Store: &fakeCapacityStore{terminal: []string{"job-terminal"}}, Runtime: &recordingRuntime{},
 	})
 
 	report, err := host.Reclaim(context.Background(), ReclaimRequest{JobRetention: 7 * 24 * time.Hour, NormalObjectAge: 24 * time.Hour})
@@ -85,7 +85,7 @@ func TestHostPrunesProjectCachesOldestFirstToLowWatermark(t *testing.T) {
 	}
 	host := NewHost(HostConfig{
 		CapacityPath: root, JobsRoot: filepath.Join(root, "jobs"), CacheRoot: cacheRoot,
-		Store: &fakeCapacityStore{}, Runtime: &recordingRuntime{}, Commands: &recordingCommands{},
+		Store: &fakeCapacityStore{}, Runtime: &recordingRuntime{},
 	})
 
 	report, err := host.Reclaim(context.Background(), ReclaimRequest{CacheHighBytes: 15, CacheLowBytes: 8, NormalObjectAge: 24 * time.Hour})
@@ -105,11 +105,11 @@ func TestHostPrunesProjectCachesOldestFirstToLowWatermark(t *testing.T) {
 
 func TestHostUsesTypedDockerRuntimeForCapacityReclaim(t *testing.T) {
 	root := t.TempDir()
-	commands := &recordingCommands{}
 	runtime := &recordingRuntime{}
+	buildCache := &recordingBuildCache{}
 	host := NewHost(HostConfig{
 		CapacityPath: root, JobsRoot: filepath.Join(root, "jobs"), CacheRoot: filepath.Join(root, "cache"),
-		Store: &fakeCapacityStore{}, Runtime: runtime, Commands: commands,
+		Store: &fakeCapacityStore{}, Runtime: runtime, BuildCache: buildCache,
 	})
 
 	_, err := host.Reclaim(context.Background(), ReclaimRequest{
@@ -128,15 +128,13 @@ func TestHostUsesTypedDockerRuntimeForCapacityReclaim(t *testing.T) {
 			t.Errorf("runtime calls %#v missing %q", runtime.calls, call)
 		}
 	}
-	buildkit := []string{"exec", "autback-buildkit", "buildctl", "--addr", "tcp://127.0.0.1:1234", "prune", "--all", "--keep-storage", "2000"}
-	if !slices.ContainsFunc(commands.calls, func(call []string) bool { return slices.Equal(call, buildkit) }) {
-		t.Errorf("commands %#v missing %#v", commands.calls, buildkit)
+	if !slices.Equal(buildCache.maxUsed, []int64{2_000_000_000}) {
+		t.Errorf("BuildKit max-used calls = %#v", buildCache.maxUsed)
 	}
 }
 
 func TestPressureImageCleanupProtectsProjectImagesAndUsesRecordedLastUse(t *testing.T) {
 	root := t.TempDir()
-	commands := &recordingCommands{}
 	created := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	runtime := &recordingRuntime{images: []RuntimeImage{
 		{ID: "sha256:protected", RepoDigests: []string{"ghcr.io/example/runner@sha256:111"}, CreatedAt: created},
@@ -150,7 +148,7 @@ func TestPressureImageCleanupProtectsProjectImagesAndUsesRecordedLastUse(t *test
 	}}
 	host := NewHost(HostConfig{
 		CapacityPath: root, JobsRoot: filepath.Join(root, "jobs"), CacheRoot: filepath.Join(root, "cache"),
-		Store: store, Runtime: runtime, Commands: commands,
+		Store: store, Runtime: runtime, BuildCache: &recordingBuildCache{},
 	})
 
 	_, err := host.Reclaim(context.Background(), ReclaimRequest{Pressure: true, TargetFreeBytes: ^uint64(0), NormalObjectAge: 24 * time.Hour})
@@ -193,14 +191,19 @@ func (f *fakeCapacityStore) CapacityImagePolicies(context.Context) ([]ImagePolic
 	return append([]ImagePolicy(nil), f.images...), nil
 }
 
-type recordingCommands struct {
-	calls [][]string
-}
-
 type recordingRuntime struct {
 	calls   []string
 	images  []RuntimeImage
 	removed []string
+}
+
+type recordingBuildCache struct {
+	maxUsed []int64
+}
+
+func (r *recordingBuildCache) Prune(_ context.Context, maxUsedBytes int64) error {
+	r.maxUsed = append(r.maxUsed, maxUsedBytes)
+	return nil
 }
 
 func (r *recordingRuntime) PruneContainers(_ context.Context, age time.Duration, all bool) error {
@@ -229,10 +232,5 @@ func (r *recordingRuntime) ListImages(context.Context) ([]RuntimeImage, error) {
 
 func (r *recordingRuntime) RemoveImage(_ context.Context, id string) error {
 	r.removed = append(r.removed, id)
-	return nil
-}
-
-func (r *recordingCommands) Run(_ context.Context, arguments ...string) error {
-	r.calls = append(r.calls, append([]string(nil), arguments...))
 	return nil
 }

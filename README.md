@@ -134,7 +134,8 @@ candidates while preserving raw logs and an exact source fingerprint.
 - `internal/cas`, `internal/workspace`: standard CAS transfer and exact Git input selection.
 - `internal/control/swarmscheduler`: the server-owned Swarm scheduling port and job contract.
 - `internal/adapter/docker`: typed, version-negotiated Docker Engine adapters for jobs, capacity, and cleanup.
-- `internal/buildkit`: thin native Buildx remote-builder wrapper.
+- `internal/adapter/buildkit`: typed server-side BuildKit health and cache collection.
+- `internal/buildkit`: thin client-facing native Buildx remote-builder wrapper.
 - `internal/console`, `web`: authenticated Gomponents/Pagestream transport and Lit console UI.
 - `cmd/autback-job-entrypoint`: CAS materialization, timeout, process-group, and result boundary.
 - `host`: idempotent existing-host installation and systemd units.

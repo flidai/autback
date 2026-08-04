@@ -79,6 +79,12 @@ rollback project images, applies recorded image last use, and reduces project ca
 BuildKit uses native reserved/max/min-free GC policies generated for the worker. Container
 logs rotate at 20 MiB and durable job logs are capped at 256 MiB.
 
+Runner containers execute as root and can therefore leave root-owned files in bind-mounted
+project caches and job workspaces. The server and maintenance units receive only
+`CAP_DAC_OVERRIDE`, constrained by `ProtectSystem=strict` and
+`ReadWritePaths=/var/lib/autback`, so the lifecycle controller can remove those owned trees
+without running the control plane as root or gaining write access outside its data root.
+
 Inspect or exercise exactly the same implementation used by admission and background
 monitoring:
 

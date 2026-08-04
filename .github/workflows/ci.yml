@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_stability:
+        description: Run the privileged Docker/Swarm fault tier
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -33,6 +40,13 @@ jobs:
 
       - name: Run Go tests
         run: go test ./...
+
+      - name: Run fast stability matrix
+        run: go run ./cmd/autback-stability --mode fast --artifacts .tmp/stability/fast
+
+      - name: Run full stability matrix
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_stability }}
+        run: go run ./cmd/autback-stability --mode full --artifacts .tmp/stability/full
 
       - name: Validate protobuf contract
         run: |

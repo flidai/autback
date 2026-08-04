@@ -117,14 +117,7 @@ func run() int {
 	}
 	command.Dir, command.Stdout, command.Stderr = workingDirectory, stdout, stderr
 	command.Env = mergeEnvironment(os.Environ(), runtimeSecrets.Environment)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Cancel = func() error {
-		if command.Process == nil {
-			return os.ErrProcessDone
-		}
-		return syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
-	}
-	command.WaitDelay = 5 * time.Second
+	configureCommandCancellation(command, 5*time.Second)
 	err = command.Run()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		fmt.Fprintln(stderr, "remote job timed out")
@@ -143,6 +136,17 @@ func run() int {
 	}
 	fmt.Fprintln(stderr, err)
 	return finish(jobDirectory, "failed", 1)
+}
+
+func configureCommandCancellation(command *exec.Cmd, grace time.Duration) {
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error {
+		if command.Process == nil {
+			return os.ErrProcessDone
+		}
+		return syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
+	}
+	command.WaitDelay = grace
 }
 
 func mergeEnvironment(base, overrides []string) []string {

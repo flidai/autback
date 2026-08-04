@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -9,7 +10,44 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestCommandCancellationKillsTERMResistantProcessGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	command := exec.CommandContext(ctx, "sh", "-c", `trap '' TERM; echo ready; while :; do sleep 1; done`)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configureCommandCancellation(command, 20*time.Millisecond)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		if scanner.Scan() {
+			ready <- scanner.Text()
+		}
+	}()
+	select {
+	case line := <-ready:
+		if line != "ready" {
+			t.Fatalf("barrier = %q", line)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TERM-resistant workload did not reach the event barrier")
+	}
+	started := time.Now()
+	cancel()
+	if err := command.Wait(); err == nil {
+		t.Fatal("cancelled TERM-resistant workload exited successfully")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("process group termination took %s", elapsed)
+	}
+}
 
 func TestBoundedJobLogPreservesDiskLimitAndSignalsTruncation(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "job-log")

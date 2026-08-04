@@ -481,6 +481,34 @@ func TestBuildPreparationReturnsBuildScopedCertificate(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationRequiresLeaseHeartbeatCapability(t *testing.T) {
+	fixture := newFixtureWithBuildCapability(t, "build-lease-heartbeat")
+	client := fixture.client(fixture.bootstrap.Token)
+	request := func(key, capabilities string) *connect.Request[autbackv1.PrepareBuildRequest] {
+		result := connect.NewRequest(&autbackv1.PrepareBuildRequest{
+			Project: fixture.bootstrap.Project.ID, IdempotencyKey: key,
+		})
+		if capabilities != "" {
+			result.Header().Set("Autback-Client-Capabilities", capabilities)
+		}
+		return result
+	}
+
+	if _, err := client.PrepareBuild(context.Background(), request("missing-build-capability", "")); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("missing capability error = %v, want failed precondition", err)
+	}
+	if _, err := client.PrepareBuild(context.Background(), request("wrong-build-capability", "future-capability")); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("wrong capability error = %v, want failed precondition", err)
+	}
+	response, err := client.PrepareBuild(context.Background(), request("compatible-build-client", "future-capability, build-lease-heartbeat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || response.Msg.Buildkit == nil {
+		t.Fatalf("compatible build response = %#v", response.Msg)
+	}
+}
+
 func TestAdmissionIdempotencyReplaysResourcesAndRejectsChangedRequests(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)
@@ -694,6 +722,14 @@ func newFixtureWithVerifier(t *testing.T, verifier controlapi.OIDCVerifier) *fix
 }
 
 func newFixtureWithCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity) *fixture {
+	return newFixtureWithBuildCapabilityAndCapacity(t, verifier, capacity, "")
+}
+
+func newFixtureWithBuildCapability(t *testing.T, capability string) *fixture {
+	return newFixtureWithBuildCapabilityAndCapacity(t, nil, nil, capability)
+}
+
+func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, capability string) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	store, err := controlsqlite.Open(filepath.Join(root, "state"), []byte("test-pepper-that-is-at-least-32-bytes"))
@@ -715,6 +751,7 @@ func newFixtureWithCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capa
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
 		CASEndpoint: "cas.example:50051", CASInstance: "autback", BuildKitEndpoint: "buildkit.example:1234",
 		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier, Capacity: capacity,
+		RequiredBuildClientCapability: capability,
 	})
 	if err != nil {
 		t.Fatal(err)

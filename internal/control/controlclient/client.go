@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
+	"github.com/flidai/autback/internal/version"
 )
 
 func New(baseURL, token, caCertFile string) (autbackv1connect.ControlServiceClient, error) {
@@ -17,6 +18,7 @@ func New(baseURL, token, caCertFile string) (autbackv1connect.ControlServiceClie
 	if err != nil {
 		return nil, err
 	}
+	httpClient.Transport = metadataTransport{next: httpClient.Transport}
 	return autbackv1connect.NewControlServiceClient(httpClient, parsed.String()), nil
 }
 
@@ -58,6 +60,18 @@ func NewHTTPClient(baseURL, token, caCertFile string) (*http.Client, *url.URL, e
 type authorizationTransport struct {
 	token string
 	next  http.RoundTripper
+}
+
+type metadataTransport struct {
+	next http.RoundTripper
+}
+
+func (t metadataTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	clone := request.Clone(request.Context())
+	clone.Header = request.Header.Clone()
+	clone.Header.Set(version.ClientVersionHeader, version.Current)
+	clone.Header.Set(version.ClientCapabilitiesHeader, version.CapabilityBuildLeaseHeartbeat)
+	return t.next.RoundTrip(clone)
 }
 
 func (t authorizationTransport) RoundTrip(request *http.Request) (*http.Response, error) {

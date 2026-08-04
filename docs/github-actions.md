@@ -41,7 +41,9 @@ The action exposes its required `project` input as `AUTBACK_PROJECT`, so the OID
 and every subsequent operation are bound to that selected project. It does not create or
 rely on a user-wide default. Before a long build records completion or activates its
 result, the CLI requests a fresh OIDC identity and project session; a short-lived bootstrap
-session therefore never becomes the lifetime limit for an otherwise healthy build.
+session therefore never becomes the lifetime limit for an otherwise healthy build. The CLI
+also advertises its build-lease heartbeat capability. The service rejects older clients
+before build admission instead of allowing a long build to lose its FIFO lease mid-push.
 
 ## CLI distribution
 
@@ -50,6 +52,8 @@ release. Release archives cover Linux and macOS on amd64 and arm64. The action d
 the release checksum manifest, verifies SHA-256 before extraction, verifies the binary's
 reported version, and caches only that verified release under an OS/architecture/version
 key. A restored cache entry must report the requested version before it is trusted.
+The repository test suite requires the action's default release to match `autback version`,
+so server/client lifecycle changes cannot be merged under an already-published version.
 
 Installation fails closed when the requested release or checksum is unavailable; the
 action never compiles repository source or stores an unverified binary under a release

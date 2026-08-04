@@ -18,6 +18,7 @@ import (
 )
 
 type CapacityStore interface {
+	WorkerBusy(context.Context) (bool, error)
 	TerminalJobIDsBefore(context.Context, time.Time) ([]string, error)
 	CapacityImagePolicies(context.Context) ([]ImagePolicy, error)
 }
@@ -72,15 +73,14 @@ func (h *Host) Snapshot(context.Context) (Snapshot, error) {
 	}, nil
 }
 
+func (h *Host) Busy(ctx context.Context) (bool, error) {
+	if h.config.Store == nil {
+		return false, nil
+	}
+	return h.config.Store.WorkerBusy(ctx)
+}
+
 func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimReport, error) {
-	unlock, acquired, err := h.acquireLock()
-	if err != nil {
-		return ReclaimReport{}, err
-	}
-	if !acquired {
-		return ReclaimReport{}, nil
-	}
-	defer unlock()
 	before, err := h.Snapshot(ctx)
 	if err != nil {
 		return ReclaimReport{}, err
@@ -239,25 +239,35 @@ func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([
 	return commands, nil
 }
 
-func (h *Host) acquireLock() (func(), bool, error) {
+func (h *Host) Lock(ctx context.Context) (func(), error) {
 	if h.config.LockPath == "" {
-		return func() {}, true, nil
+		return func() {}, nil
 	}
 	file, err := os.OpenFile(h.config.LockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		_ = file.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return func() {}, false, nil
+	for {
+		if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err == nil {
+			return func() {
+				_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+				_ = file.Close()
+			}, nil
+		} else if !errors.Is(err, unix.EWOULDBLOCK) {
+			_ = file.Close()
+			return nil, err
 		}
-		return nil, false, err
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	return func() {
-		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
-		_ = file.Close()
-	}, true, nil
 }
 
 func (h *Host) Emergency(ctx context.Context) error {

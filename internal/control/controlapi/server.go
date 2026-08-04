@@ -45,6 +45,7 @@ type Dispatcher interface {
 
 type Capacity interface {
 	Ensure(context.Context) error
+	Admit(context.Context, func() error) error
 	Check(context.Context) error
 }
 

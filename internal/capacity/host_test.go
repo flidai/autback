@@ -2,12 +2,45 @@ package capacity
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 )
+
+func TestHostLockSerializesIndependentCapacityControllers(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "capacity.lock")
+	first := NewHost(HostConfig{LockPath: lockPath})
+	second := NewHost(HostConfig{LockPath: lockPath})
+	unlock, err := first.Lock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if _, err := second.Lock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second lock error = %v, want deadline exceeded", err)
+	}
+	unlock()
+	secondUnlock, err := second.Lock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondUnlock()
+}
+
+func TestHostReportsDurableWorkerActivity(t *testing.T) {
+	host := NewHost(HostConfig{Store: &fakeCapacityStore{busy: true}})
+	busy, err := host.Busy(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !busy {
+		t.Fatal("busy = false, want true")
+	}
+}
 
 func TestHostRemovesOnlyTerminalRetainedJobDirectories(t *testing.T) {
 	root := t.TempDir()
@@ -142,7 +175,10 @@ func writeSizedFile(t *testing.T, directory string, size int) {
 type fakeCapacityStore struct {
 	terminal []string
 	images   []ImagePolicy
+	busy     bool
 }
+
+func (f *fakeCapacityStore) WorkerBusy(context.Context) (bool, error) { return f.busy, nil }
 
 func (f *fakeCapacityStore) TerminalJobIDsBefore(context.Context, time.Time) ([]string, error) {
 	return append([]string(nil), f.terminal...), nil

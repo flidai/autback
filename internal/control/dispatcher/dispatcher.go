@@ -22,7 +22,7 @@ type Scheduler interface {
 }
 
 type Capacity interface {
-	Ensure(context.Context) error
+	Admit(context.Context, func() error) error
 }
 
 type Option func(*Dispatcher)
@@ -50,10 +50,12 @@ func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
 // terminal and does not block FIFO.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
 	if d.capacity != nil {
-		if err := d.capacity.Ensure(ctx); err != nil {
-			return fmt.Errorf("worker admission capacity: %w", err)
-		}
+		return d.capacity.Admit(ctx, func() error { return d.runOnce(ctx) })
 	}
+	return d.runOnce(ctx)
+}
+
+func (d *Dispatcher) runOnce(ctx context.Context) error {
 	var admissionErrors []error
 	for {
 		operation, err := d.store.AcquireNextOperation(ctx)

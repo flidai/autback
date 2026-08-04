@@ -1280,6 +1280,14 @@ func (s *Store) AcquireNextOperation(ctx context.Context) (*control.Operation, e
 	return &operation, nil
 }
 
+// WorkerBusy reports whether an operation owns or is establishing the single
+// worker lease. Queued operations do not make destructive maintenance unsafe.
+func (s *Store) WorkerBusy(ctx context.Context) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?)`, control.OperationAdmitting, control.OperationActive).Scan(&count)
+	return count > 0, err
+}
+
 func (s *Store) ActivateOperation(ctx context.Context, kind control.OperationKind, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -49,6 +49,11 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 			t.Errorf("installer capacity policy missing %q", required)
 		}
 	}
+	stop := strings.Index(install, "systemctl stop autback-maintenance.timer autback-maintenance.service autback-server")
+	pull := strings.Index(install, "docker pull \"$cas_image\"")
+	if stop < 0 || pull < 0 || stop >= pull {
+		t.Fatal("installer must stop every lifecycle writer before pulling owned Docker images")
+	}
 }
 
 func repositoryRoot(t *testing.T) string {

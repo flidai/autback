@@ -59,8 +59,9 @@ that admission.
 
 - The first request atomically persists the key, a deterministic request hash, and the
   resource.
-- Repeating the same project, key, and normalized request returns the original resource
-  with freshly issued short-lived data-plane credentials.
+- Repeating the same project, key, and normalized request returns the original resource.
+  Short-lived data-plane credentials are included only after that resource owns the FIFO
+  admission lease.
 - Reusing the key with different request data returns `ALREADY_EXISTS` and never creates
   another resource.
 - Keys are scoped by project and resource kind, so job and build keys do not collide.
@@ -71,14 +72,19 @@ after an ambiguous transport failure before attempting a different operation.
 
 ## FIFO admission
 
-`StartJob` and `PrepareBuild` append operations to one durable FIFO shared by all projects
-and users. At most one operation is active on the initial worker. A queued build has
+`PrepareJob` and `PrepareBuild` append operations to one durable FIFO shared by all projects
+and users before capacity is checked. At most one operation is admitted on the initial
+worker. A preparing job has no CAS connection until it owns the FIFO head; clients poll
+`GetJob` by stable ID, then upload source through the returned connection and call
+`StartJob`. Starting commits the root digest without changing the operation's original FIFO
+sequence. A queued build has
 `BUILD_STATUS_QUEUED` and no BuildKit connection; clients poll `GetBuild` by stable ID until
 it becomes running, then receive a fresh operation-scoped connection. `CancelBuild` removes
 a waiting build or terminates the active build record and schedules durable cleanup. The
 next FIFO entry is admitted only after that cleanup releases the worker reservation. `GetBuild`
-renews the lease while the authenticated client is waiting or building. The service expires
-an abandoned queued or running build after two minutes by default; this is a worker safety
+renews the lease while the authenticated client is waiting or building. `GetJob` likewise
+renews a job preparation while it waits or uploads. The service expires an abandoned job
+preparation or queued/running build after two minutes by default; this is a worker safety
 bound, not a scheduler priority.
 
 `PrepareBuild` also requires the `build-lease-heartbeat` token in the
@@ -86,6 +92,8 @@ bound, not a scheduler priority.
 its `Autback-Client-Version`. A client without the capability receives `FAILED_PRECONDITION`
 before Autback creates a build record or issues a BuildKit credential. This prevents a
 server lease-policy upgrade from silently admitting a client that cannot keep its lease.
+`PrepareJob` requires the analogous `durable-job-preparation` capability so an older CLI
+cannot mistake a durable queued response for an immediately usable CAS connection.
 
 The API exposes no priorities, resource sizes, or task graph. Parallelism is part of the
 single admitted command, not separate dispatcher policy. The deprecated v1 `cpus` and

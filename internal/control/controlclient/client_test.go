@@ -28,7 +28,8 @@ func TestClientSendsVersionAndCapabilities(t *testing.T) {
 	if versionHeader != version.Current {
 		t.Fatalf("client version header = %q, want %q", versionHeader, version.Current)
 	}
-	if capabilitiesHeader != version.CapabilityBuildLeaseHeartbeat {
-		t.Fatalf("client capabilities header = %q, want %q", capabilitiesHeader, version.CapabilityBuildLeaseHeartbeat)
+	wantCapabilities := version.CapabilityBuildLeaseHeartbeat + "," + version.CapabilityDurableJobPrepare
+	if capabilitiesHeader != wantCapabilities {
+		t.Fatalf("client capabilities header = %q, want %q", capabilitiesHeader, wantCapabilities)
 	}
 }

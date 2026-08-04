@@ -199,10 +199,11 @@ but terminalizing and cleaning continue to own the worker reservation so the nex
 entry cannot overlap teardown. Cleanup attempts and the last error are durable; an
 idempotent cleanup resumes after a control-plane restart. Queue and lease state survive a
 control-plane restart.
-Active build leases have a configurable two-minute safety timeout. Released clients renew
-the lease while queued and while Buildx is running, so a killed or disconnected client
-cannot block every later operation indefinitely. Build admission requires the corresponding
-client capability and fails before issuing credentials when an older CLI cannot provide it.
+Active job-preparation and build leases have configurable two-minute safety timeouts.
+Released clients renew them while waiting, uploading source, and while Buildx is running,
+so a killed or disconnected client cannot block every later operation indefinitely. Job
+and build admission require corresponding client capabilities and fail before creating a
+record when an older CLI cannot maintain the required lease.
 
 The admitted operation receives the VM's available CPU and memory: Autback does not set
 per-job Swarm reservations or limits, and BuildKit is not capped separately. A repository

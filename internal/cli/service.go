@@ -425,29 +425,135 @@ func serviceExec(ctx context.Context, api autbackv1connect.ControlServiceClient,
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("prepare remote job: %w", err))
 	}
-	credentials, err := credentialfiles.Write(prepared.Msg.Cas.CaPem, prepared.Msg.Cas.CertificatePem, prepared.Msg.Cas.PrivateKeyPem)
+	if prepared.Msg.Job == nil {
+		return fail(streams.Stderr, errors.New("prepare remote job returned no job"))
+	}
+	fmt.Fprintf(streams.Stderr, "Backend: autback shared service\nJob: %s\n", prepared.Msg.Job.Id)
+	if prepared.Msg.Cas == nil {
+		fmt.Fprintln(streams.Stderr, "Waiting for worker capacity...")
+	}
+	job, connection, err := waitForServiceJobPreparation(ctx, api, prepared.Msg.Job, prepared.Msg.Cas)
 	if err != nil {
-		return fail(streams.Stderr, err)
+		return fail(streams.Stderr, cancelServiceJobAfterError(api, prepared.Msg.Job.Id, err))
+	}
+	credentials, err := credentialfiles.Write(connection.CaPem, connection.CertificatePem, connection.PrivateKeyPem)
+	if err != nil {
+		return fail(streams.Stderr, cancelServiceJobAfterError(api, job.Id, err))
 	}
 	defer credentials.Cleanup()
-	upload, err := cas.UploadConnection(ctx, cas.Connection{
-		Service: grpcAddress(prepared.Msg.Cas.Endpoint), Instance: prepared.Msg.Cas.InstanceName,
+	uploadCtx, stopUpload := context.WithCancel(ctx)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(uploadCtx)
+	heartbeatDone := make(chan error, 1)
+	go func() {
+		err := heartbeatServiceJobPreparation(heartbeatCtx, api, job.Id, 30*time.Second)
+		if err != nil {
+			stopUpload()
+		}
+		heartbeatDone <- err
+	}()
+	upload, err := cas.UploadConnection(uploadCtx, cas.Connection{
+		Service: grpcAddress(connection.Endpoint), Instance: connection.InstanceName,
 		CACertFile: credentials.CA, ClientCertFile: credentials.Certificate, ClientKeyFile: credentials.Key,
-		ServerName: prepared.Msg.Cas.ServerName,
+		ServerName: connection.ServerName,
 	}, root, files)
-	if err != nil {
-		return fail(streams.Stderr, fmt.Errorf("upload inputs: %w", err))
+	stopHeartbeat()
+	heartbeatErr := <-heartbeatDone
+	stopUpload()
+	if heartbeatErr != nil {
+		return fail(streams.Stderr, cancelServiceJobAfterError(api, job.Id, fmt.Errorf("renew remote job preparation lease: %w", heartbeatErr)))
 	}
-	started, err := api.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: prepared.Msg.Job.Id, RootDigest: upload.RootDigest}))
 	if err != nil {
-		return fail(streams.Stderr, fmt.Errorf("start remote job: %w", err))
+		return fail(streams.Stderr, cancelServiceJobAfterError(api, job.Id, fmt.Errorf("upload inputs: %w", err)))
 	}
-	fmt.Fprintf(streams.Stderr, "Backend: autback shared service\nJob: %s\nInputs: %d files, %s\nTransfer: %s uploaded\n",
-		started.Msg.Job.Id, upload.InputFiles, humanBytes(upload.TotalInputBytes), humanBytes(upload.TransferredBytes))
+	started, err := api.StartJob(ctx, connect.NewRequest(&autbackv1.StartJobRequest{Id: job.Id, RootDigest: upload.RootDigest}))
+	if err != nil {
+		return fail(streams.Stderr, cancelServiceJobAfterError(api, job.Id, fmt.Errorf("start remote job: %w", err)))
+	}
+	fmt.Fprintf(streams.Stderr, "Inputs: %d files, %s\nTransfer: %s uploaded\n",
+		upload.InputFiles, humanBytes(upload.TotalInputBytes), humanBytes(upload.TransferredBytes))
 	if options.detach {
 		return 0
 	}
 	return waitServiceJob(ctx, api, started.Msg.Job.Id, streams)
+}
+
+func waitForServiceJobPreparation(ctx context.Context, api autbackv1connect.ControlServiceClient, job *autbackv1.Job, connection *autbackv1.DataPlaneConnection) (*autbackv1.Job, *autbackv1.DataPlaneConnection, error) {
+	if job == nil {
+		return nil, nil, errors.New("prepare job returned no job")
+	}
+	for job.Status == autbackv1.JobStatus_JOB_STATUS_PREPARING && connection == nil {
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, fmt.Errorf("wait for remote job preparation: %w", ctx.Err())
+		case <-timer.C:
+		}
+		response, err := api.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: job.Id}))
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			renewed, renewErr := renewServiceClient(ctx, api)
+			if renewErr != nil {
+				return nil, nil, renewErr
+			}
+			api = renewed
+			response, err = renewed.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: job.Id}))
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("get remote job preparation: %w", err)
+		}
+		job, connection = response.Msg.Job, response.Msg.Cas
+		if job == nil {
+			return nil, nil, errors.New("get remote job preparation returned no job")
+		}
+	}
+	if job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || connection == nil {
+		return job, connection, fmt.Errorf("remote job became %s before source upload", job.Status)
+	}
+	return job, connection, nil
+}
+
+func heartbeatServiceJobPreparation(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, interval time.Duration) error {
+	if interval <= 0 {
+		return errors.New("job preparation heartbeat interval must be positive")
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		response, err := api.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			api, err = renewServiceClient(ctx, api)
+			if err == nil {
+				response, err = api.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
+			}
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if response.Msg.Job == nil || response.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || response.Msg.Cas == nil {
+			return errors.New("remote job preparation lease is no longer admitted")
+		}
+	}
+}
+
+func cancelServiceJobAfterError(api autbackv1connect.ControlServiceClient, id string, cause error) error {
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cancelAPI, err := renewServiceClient(cancelCtx, api)
+	if err == nil {
+		_, err = cancelAPI.CancelJob(cancelCtx, connect.NewRequest(&autbackv1.CancelJobRequest{Id: id}))
+	}
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("cancel abandoned job %s: %w", id, err))
+	}
+	return cause
 }
 
 func parseExec(settings config.Config, project string, args []string) (execOptions, error) {

@@ -62,15 +62,17 @@ separate BuildKit memory cap. A command may run its own tasks concurrently, so r
 control useful parallelism without allowing independent submissions to oversubscribe the
 worker.
 
-Queued operations consume control-plane state only. Swarm services and BuildKit credentials
-are created only after admission. A one-second reconciliation loop terminalizes completed
+Queued operations consume control-plane state only. CAS and BuildKit credentials and Swarm
+services are created only after admission. Job preparation itself is durable: the CLI waits
+for a CAS connection, uploads while renewing its preparation lease, and only then starts the
+runtime. A one-second reconciliation loop terminalizes completed
 or lost detached jobs. A durable cleanup coordinator then releases the reservation and
 admits the next FIFO entry. Queue state, cleanup attempts/errors, and the active lease are
 persisted in `/var/lib/autback/control.db` and survive a server restart.
-Queued and running builds use a renewable lease so a killed or disconnected client cannot
-block the FIFO indefinitely. The CLI renews the lease while waiting and while Buildx runs;
-the server cancels a build after two minutes without a heartbeat by default
-(`AUTBACK_BUILD_LEASE_TIMEOUT`).
+Job preparations and queued/running builds use renewable leases so a killed or disconnected
+client cannot block the FIFO indefinitely. The CLI renews them while waiting, uploading, or
+running Buildx. The server cancels either after two minutes without a heartbeat by default
+(`AUTBACK_JOB_PREPARATION_LEASE_TIMEOUT` and `AUTBACK_BUILD_LEASE_TIMEOUT`).
 
 CAS data lives under `/var/lib/autback/cas`; workspaces live under `/var/lib/autback/jobs`;
 explicit project caches live under `/var/lib/autback/cache/<project-id>/<cache-name>`;
@@ -82,7 +84,9 @@ confidentiality between these projects.
 The Go capacity controller implements
 [Worker Capacity Contract v1](decisions/0002-worker-capacity-contract.md). It observes free
 bytes and inodes every five seconds, runs routine reconciliation every minute, and checks
-synchronously before upload/build credentials or a FIFO lease are issued. The soft floor
+synchronously before upload/build credentials or a FIFO lease are issued. Submissions are
+already durable at that point, so an unrecoverable soft-floor check leaves them queued for
+background retry instead of returning a terminal capacity error. The soft floor
 is `max(20%, 20 GiB)`, collection targets another `max(5%, 5 GiB)` beyond that floor, and
 the hard emergency floor is `max(5%, 8 GiB)`. Capacity pressure therefore blocks new
 admission before it can threaten SQLite, the OS, or an in-flight source upload.

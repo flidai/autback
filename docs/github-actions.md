@@ -42,8 +42,9 @@ and every subsequent operation are bound to that selected project. It does not c
 rely on a user-wide default. Before a long build records completion or activates its
 result, the CLI requests a fresh OIDC identity and project session; a short-lived bootstrap
 session therefore never becomes the lifetime limit for an otherwise healthy build. The CLI
-also advertises its build-lease heartbeat capability. The service rejects older clients
-before build admission instead of allowing a long build to lose its FIFO lease mid-push.
+advertises its build-lease heartbeat and durable job-preparation capabilities. The service
+rejects older clients before admission instead of allowing a long build to lose its FIFO
+lease mid-push or an exec client to treat a queued preparation as an immediate failure.
 
 ## CLI distribution
 

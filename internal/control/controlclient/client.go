@@ -70,7 +70,10 @@ func (t metadataTransport) RoundTrip(request *http.Request) (*http.Response, err
 	clone := request.Clone(request.Context())
 	clone.Header = request.Header.Clone()
 	clone.Header.Set(version.ClientVersionHeader, version.Current)
-	clone.Header.Set(version.ClientCapabilitiesHeader, version.CapabilityBuildLeaseHeartbeat)
+	clone.Header.Set(version.ClientCapabilitiesHeader, strings.Join([]string{
+		version.CapabilityBuildLeaseHeartbeat,
+		version.CapabilityDurableJobPrepare,
+	}, ","))
 	return t.next.RoundTrip(clone)
 }
 

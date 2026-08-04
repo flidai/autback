@@ -343,6 +343,41 @@ func TestWaitForServiceBuildPollsUntilBuildKitIsAdmitted(t *testing.T) {
 	}
 }
 
+func TestWaitForServiceJobPreparationPollsUntilCASIsAdmitted(t *testing.T) {
+	service := &queuedJobPreparationService{}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	job, connection, err := waitForServiceJobPreparation(context.Background(), client, &autbackv1.Job{
+		Id: "job-queued", Status: autbackv1.JobStatus_JOB_STATUS_PREPARING,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.polls != 1 || job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || connection == nil || connection.Endpoint != "cas.example:50052" {
+		t.Fatalf("polls=%d job=%#v connection=%#v", service.polls, job, connection)
+	}
+}
+
+func TestHeartbeatServiceJobPreparationKeepsUploadLeaseAlive(t *testing.T) {
+	service := &heartbeatJobPreparationService{polled: make(chan struct{}, 1)}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- heartbeatServiceJobPreparation(ctx, client, "job-uploading", time.Millisecond)
+	}()
+	select {
+	case <-service.polled:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("job preparation lease was not renewed")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHeartbeatServiceBuildKeepsRunningLeaseAlive(t *testing.T) {
 	service := &heartbeatBuildService{polled: make(chan struct{}, 1)}
 	client, closeServer := testServiceClient(t, service)
@@ -447,6 +482,35 @@ type queuedBuildService struct {
 type heartbeatBuildService struct {
 	autbackv1connect.UnimplementedControlServiceHandler
 	polled chan struct{}
+}
+
+type queuedJobPreparationService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	polls int
+}
+
+func (s *queuedJobPreparationService) GetJob(_ context.Context, request *connect.Request[autbackv1.GetJobRequest]) (*connect.Response[autbackv1.GetJobResponse], error) {
+	s.polls++
+	return connect.NewResponse(&autbackv1.GetJobResponse{
+		Job: &autbackv1.Job{Id: request.Msg.Id, Status: autbackv1.JobStatus_JOB_STATUS_PREPARING},
+		Cas: &autbackv1.DataPlaneConnection{Endpoint: "cas.example:50052"},
+	}), nil
+}
+
+type heartbeatJobPreparationService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	polled chan struct{}
+}
+
+func (s *heartbeatJobPreparationService) GetJob(_ context.Context, request *connect.Request[autbackv1.GetJobRequest]) (*connect.Response[autbackv1.GetJobResponse], error) {
+	select {
+	case s.polled <- struct{}{}:
+	default:
+	}
+	return connect.NewResponse(&autbackv1.GetJobResponse{
+		Job: &autbackv1.Job{Id: request.Msg.Id, Status: autbackv1.JobStatus_JOB_STATUS_PREPARING},
+		Cas: &autbackv1.DataPlaneConnection{Endpoint: "cas.example:50052"},
+	}), nil
 }
 
 func (s *heartbeatBuildService) GetBuild(_ context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {

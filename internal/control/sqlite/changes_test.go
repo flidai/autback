@@ -42,9 +42,13 @@ func TestCommittedControlChangesAreDurableAndNotifySubscribers(t *testing.T) {
 	if len(changes) == 0 {
 		t.Fatal("committed job was not journaled")
 	}
-	last := changes[len(changes)-1]
-	if last.ProjectID != bootstrap.Project.ID || last.EntityKind != "job" || last.EntityID != job.ID {
-		t.Fatalf("last change = %#v", last)
+	var jobChange, queueChange bool
+	for _, change := range changes {
+		jobChange = jobChange || change.ProjectID == bootstrap.Project.ID && change.EntityKind == "job" && change.EntityID == job.ID
+		queueChange = queueChange || change.ProjectID == bootstrap.Project.ID && change.EntityKind == "queue" && change.EntityID == "job:"+job.ID
+	}
+	if !jobChange || !queueChange {
+		t.Fatalf("changes = %#v, want durable job and queue changes", changes)
 	}
 }
 

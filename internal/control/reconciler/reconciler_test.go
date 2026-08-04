@@ -72,6 +72,27 @@ func TestRunOnceCancelsExpiredBuildLeaseAndAdvancesQueue(t *testing.T) {
 	}
 }
 
+func TestRunOnceCancelsExpiredJobPreparationAndAdvancesQueue(t *testing.T) {
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	store := &fakeStore{jobs: map[string]control.Job{
+		"job-stale": {ID: "job-stale", Status: protocol.StatusPreparing},
+	}}
+	dispatcher := &fakeDispatcher{}
+	reconciler := New(Config{
+		Store: store, Scheduler: &fakeScheduler{}, Dispatcher: dispatcher,
+		JobPreparationLeaseTimeout: time.Hour, Now: func() time.Time { return now },
+	})
+	if err := reconciler.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.jobs["job-stale"].Status; got != protocol.StatusCancelled {
+		t.Fatalf("job status = %s, want cancelled", got)
+	}
+	if len(dispatcher.released) != 1 || dispatcher.released[0].Kind != control.OperationJob || dispatcher.released[0].ID != "job-stale" {
+		t.Fatalf("released = %#v", dispatcher.released)
+	}
+}
+
 func TestRunOnceDoesNotLoseJobWhileSchedulerIsCreatingService(t *testing.T) {
 	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	store := &fakeStore{jobs: map[string]control.Job{
@@ -198,6 +219,26 @@ func (f *fakeStore) StaleBuilds(context.Context, time.Time) ([]control.Build, er
 	return builds, nil
 }
 
+func (f *fakeStore) StalePreparingJobs(context.Context, time.Time) ([]control.Job, error) {
+	var jobs []control.Job
+	for _, job := range f.jobs {
+		if job.Status == protocol.StatusPreparing {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, nil
+}
+
+func (f *fakeStore) RequestJobCancellation(_ context.Context, id string) (control.Job, error) {
+	job, ok := f.jobs[id]
+	if !ok {
+		return control.Job{}, control.ErrNotFound
+	}
+	job.Status = protocol.StatusCancelled
+	f.jobs[id] = job
+	return job, nil
+}
+
 func (f *fakeStore) FinishBuild(_ context.Context, id string, status control.BuildStatus, exitCode int) (control.Build, error) {
 	build, ok := f.builds[id]
 	if !ok {
@@ -298,6 +339,12 @@ func (e errorStore) Operation(context.Context, control.OperationKind, string) (c
 }
 func (e errorStore) StaleBuilds(context.Context, time.Time) ([]control.Build, error) {
 	return nil, e.err
+}
+func (e errorStore) StalePreparingJobs(context.Context, time.Time) ([]control.Job, error) {
+	return nil, e.err
+}
+func (e errorStore) RequestJobCancellation(context.Context, string) (control.Job, error) {
+	return control.Job{}, e.err
 }
 func (e errorStore) FinishBuild(context.Context, string, control.BuildStatus, int) (control.Build, error) {
 	return control.Build{}, e.err

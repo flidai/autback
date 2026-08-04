@@ -55,6 +55,49 @@ func TestDispatcherAdmitsExactlyOneOperationInSharedFIFO(t *testing.T) {
 	}
 }
 
+func TestDispatcherReservesPreparedJobWithoutCreatingRuntime(t *testing.T) {
+	ctx := context.Background()
+	store, projectID := queueFixture(t)
+	job, _, err := store.CreatePreparedJob(ctx, control.PrepareJob{
+		ProjectID: projectID, Image: "runner@test", Command: []string{"true"}, Timeout: time.Minute,
+	}, control.Idempotency{Key: "prepared-job", RequestHash: "prepared-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &fakeScheduler{}
+	preparations := 0
+	d := dispatcher.New(store, scheduler, dispatcher.WithAdmissionPreparer(admissionPreparerFunc(func(context.Context, control.Operation) error {
+		preparations++
+		return nil
+	})))
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if scheduled := scheduler.createdJobs(); len(scheduled) != 0 {
+		t.Fatalf("scheduled prepared job before source upload: %#v", scheduled)
+	}
+	if preparations != 0 {
+		t.Fatalf("runtime resources prepared %d times before source upload", preparations)
+	}
+	if state, err := store.OperationState(ctx, control.OperationJob, job.ID); err != nil || state != control.OperationAdmitting {
+		t.Fatalf("prepared operation state = %s, %v; want admitting", state, err)
+	}
+
+	if _, err := store.QueueJob(ctx, job.ID, "digest/1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if scheduled := scheduler.createdJobs(); len(scheduled) != 1 || scheduled[0].ID != job.ID {
+		t.Fatalf("scheduled after source upload = %#v, want %s", scheduled, job.ID)
+	}
+	if preparations != 1 {
+		t.Fatalf("runtime resources prepared %d times, want once after source upload", preparations)
+	}
+}
+
 func TestDispatcherFailsUnschedulableJobAndAdvances(t *testing.T) {
 	ctx := context.Background()
 	store, projectID := queueFixture(t)

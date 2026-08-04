@@ -989,6 +989,10 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 	if err != nil {
 		return control.Job{}, false, err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO control_queue(kind,operation_id,state,accepted_at,leased_at) VALUES(?,?,?,?,?)`,
+		control.OperationJob, job.ID, control.OperationQueued, now.UnixNano(), now.UnixNano()); err != nil {
+		return control.Job{}, false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return control.Job{}, false, err
 	}
@@ -1009,9 +1013,13 @@ func (s *Store) QueueJob(ctx context.Context, id, rootDigest string) (control.Jo
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO control_queue(kind,operation_id,state,accepted_at) VALUES(?,?,?,?)`,
-		control.OperationJob, id, control.OperationQueued, time.Now().UTC().UnixNano()); err != nil {
+	result, err = tx.ExecContext(ctx, `UPDATE control_queue SET state=?,leased_at=NULL WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+		control.OperationQueued, control.OperationJob, id, control.OperationQueued, control.OperationAdmitting)
+	if err != nil {
 		return control.Job{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.Job{}, control.ErrNotFound
 	}
 	if err := tx.Commit(); err != nil {
 		return control.Job{}, err
@@ -1506,8 +1514,8 @@ func (s *Store) EmergencyStopActiveOperation(ctx context.Context, message string
 	now := unix(time.Now().UTC())
 	switch operation.Kind {
 	case control.OperationJob:
-		result, err := tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,finished_at=?,exit_code=137,error_message=?,cancel_requested=1 WHERE id=? AND status IN (?,?)`,
-			protocol.StatusFailed, now, message, operation.ID, protocol.StatusQueued, protocol.StatusRunning)
+		result, err := tx.ExecContext(ctx, `UPDATE control_jobs SET status=?,finished_at=?,exit_code=137,error_message=?,cancel_requested=1 WHERE id=? AND status IN (?,?,?)`,
+			protocol.StatusFailed, now, message, operation.ID, protocol.StatusPreparing, protocol.StatusQueued, protocol.StatusRunning)
 		if err != nil {
 			return nil, err
 		}
@@ -1688,6 +1696,27 @@ WHERE b.status IN (?,?) AND COALESCE(q.leased_at,q.accepted_at)<? ORDER BY COALE
 		builds = append(builds, build)
 	}
 	return builds, rows.Err()
+}
+
+func (s *Store) StalePreparingJobs(ctx context.Context, before time.Time) ([]control.Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.project_id,j.image,j.command_json,j.working_directory,j.environment_json,j.secrets_json,j.caches_json,j.root_digest,j.status,j.timeout_millis,j.cpus,j.memory,j.created_at,j.started_at,j.finished_at,j.exit_code,j.error_message,j.cancel_requested,j.worker_id
+FROM control_jobs j JOIN control_queue q ON q.kind=? AND q.operation_id=j.id AND q.state IN (?,?)
+WHERE j.status=? AND COALESCE(q.leased_at,q.accepted_at)<? ORDER BY COALESCE(q.leased_at,q.accepted_at),q.sequence`,
+		control.OperationJob, control.OperationQueued, control.OperationAdmitting,
+		protocol.StatusPreparing, before.UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []control.Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
 }
 
 func (s *Store) FinishBuild(ctx context.Context, id string, status control.BuildStatus, exitCode int) (control.Build, error) {

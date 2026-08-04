@@ -16,6 +16,8 @@ type Store interface {
 	SyncJob(context.Context, string, protocol.Job) (control.Job, error)
 	Operation(context.Context, control.OperationKind, string) (control.Operation, error)
 	ActivateOperation(context.Context, control.OperationKind, string) error
+	StalePreparingJobs(context.Context, time.Time) ([]control.Job, error)
+	RequestJobCancellation(context.Context, string) (control.Job, error)
 	StaleBuilds(context.Context, time.Time) ([]control.Build, error)
 	FinishBuild(context.Context, string, control.BuildStatus, int) (control.Build, error)
 }
@@ -30,13 +32,14 @@ type Dispatcher interface {
 }
 
 type Config struct {
-	Store             Store
-	Scheduler         Scheduler
-	Dispatcher        Dispatcher
-	ServiceRetention  time.Duration
-	AdmissionGrace    time.Duration
-	BuildLeaseTimeout time.Duration
-	Now               func() time.Time
+	Store                      Store
+	Scheduler                  Scheduler
+	Dispatcher                 Dispatcher
+	ServiceRetention           time.Duration
+	AdmissionGrace             time.Duration
+	BuildLeaseTimeout          time.Duration
+	JobPreparationLeaseTimeout time.Duration
+	Now                        func() time.Time
 }
 
 type Reconciler struct {
@@ -53,6 +56,9 @@ func New(config Config) *Reconciler {
 	if config.BuildLeaseTimeout <= 0 {
 		config.BuildLeaseTimeout = 2 * time.Minute
 	}
+	if config.JobPreparationLeaseTimeout <= 0 {
+		config.JobPreparationLeaseTimeout = 2 * time.Minute
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -62,6 +68,21 @@ func New(config Config) *Reconciler {
 func (r *Reconciler) RunOnce(ctx context.Context) error {
 	now := r.config.Now().UTC()
 	var reconciliationErrors []error
+	stalePreparations, err := r.config.Store.StalePreparingJobs(ctx, now.Add(-r.config.JobPreparationLeaseTimeout))
+	if err != nil {
+		reconciliationErrors = append(reconciliationErrors, fmt.Errorf("list stale job preparations: %w", err))
+	}
+	for _, job := range stalePreparations {
+		if _, err := r.config.Store.RequestJobCancellation(ctx, job.ID); err != nil {
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("cancel stale job preparation %s: %w", job.ID, err))
+			continue
+		}
+		if r.config.Dispatcher != nil {
+			if err := r.config.Dispatcher.Release(ctx, control.OperationJob, job.ID); err != nil {
+				reconciliationErrors = append(reconciliationErrors, fmt.Errorf("release stale job preparation %s: %w", job.ID, err))
+			}
+		}
+	}
 	staleBuilds, err := r.config.Store.StaleBuilds(ctx, now.Add(-r.config.BuildLeaseTimeout))
 	if err != nil {
 		reconciliationErrors = append(reconciliationErrors, fmt.Errorf("list stale builds: %w", err))

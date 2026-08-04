@@ -92,6 +92,35 @@ func TestOperationsShareOneDurableFIFO(t *testing.T) {
 	assertNextOperation(t, store, control.OperationJob, second.ID)
 }
 
+func TestPreparedJobEntersDurableFIFOBeforeInputsAreUploaded(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, replayed, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "durable-prepare", RequestHash: "durable-prepare"})
+	if err != nil || replayed {
+		t.Fatalf("CreatePreparedJob = %#v, replayed=%v, err=%v", job, replayed, err)
+	}
+	operation, err := store.Operation(ctx, control.OperationJob, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != control.OperationQueued || operation.LeasedAt == nil {
+		t.Fatalf("prepared operation = %#v, want queued with a preparation lease", operation)
+	}
+
+	replayedJob, replayed, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "durable-prepare", RequestHash: "durable-prepare"})
+	if err != nil || !replayed || replayedJob.ID != job.ID {
+		t.Fatalf("replayed preparation = %#v, replayed=%v, err=%v", replayedJob, replayed, err)
+	}
+	assertNextOperation(t, store, control.OperationJob, job.ID)
+	if next, err := store.AcquireNextOperation(ctx); err != nil || next != nil {
+		t.Fatalf("second operation after idempotent replay = %#v, %v; want none", next, err)
+	}
+}
+
 func TestCancelQueuedOperationPreservesFIFO(t *testing.T) {
 	store := openStore(t)
 	ctx := context.Background()
@@ -275,14 +304,7 @@ func TestTerminalWritesBeginCleanupInTheSameTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err = store.QueueJob(ctx, job.ID, "digest/1")
-	if err != nil {
-		t.Fatal(err)
-	}
 	assertNextOperation(t, store, control.OperationJob, job.ID)
-	if err := store.ActivateOperation(ctx, control.OperationJob, job.ID); err != nil {
-		t.Fatal(err)
-	}
 	finished, exitCode := time.Now().UTC(), 0
 	if _, err := store.SyncJob(ctx, job.ID, protocol.Job{ID: job.ID, Status: protocol.StatusSucceeded, FinishedAt: &finished, ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
@@ -339,6 +361,36 @@ func TestBuildLeaseHeartbeatCoversQueuedAndRunningBuilds(t *testing.T) {
 	}
 	if stale, err := store.StaleBuilds(ctx, time.Now().Add(time.Second)); err != nil || len(stale) != 1 || stale[0].ID != build.ID {
 		t.Fatalf("expired stale builds = %#v, %v; want %s", stale, err, build.ID)
+	}
+}
+
+func TestPreparingJobLeaseExpiresUntilSourceUploadIsCommitted(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "job-preparation-lease", RequestHash: "job-preparation-lease"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeHeartbeat := time.Now().UTC()
+	if err := store.RenewOperationLease(ctx, control.OperationJob, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := store.StalePreparingJobs(ctx, beforeHeartbeat); err != nil || len(stale) != 0 {
+		t.Fatalf("stale preparations = %#v, %v; want none after heartbeat", stale, err)
+	}
+	stale, err := store.StalePreparingJobs(ctx, time.Now().UTC().Add(time.Second))
+	if err != nil || len(stale) != 1 || stale[0].ID != job.ID {
+		t.Fatalf("stale preparations = %#v, %v; want %s", stale, err, job.ID)
+	}
+	if _, err := store.QueueJob(ctx, job.ID, "digest/1"); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := store.StalePreparingJobs(ctx, time.Now().UTC().Add(time.Second)); err != nil || len(stale) != 0 {
+		t.Fatalf("started job remained an expiring preparation: %#v, %v", stale, err)
 	}
 }
 

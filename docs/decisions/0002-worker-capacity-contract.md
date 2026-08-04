@@ -63,14 +63,16 @@ routine reconciliation = every minute
 On the current approximately 150 GiB worker this means a 30 GiB soft floor, a 37.5 GiB
 post-reclaim target, and an 8 GiB hard floor.
 
+Autback durably appends job and build preparations to the FIFO before measuring capacity.
 Before issuing CAS or BuildKit credentials and before leasing the FIFO head, Autback
 measures capacity. Admission and maintenance share an inter-process gate through the FIFO
 reservation, so there is no idle-check/admission race. Below the soft floor it
 synchronously reclaims toward the post-reclaim target only while the worker is idle. If
 an operation is admitting or active, routine and soft-pressure collection is deferred;
 Docker, BuildKit, and project-cache resources are never pruned underneath live work. If
-the soft floor still cannot be restored once idle, the request fails with Connect
-`RESOURCE_EXHAUSTED`; existing queued work remains queued. Below the hard floor, Autback
+the soft floor still cannot be restored once idle, the operation remains queued and the
+background dispatcher retries; the accepted client request does not become a terminal CI
+failure. Below the hard floor, Autback
 atomically terminalizes the one admitting or active operation, revokes its data-plane
 access through the durable operation lease, stops its Swarm runtime when applicable, and
 only then reclaims.

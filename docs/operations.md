@@ -90,9 +90,13 @@ monitoring:
 
 ```console
 sudo -u autback autback-server maintain --dry-run --json
-sudo -u autback autback-server maintain --json
+sudo systemctl start autback-maintenance.service
 sudo cat /var/lib/autback/capacity.json
 ```
+
+Use the systemd unit for a destructive manual run so it receives the same narrowly scoped
+filesystem capability as scheduled and in-process maintenance. The unprivileged command is
+appropriate for dry-run inspection only.
 
 The hourly `autback-maintenance.timer` is a recovery invocation of the Go command, not an
 independent janitor. An inter-process lock serializes it with the resident controller.

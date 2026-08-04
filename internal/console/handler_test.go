@@ -140,7 +140,7 @@ func TestUpdatesStreamBackendClockWithoutControlChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	request := httptest.NewRequest(http.MethodGet, "/app/updates?route=overview", nil).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer device-token")

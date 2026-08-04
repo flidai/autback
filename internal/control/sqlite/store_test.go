@@ -589,7 +589,7 @@ CREATE TABLE operation_resource_baselines (
 			columns[name] = true
 		}
 		_ = rows.Close()
-		if !columns["idempotency_key"] || !columns["request_hash"] || table == "control_jobs" && !columns["caches_json"] {
+		if !columns["idempotency_key"] || !columns["request_hash"] || table == "control_jobs" && (!columns["caches_json"] || !columns["secrets_json"]) {
 			t.Fatalf("%s columns = %#v", table, columns)
 		}
 	}

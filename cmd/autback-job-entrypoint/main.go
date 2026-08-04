@@ -12,10 +12,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/flidai/autback/internal/cas"
+	"github.com/flidai/autback/internal/operation/redact"
+	jobsecrets "github.com/flidai/autback/internal/secrets"
 )
 
 type result struct {
@@ -68,8 +71,18 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	stdout := io.MultiWriter(os.Stdout, boundedLog)
-	stderr := io.MultiWriter(os.Stderr, boundedLog)
+	runtimeSecrets, err := jobsecrets.LoadRuntime(jobsecrets.RuntimeDirectory)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	stdout, stderr, err := newRedactedOutputs(os.Stdout, os.Stderr, boundedLog, runtimeSecrets.Values)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "initialize job output redaction")
+		return 1
+	}
+	defer stderr.Close()
+	defer stdout.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -103,6 +116,7 @@ func run() int {
 		return finish(jobDirectory, "failed", 2)
 	}
 	command.Dir, command.Stdout, command.Stderr = workingDirectory, stdout, stderr
+	command.Env = mergeEnvironment(os.Environ(), runtimeSecrets.Environment)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error {
 		if command.Process == nil {
@@ -131,7 +145,40 @@ func run() int {
 	return finish(jobDirectory, "failed", 1)
 }
 
+func mergeEnvironment(base, overrides []string) []string {
+	replaced := make(map[string]struct{}, len(overrides))
+	for _, item := range overrides {
+		key, _, found := strings.Cut(item, "=")
+		if found {
+			replaced[key] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(base)+len(overrides))
+	for _, item := range base {
+		key, _, found := strings.Cut(item, "=")
+		if _, replace := replaced[key]; found && replace {
+			continue
+		}
+		result = append(result, item)
+	}
+	return append(result, overrides...)
+}
+
+func newRedactedOutputs(stdout, stderr, durable io.Writer, values []string) (*redact.Writer, *redact.Writer, error) {
+	redactedStdout, err := redact.NewWriter(io.MultiWriter(stdout, durable), values)
+	if err != nil {
+		return nil, nil, err
+	}
+	redactedStderr, err := redact.NewWriter(io.MultiWriter(stderr, durable), values)
+	if err != nil {
+		_ = redactedStdout.Close()
+		return nil, nil, err
+	}
+	return redactedStdout, redactedStderr, nil
+}
+
 type boundedLogWriter struct {
+	mu          sync.Mutex
 	destination io.Writer
 	remaining   int64
 	truncated   bool
@@ -150,6 +197,8 @@ func newBoundedLogWriter(file *os.File, maximum int64) (*boundedLogWriter, error
 }
 
 func (w *boundedLogWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	original := len(data)
 	if w.truncated || w.remaining == 0 {
 		w.truncated = true

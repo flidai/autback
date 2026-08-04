@@ -388,6 +388,7 @@ type execOptions struct {
 	environment             map[string]string
 	command                 []string
 	caches                  []*autbackv1.CacheMount
+	secrets                 []*autbackv1.JobSecret
 }
 
 func serviceExec(ctx context.Context, api autbackv1connect.ControlServiceClient, settings config.Config, project string, args []string, streams IO) int {
@@ -419,7 +420,7 @@ func serviceExec(ctx context.Context, api autbackv1connect.ControlServiceClient,
 	prepared, err := api.PrepareJob(ctx, connect.NewRequest(&autbackv1.PrepareJobRequest{
 		Project: options.project, Image: options.image, Command: options.command, WorkingDirectory: options.workdir,
 		Environment: options.environment, Timeout: durationpb.New(options.timeout),
-		IdempotencyKey: idempotencyKey, Caches: options.caches,
+		IdempotencyKey: idempotencyKey, Caches: options.caches, Secrets: options.secrets,
 	}))
 	if err != nil {
 		return fail(streams.Stderr, fmt.Errorf("prepare remote job: %w", err))
@@ -458,7 +459,7 @@ func parseExec(settings config.Config, project string, args []string) (execOptio
 		switch args[0] {
 		case "--detach":
 			options.detach, args = true, args[1:]
-		case "--project", "--image", "--workdir", "--timeout", "--env", "--cache":
+		case "--project", "--image", "--workdir", "--timeout", "--env", "--cache", "--secret-env", "--secret-file":
 			if len(args) < 2 {
 				return execOptions{}, errors.New(args[0] + " requires a value")
 			}
@@ -489,6 +490,18 @@ func parseExec(settings config.Config, project string, args []string) (execOptio
 					return execOptions{}, errors.New("--cache requires NAME=/absolute/container/path")
 				}
 				options.caches = append(options.caches, &autbackv1.CacheMount{Name: name, Target: target})
+			case "--secret-env":
+				name, target, ok := strings.Cut(value, "=")
+				if !ok || name == "" || target == "" {
+					return execOptions{}, errors.New("--secret-env requires NAME=ENVIRONMENT_KEY")
+				}
+				options.secrets = append(options.secrets, &autbackv1.JobSecret{Name: name, Target: &autbackv1.JobSecret_Environment{Environment: target}})
+			case "--secret-file":
+				name, target, ok := strings.Cut(value, "=")
+				if !ok || name == "" || target == "" {
+					return execOptions{}, errors.New("--secret-file requires NAME=/run/secrets/PATH")
+				}
+				options.secrets = append(options.secrets, &autbackv1.JobSecret{Name: name, Target: &autbackv1.JobSecret_File{File: target}})
 			}
 		default:
 			return execOptions{}, errors.New("unknown exec option " + args[0])

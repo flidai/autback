@@ -199,6 +199,33 @@ func TestDispatcherRequeuesOperationWhenResourceBaselineFails(t *testing.T) {
 	}
 }
 
+func TestDispatcherFailsPermanentPreparationAndAdvancesAfterCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, projectID := queueFixture(t)
+	first := queueJob(t, store, projectID, "revoked-secret-first")
+	second := queueJob(t, store, projectID, "revoked-secret-second")
+	d := dispatcher.New(store, &fakeScheduler{},
+		dispatcher.WithAdvanceContext(ctx),
+		dispatcher.WithAdmissionPreparer(admissionPreparerFunc(func(_ context.Context, operation control.Operation) error {
+			if operation.ID == first.ID {
+				return permanentPreparationError{errors.New("secret reference revoked")}
+			}
+			return nil
+		})),
+	)
+	d.Advance()
+	eventually(t, func() bool {
+		job, _ := store.Job(ctx, first.ID)
+		state, _ := store.OperationState(ctx, control.OperationJob, first.ID)
+		return job.Status == "failed" && state == control.OperationReleased
+	})
+	eventually(t, func() bool {
+		state, _ := store.OperationState(ctx, control.OperationJob, second.ID)
+		return state == control.OperationActive
+	})
+}
+
 func TestDispatcherForwardsCancellationRequestedDuringAdmission(t *testing.T) {
 	ctx := context.Background()
 	store, projectID := queueFixture(t)
@@ -350,6 +377,10 @@ type blockingScheduler struct {
 }
 
 type admissionPreparerFunc func(context.Context, control.Operation) error
+
+type permanentPreparationError struct{ error }
+
+func (permanentPreparationError) Permanent() bool { return true }
 
 func (f admissionPreparerFunc) Prepare(ctx context.Context, operation control.Operation) error {
 	return f(ctx, operation)

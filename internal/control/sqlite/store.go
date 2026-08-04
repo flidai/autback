@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS control_jobs (
   command_json TEXT NOT NULL,
   working_directory TEXT NOT NULL,
   environment_json TEXT NOT NULL,
+  secrets_json TEXT NOT NULL DEFAULT '[]',
   caches_json TEXT NOT NULL DEFAULT '[]',
   root_digest TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
@@ -245,6 +246,7 @@ CREATE TABLE IF NOT EXISTS operation_resource_baselines (
 	}{
 		{"control_jobs", "idempotency_key"}, {"control_jobs", "request_hash"},
 		{"control_jobs", "caches_json"},
+		{"control_jobs", "secrets_json"},
 		{"control_builds", "idempotency_key"}, {"control_builds", "request_hash"},
 		{"projects", "active_image"}, {"projects", "previous_image"},
 		{"control_queue", "cleanup_error"},
@@ -283,6 +285,7 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 	allowed := map[string]bool{
 		"control_jobs.idempotency_key": true, "control_jobs.request_hash": true,
 		"control_jobs.caches_json":       true,
+		"control_jobs.secrets_json":      true,
 		"control_builds.idempotency_key": true, "control_builds.request_hash": true,
 		"projects.active_image": true, "projects.previous_image": true,
 		"control_queue.cleanup_error":                true,
@@ -313,7 +316,7 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 		return nil
 	}
 	defaultValue := `''`
-	if table == "control_jobs" && column == "caches_json" {
+	if table == "control_jobs" && (column == "caches_json" || column == "secrets_json") {
 		defaultValue = `'[]'`
 	}
 	if table == "operation_resource_baselines" && column == "services_json" {
@@ -923,6 +926,12 @@ func (s *Store) Audit(ctx context.Context, principal control.Principal, projectI
 	return err
 }
 
+// RecordSecretAccess records only the reference name and job identity. Secret
+// material must never enter the control database or its backups.
+func (s *Store) RecordSecretAccess(ctx context.Context, projectID, jobID, name string) error {
+	return s.Audit(ctx, control.Principal{Kind: control.PrincipalSystem, Subject: "dispatcher"}, projectID, "job.secret.access", jobID, map[string]string{"name": name})
+}
+
 func actorID(principal control.Principal) string {
 	if principal.UserID != "" {
 		return principal.UserID
@@ -939,6 +948,10 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 	if err != nil {
 		return control.Job{}, false, err
 	}
+	secrets, err := json.Marshal(input.Secrets)
+	if err != nil {
+		return control.Job{}, false, err
+	}
 	caches, err := json.Marshal(input.Caches)
 	if err != nil {
 		return control.Job{}, false, err
@@ -948,7 +961,7 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 		return control.Job{}, false, err
 	}
 	defer tx.Rollback()
-	row := tx.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id,request_hash FROM control_jobs WHERE project_id=? AND idempotency_key=?`, input.ProjectID, idempotency.Key)
+	row := tx.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id,request_hash FROM control_jobs WHERE project_id=? AND idempotency_key=?`, input.ProjectID, idempotency.Key)
 	job, storedHash, err := scanIdempotentJob(row)
 	if err == nil {
 		if storedHash != idempotency.RequestHash {
@@ -968,10 +981,10 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 		ID: id, ProjectID: input.ProjectID, Image: input.Image,
 		Command: append([]string(nil), input.Command...), WorkingDirectory: input.WorkingDirectory,
 		Environment: cloneMap(input.Environment), Status: protocol.StatusPreparing, Timeout: input.Timeout,
-		Caches: cloneCaches(input.Caches), CreatedAt: now,
+		Caches: cloneCaches(input.Caches), Secrets: cloneSecrets(input.Secrets), CreatedAt: now,
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO control_jobs(id,project_id,image,command_json,working_directory,environment_json,caches_json,status,timeout_millis,cpus,memory,created_at,idempotency_key,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		job.ID, job.ProjectID, job.Image, string(command), job.WorkingDirectory, string(environment), string(caches), job.Status,
+	_, err = tx.ExecContext(ctx, `INSERT INTO control_jobs(id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,status,timeout_millis,cpus,memory,created_at,idempotency_key,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		job.ID, job.ProjectID, job.Image, string(command), job.WorkingDirectory, string(environment), string(secrets), string(caches), job.Status,
 		job.Timeout.Milliseconds(), "", "", unix(now), idempotency.Key, idempotency.RequestHash)
 	if err != nil {
 		return control.Job{}, false, err
@@ -1011,12 +1024,12 @@ func (s *Store) StartJob(ctx context.Context, id, rootDigest string) (control.Jo
 }
 
 func (s *Store) Job(ctx context.Context, id string) (control.Job, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE id=?`, id)
 	return scanJob(row)
 }
 
 func (s *Store) ScheduledJobs(ctx context.Context) ([]control.Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.project_id,j.image,j.command_json,j.working_directory,j.environment_json,j.caches_json,j.root_digest,j.status,j.timeout_millis,j.cpus,j.memory,j.created_at,j.started_at,j.finished_at,j.exit_code,j.error_message,j.cancel_requested,j.worker_id FROM control_jobs j JOIN control_queue q ON q.kind=? AND q.operation_id=j.id AND q.state IN (?,?) WHERE j.status IN (?,?) ORDER BY j.created_at,j.id`, control.OperationJob, control.OperationAdmitting, control.OperationActive, protocol.StatusQueued, protocol.StatusRunning)
+	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.project_id,j.image,j.command_json,j.working_directory,j.environment_json,j.secrets_json,j.caches_json,j.root_digest,j.status,j.timeout_millis,j.cpus,j.memory,j.created_at,j.started_at,j.finished_at,j.exit_code,j.error_message,j.cancel_requested,j.worker_id FROM control_jobs j JOIN control_queue q ON q.kind=? AND q.operation_id=j.id AND q.state IN (?,?) WHERE j.status IN (?,?) ORDER BY j.created_at,j.id`, control.OperationJob, control.OperationAdmitting, control.OperationActive, protocol.StatusQueued, protocol.StatusRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -1036,7 +1049,7 @@ func (s *Store) ListJobs(ctx context.Context, projectID string, pageSize int, pa
 	if pageSize < 1 || pageSize > 100 {
 		return control.JobPage{}, errors.New("job page size must be between 1 and 100")
 	}
-	query := `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE project_id=?`
+	query := `SELECT id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE project_id=?`
 	arguments := []any{projectID}
 	if pageToken != "" {
 		cursor, err := s.decodeJobCursor(projectID, pageToken)
@@ -1758,12 +1771,12 @@ func scanTrust(row interface{ Scan(...any) error }) (control.GitHubTrust, error)
 
 func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 	var job control.Job
-	var command, environment, caches, status string
+	var command, environment, secrets, caches, status string
 	var timeoutMillis, created int64
 	var started, finished, exitCode sql.NullInt64
 	var cancelled int
 	var legacyCPUs, legacyMemory string
-	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &caches,
+	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &secrets, &caches,
 		&job.RootDigest, &status, &timeoutMillis, &legacyCPUs, &legacyMemory, &created, &started, &finished,
 		&exitCode, &job.ErrorMessage, &cancelled, &job.WorkerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1775,6 +1788,9 @@ func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 		return control.Job{}, err
 	}
 	if err := json.Unmarshal([]byte(environment), &job.Environment); err != nil {
+		return control.Job{}, err
+	}
+	if err := json.Unmarshal([]byte(secrets), &job.Secrets); err != nil {
 		return control.Job{}, err
 	}
 	if err := json.Unmarshal([]byte(caches), &job.Caches); err != nil {
@@ -1791,12 +1807,12 @@ func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 
 func scanIdempotentJob(row interface{ Scan(...any) error }) (control.Job, string, error) {
 	var job control.Job
-	var command, environment, caches, status, requestHash string
+	var command, environment, secrets, caches, status, requestHash string
 	var timeoutMillis, created int64
 	var started, finished, exitCode sql.NullInt64
 	var cancelled int
 	var legacyCPUs, legacyMemory string
-	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &caches,
+	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &secrets, &caches,
 		&job.RootDigest, &status, &timeoutMillis, &legacyCPUs, &legacyMemory, &created, &started, &finished,
 		&exitCode, &job.ErrorMessage, &cancelled, &job.WorkerID, &requestHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1808,6 +1824,9 @@ func scanIdempotentJob(row interface{ Scan(...any) error }) (control.Job, string
 		return control.Job{}, "", err
 	}
 	if err := json.Unmarshal([]byte(environment), &job.Environment); err != nil {
+		return control.Job{}, "", err
+	}
+	if err := json.Unmarshal([]byte(secrets), &job.Secrets); err != nil {
 		return control.Job{}, "", err
 	}
 	if err := json.Unmarshal([]byte(caches), &job.Caches); err != nil {
@@ -1986,4 +2005,8 @@ func cloneMap(input map[string]string) map[string]string {
 
 func cloneCaches(input []control.CacheMount) []control.CacheMount {
 	return append([]control.CacheMount(nil), input...)
+}
+
+func cloneSecrets(input []control.SecretBinding) []control.SecretBinding {
+	return append([]control.SecretBinding(nil), input...)
 }

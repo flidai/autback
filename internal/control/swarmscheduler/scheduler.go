@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
+	jobsecrets "github.com/flidai/autback/internal/secrets"
 )
 
 type Config struct {
@@ -49,12 +50,19 @@ type Spec struct {
 	CacheRoot          string
 	ProjectID          string
 	Caches             []CacheMount
+	Secrets            []SecretMount
+	HasSecrets         bool
 	HostUID            string
 	HostGID            string
 }
 
 type CacheMount struct {
 	Name   string
+	Target string
+}
+
+type SecretMount struct {
+	Source string
 	Target string
 }
 
@@ -89,6 +97,15 @@ func specForJob(config Config, job control.Job) Spec {
 	for _, cache := range job.Caches {
 		caches = append(caches, CacheMount{Name: cache.Name, Target: cache.Target})
 	}
+	secretMounts := make([]SecretMount, 0, len(job.Secrets))
+	for index, secret := range job.Secrets {
+		if secret.File != "" {
+			secretMounts = append(secretMounts, SecretMount{
+				Source: filepath.Join(config.JobsRoot, job.ID, "secrets", jobsecrets.ValueFile(index, secret.Name)),
+				Target: secret.File,
+			})
+		}
+	}
 	return Spec{
 		ID:    job.ID,
 		Image: job.Image, CASAddress: config.CASAddress, CASInstance: config.CASInstance,
@@ -97,7 +114,7 @@ func specForJob(config Config, job control.Job) Spec {
 		EntrypointHostPath: config.EntrypointHostPath,
 		Timeout:            job.Timeout,
 		CacheRoot:          config.CacheRoot, ProjectID: job.ProjectID, Caches: caches,
-		HostUID: config.HostUID, HostGID: config.HostGID,
+		HostUID: config.HostUID, HostGID: config.HostGID, Secrets: secretMounts, HasSecrets: len(job.Secrets) > 0,
 	}
 }
 

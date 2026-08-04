@@ -23,6 +23,25 @@ The actual bazel-remote and BuildKit daemons listen only on `127.0.0.1:50051` an
 `127.0.0.1:1234`. The private CA key, token pepper, SQLite control state, and audit data
 live under `/var/lib/autback` with service-user-only permissions.
 
+Job secret values are deliberately outside that tree. Mount an operator-managed tmpfs or
+secret-provider filesystem at `/run/autback/secret-store` (or set
+`AUTBACK_SECRET_ROOT`) and create private regular files at
+`<root>/<project-id>/<reference-name>`. Directories should be `0700` and values `0600`,
+owned by the Autback service user. Clients submit only reference names:
+
+```console
+autback exec \
+  --secret-env registry-token=REGISTRY_TOKEN \
+  --secret-file signing-key=/run/secrets/signing-key \
+  -- task ci
+```
+
+Replace a value atomically to rotate it and remove the file to revoke it. Queued jobs read
+the value current at admission; running jobs keep their operation-scoped snapshot. A
+revoked reference fails admission without blocking the next FIFO entry. Audit records name
+the project, job, and reference but never the value. Inspect `job.secret.access` events when
+investigating use.
+
 `/healthz` is process liveness. `/readyz` returns success only when the process is accepting
 work and both SQLite and Docker Swarm respond, so it is the endpoint to use for alerts and
 deployment verification. It returns `503` as soon as shutdown starts, before listeners or
@@ -196,7 +215,9 @@ sudo -u autback autback-server backup \
 The bundle contains a SQLite `VACUUM INTO` snapshot, token pepper, private PKI, and a
 SHA-256 manifest. Copy it to storage outside the worker and apply separate retention and
 encryption there. It deliberately excludes rebuildable CAS, BuildKit layers, job
-workspaces, and project caches.
+workspaces, project caches, and `/run/autback/secret-store`. Back up or regenerate the
+external secret provider under its own access and retention policy; restore/remount it
+before allowing new admission. Restored control state contains references only.
 
 Restore is offline and refuses to overwrite a data directory. Stop the service, move the
 old directory to a dated recovery path, restore, fix ownership, and start the service:

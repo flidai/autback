@@ -34,6 +34,37 @@ func TestBoundedJobLogPreservesDiskLimitAndSignalsTruncation(t *testing.T) {
 	}
 }
 
+func TestSecretValuesAreRedactedFromLiveAndDurableOutputAcrossWrites(t *testing.T) {
+	const secret = "sentinel-registry-token"
+	var liveStdout, liveStderr, durable bytes.Buffer
+	stdout, stderr, err := newRedactedOutputs(&liveStdout, &liveStderr, &durable, []string{secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = stdout.Write([]byte("stdout sentinel-registry-"))
+	_, _ = stdout.Write([]byte("token\n"))
+	_, _ = stderr.Write([]byte("stderr " + secret + "\n"))
+	if err := stdout.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stderr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for name, output := range map[string]string{"stdout": liveStdout.String(), "stderr": liveStderr.String(), "durable": durable.String()} {
+		if strings.Contains(output, secret) || !strings.Contains(output, "[REDACTED]") {
+			t.Fatalf("%s output = %q", name, output)
+		}
+	}
+}
+
+func TestSecretEnvironmentOverridesImageEnvironmentExactlyOnce(t *testing.T) {
+	got := mergeEnvironment([]string{"PATH=/bin", "TOKEN=image-default", "OTHER=value", "TOKEN=duplicate"}, []string{"TOKEN=secret-value"})
+	want := []string{"PATH=/bin", "OTHER=value", "TOKEN=secret-value"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("environment = %#v, want %#v", got, want)
+	}
+}
+
 func TestInitializeGitBaselineMakesMaterializedSnapshotClean(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")

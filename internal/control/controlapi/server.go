@@ -125,7 +125,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) GetServiceInfo(context.Context, *connect.Request[autbackv1.GetServiceInfoRequest]) (*connect.Response[autbackv1.GetServiceInfoResponse], error) {
 	return connect.NewResponse(&autbackv1.GetServiceInfoResponse{Version: Version, Capabilities: []string{
-		"connect", "projects", "project-images", "project-caches", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "durable-fifo-admission", "buildkit-mtls",
+		"connect", "projects", "project-images", "project-caches", "job-secrets-v1", "device-tokens", "device-enrollment", "github-oidc", "reapi-cas-mtls", "swarm-jobs", "durable-fifo-admission", "buildkit-mtls",
 	}}), nil
 }
 
@@ -969,6 +969,9 @@ func (s *Server) validateJob(projectID string, message *autbackv1.PrepareJobRequ
 		if strings.ContainsRune(argument, 0) {
 			return control.PrepareJob{}, errors.New("command contains a NUL byte")
 		}
+		if containsSecretReference(argument) {
+			return control.PrepareJob{}, errors.New("secret references must use the dedicated secrets field")
+		}
 	}
 	workingDirectory := message.WorkingDirectory
 	if workingDirectory == "" {
@@ -986,9 +989,16 @@ func (s *Server) validateJob(projectID string, message *autbackv1.PrepareJobRequ
 		return control.PrepareJob{}, err
 	}
 	for key, value := range message.Environment {
-		if !environmentKey.MatchString(key) || strings.ContainsRune(value, 0) {
+		if !environmentKey.MatchString(key) || strings.HasPrefix(key, "AUTBACK_") || strings.ContainsRune(value, 0) {
 			return control.PrepareJob{}, fmt.Errorf("invalid environment value %q", key)
 		}
+		if containsSecretReference(value) {
+			return control.PrepareJob{}, fmt.Errorf("environment value %q must use the dedicated secrets field", key)
+		}
+	}
+	secrets, err := validateSecrets(message.Secrets, message.Environment)
+	if err != nil {
+		return control.PrepareJob{}, err
 	}
 	timeout := 30 * time.Minute
 	if message.Timeout != nil {
@@ -1006,8 +1016,62 @@ func (s *Server) validateJob(projectID string, message *autbackv1.PrepareJobRequ
 	return control.PrepareJob{
 		ProjectID: projectID, Image: message.Image, Command: append([]string(nil), message.Command...),
 		WorkingDirectory: clean, Environment: cloneMap(message.Environment), Timeout: timeout,
-		Caches: caches,
+		Caches: caches, Secrets: secrets,
 	}, nil
+}
+
+func containsSecretReference(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "secret://") || strings.Contains(lower, "${{ secrets.")
+}
+
+func validateSecrets(input []*autbackv1.JobSecret, environment map[string]string) ([]control.SecretBinding, error) {
+	if len(input) > 32 {
+		return nil, errors.New("a job may declare at most 32 secrets")
+	}
+	result := make([]control.SecretBinding, 0, len(input))
+	names, targets := map[string]bool{}, map[string]bool{}
+	fileTargets := make([]string, 0, len(input))
+	for _, item := range input {
+		if item == nil || !cacheNamePattern.MatchString(item.Name) {
+			return nil, errors.New("secret name must contain 1 to 63 lowercase safe characters")
+		}
+		if names[item.Name] {
+			return nil, fmt.Errorf("secret %q is declared more than once", item.Name)
+		}
+		binding := control.SecretBinding{Name: item.Name}
+		switch target := item.Target.(type) {
+		case *autbackv1.JobSecret_Environment:
+			if !environmentKey.MatchString(target.Environment) || strings.HasPrefix(target.Environment, "AUTBACK_") {
+				return nil, fmt.Errorf("secret %q environment target is invalid", item.Name)
+			}
+			if _, exists := environment[target.Environment]; exists {
+				return nil, fmt.Errorf("secret %q environment target overlaps a public environment value", item.Name)
+			}
+			binding.Environment = target.Environment
+		case *autbackv1.JobSecret_File:
+			clean := path.Clean(target.File)
+			if !path.IsAbs(target.File) || !strings.HasPrefix(clean, "/run/secrets/") || clean == "/run/secrets" {
+				return nil, fmt.Errorf("secret %q file target must be below /run/secrets", item.Name)
+			}
+			for _, existing := range fileTargets {
+				if pathsOverlap(clean, existing) {
+					return nil, fmt.Errorf("secret %q file target overlaps %q", item.Name, existing)
+				}
+			}
+			binding.File = clean
+			fileTargets = append(fileTargets, clean)
+		default:
+			return nil, fmt.Errorf("secret %q requires an environment or file target", item.Name)
+		}
+		targetKey := binding.Environment + "\x00" + binding.File
+		if targets[targetKey] {
+			return nil, fmt.Errorf("secret target %q is declared more than once", strings.Trim(targetKey, "\x00"))
+		}
+		targets[targetKey], names[item.Name] = true, true
+		result = append(result, binding)
+	}
+	return result, nil
 }
 
 func validateCaches(input []*autbackv1.CacheMount) ([]control.CacheMount, error) {
@@ -1016,7 +1080,7 @@ func validateCaches(input []*autbackv1.CacheMount) ([]control.CacheMount, error)
 	}
 	result := make([]control.CacheMount, 0, len(input))
 	names, targets := map[string]bool{}, map[string]bool{}
-	reserved := []string{"/var/run/docker.sock", "/usr/local/bin/autback-job-entrypoint"}
+	reserved := []string{"/var/run/docker.sock", "/usr/local/bin/autback-job-entrypoint", "/run/autback/secrets", "/run/secrets"}
 	for _, item := range input {
 		if item == nil || !cacheNamePattern.MatchString(item.Name) {
 			return nil, errors.New("cache name must contain 1 to 63 lowercase safe characters")
@@ -1107,6 +1171,15 @@ func jobProto(job control.Job) *autbackv1.Job {
 	}
 	for _, cache := range job.Caches {
 		result.Caches = append(result.Caches, &autbackv1.CacheMount{Name: cache.Name, Target: cache.Target})
+	}
+	for _, secret := range job.Secrets {
+		item := &autbackv1.JobSecret{Name: secret.Name}
+		if secret.Environment != "" {
+			item.Target = &autbackv1.JobSecret_Environment{Environment: secret.Environment}
+		} else {
+			item.Target = &autbackv1.JobSecret_File{File: secret.File}
+		}
+		result.Secrets = append(result.Secrets, item)
 	}
 	result.StartedAt, result.FinishedAt = timestamp(job.StartedAt), timestamp(job.FinishedAt)
 	if job.ExitCode != nil {

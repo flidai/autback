@@ -21,6 +21,7 @@ type PrincipalKind string
 const (
 	PrincipalDevice PrincipalKind = "device"
 	PrincipalGitHub PrincipalKind = "github"
+	PrincipalSystem PrincipalKind = "system"
 )
 
 type Principal struct {
@@ -157,11 +158,18 @@ type Job struct {
 	CancelRequested  bool
 	WorkerID         string
 	Caches           []CacheMount
+	Secrets          []SecretBinding
 }
 
 type CacheMount struct {
 	Name   string
 	Target string
+}
+
+type SecretBinding struct {
+	Name        string
+	Environment string
+	File        string
 }
 
 type PrepareJob struct {
@@ -172,6 +180,7 @@ type PrepareJob struct {
 	Environment      map[string]string
 	Timeout          time.Duration
 	Caches           []CacheMount
+	Secrets          []SecretBinding
 }
 
 type Idempotency struct {

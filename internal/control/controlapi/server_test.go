@@ -323,6 +323,72 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 	}
 }
 
+func TestJobAdmissionPersistsOnlySecretReferences(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	request := &autbackv1.PrepareJobRequest{
+		IdempotencyKey: "first-class-secrets", Project: "example",
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64), Command: []string{"task", "ci"},
+		Secrets: []*autbackv1.JobSecret{
+			{Name: "registry-token", Target: &autbackv1.JobSecret_Environment{Environment: "REGISTRY_TOKEN"}},
+			{Name: "signing-key", Target: &autbackv1.JobSecret_File{File: "/run/secrets/signing-key"}},
+		},
+	}
+	prepared, err := client.PrepareJob(context.Background(), connect.NewRequest(request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.Msg.Job.Secrets; len(got) != 2 || got[0].Name != "registry-token" || got[0].GetEnvironment() != "REGISTRY_TOKEN" || got[1].GetFile() != "/run/secrets/signing-key" {
+		t.Fatalf("prepared secret references = %#v", got)
+	}
+	stored, err := fixture.store.Job(context.Background(), prepared.Msg.Job.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Secrets) != 2 || stored.Secrets[0].Environment != "REGISTRY_TOKEN" || stored.Secrets[1].File != "/run/secrets/signing-key" {
+		t.Fatalf("stored secret references = %#v", stored.Secrets)
+	}
+}
+
+func TestJobAdmissionRejectsLegacyAndOverlappingSecretFields(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	base := &autbackv1.PrepareJobRequest{
+		IdempotencyKey: "invalid-secret-00", Project: "example",
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64), Command: []string{"task", "ci"},
+	}
+	tests := []func(*autbackv1.PrepareJobRequest){
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Environment = map[string]string{"TOKEN": "secret://registry-token"}
+		},
+		func(request *autbackv1.PrepareJobRequest) { request.Command = []string{"echo", "${{ secrets.TOKEN }}"} },
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Environment = map[string]string{"TOKEN": "public"}
+			request.Secrets = []*autbackv1.JobSecret{{Name: "registry-token", Target: &autbackv1.JobSecret_Environment{Environment: "TOKEN"}}}
+		},
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Secrets = []*autbackv1.JobSecret{{Name: "signing-key", Target: &autbackv1.JobSecret_File{File: "/tmp/signing-key"}}}
+		},
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Caches = []*autbackv1.CacheMount{{Name: "unsafe", Target: "/run/secrets"}}
+		},
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Secrets = []*autbackv1.JobSecret{
+				{Name: "one", Target: &autbackv1.JobSecret_File{File: "/run/secrets/nested"}},
+				{Name: "two", Target: &autbackv1.JobSecret_File{File: "/run/secrets/nested/value"}},
+			}
+		},
+	}
+	for index, mutate := range tests {
+		request := proto.Clone(base).(*autbackv1.PrepareJobRequest)
+		request.IdempotencyKey = fmt.Sprintf("invalid-secret-%02d", index)
+		mutate(request)
+		if _, err := client.PrepareJob(context.Background(), connect.NewRequest(request)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("case %d error = %v", index, err)
+		}
+	}
+}
+
 func TestJobAdmissionAllowsLongRepositoryCIButBoundsRunawayJobs(t *testing.T) {
 	fixture := newFixture(t)
 	client := fixture.client(fixture.bootstrap.Token)

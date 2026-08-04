@@ -14,6 +14,7 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/flidai/autback/internal/control/swarmscheduler"
 	"github.com/flidai/autback/internal/protocol"
+	jobsecrets "github.com/flidai/autback/internal/secrets"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/mount"
 	engineswarm "github.com/moby/moby/api/types/swarm"
@@ -147,6 +148,14 @@ func serviceSpec(spec swarmscheduler.Spec) engineswarm.ServiceSpec {
 		{Type: mount.TypeBind, Source: spec.JobsRoot, Target: spec.JobsRoot},
 		{Type: mount.TypeBind, Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"},
 		{Type: mount.TypeTmpfs, Target: "/dev/shm", TmpfsOptions: &mount.TmpfsOptions{SizeBytes: sharedMemorySize}},
+	}
+	if spec.HasSecrets {
+		mounts = append(mounts, mount.Mount{
+			Type: mount.TypeBind, Source: filepath.Join(spec.JobsRoot, spec.ID, "secrets"), Target: jobsecrets.RuntimeDirectory, ReadOnly: true,
+		})
+	}
+	for _, secret := range spec.Secrets {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: secret.Source, Target: secret.Target, ReadOnly: true})
 	}
 	caches := append([]swarmscheduler.CacheMount(nil), spec.Caches...)
 	sort.Slice(caches, func(i, j int) bool {

@@ -21,6 +21,7 @@ import (
 
 	buildkitadapter "github.com/flidai/autback/internal/adapter/buildkit"
 	dockeradapter "github.com/flidai/autback/internal/adapter/docker"
+	secretstore "github.com/flidai/autback/internal/adapter/secretstore"
 	appserver "github.com/flidai/autback/internal/app/server"
 	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/console"
@@ -37,6 +38,7 @@ import (
 	"github.com/flidai/autback/internal/control/swarmscheduler"
 	"github.com/flidai/autback/internal/hostmetrics"
 	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
+	jobsecrets "github.com/flidai/autback/internal/secrets"
 	"github.com/flidai/autback/internal/version"
 )
 
@@ -114,6 +116,16 @@ func run(ctx context.Context) error {
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})
+	jobsRoot := env("AUTBACK_JOBS_ROOT", "/var/lib/autback/jobs")
+	secretManager := jobsecrets.NewManager(jobsecrets.Config{
+		JobsRoot: jobsRoot, Store: store,
+		Resolver: secretstore.Directory{Root: env("AUTBACK_SECRET_ROOT", "/run/autback/secret-store")},
+		Access:   store,
+	})
+	lifecycle := operationcleanup.Lifecycle{
+		Preparers: []operationcleanup.Preparer{resourceManager, secretManager},
+		Cleaners:  []operationcleanup.Cleaner{secretManager, resourceManager},
+	}
 	casInternal := env("AUTBACK_CAS_INTERNAL", "127.0.0.1:50051")
 	casListen := env("AUTBACK_CAS_LISTEN", ":50052")
 	buildKitInternal := env("AUTBACK_BUILDKIT_INTERNAL", "127.0.0.1:1234")
@@ -131,12 +143,12 @@ func run(ctx context.Context) error {
 	casInstance := env("AUTBACK_CAS_INSTANCE", "autback")
 	serverName := names[0]
 	scheduler := swarmscheduler.New(swarmscheduler.Config{
-		Client: docker, CASAddress: casInternal, CASInstance: casInstance, JobsRoot: env("AUTBACK_JOBS_ROOT", "/var/lib/autback/jobs"),
+		Client: docker, CASAddress: casInternal, CASInstance: casInstance, JobsRoot: jobsRoot,
 		EntrypointHostPath: env("AUTBACK_JOB_ENTRYPOINT", "/usr/local/lib/autback/autback-job-entrypoint"),
 		CacheRoot:          env("AUTBACK_CACHE_ROOT", "/var/lib/autback/cache"),
 		HostUID:            strconv.Itoa(os.Getuid()), HostGID: strconv.Itoa(os.Getgid()),
 	})
-	capacityController := newCapacityController(dataDir, store, scheduler, docker, buildCache, resourceManager, false)
+	capacityController := newCapacityController(dataDir, store, scheduler, docker, buildCache, lifecycle, false)
 	status, capacityErr := capacityController.Maintain(processCtx, capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(dataDir, "capacity.json"), status)
 	if capacityErr != nil {
@@ -158,8 +170,8 @@ func run(ctx context.Context) error {
 	}
 	dispatch := dispatcher.New(store, scheduler,
 		dispatcher.WithCapacity(capacityController),
-		dispatcher.WithAdmissionPreparer(resourceManager),
-		dispatcher.WithCleaner(resourceManager),
+		dispatcher.WithAdmissionPreparer(lifecycle),
+		dispatcher.WithCleaner(lifecycle),
 		dispatcher.WithAdvanceContext(processCtx),
 		dispatcher.WithErrorHandler(func(err error) { log.Printf("advance FIFO: %v", err) }),
 	)
@@ -438,7 +450,9 @@ func maintainWorker(args []string) {
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})
-	controller := newCapacityController(*dataDir, store, scheduler, docker, buildCache, resourceManager, *dryRun)
+	secretManager := jobsecrets.NewManager(jobsecrets.Config{JobsRoot: env("AUTBACK_JOBS_ROOT", "/var/lib/autback/jobs")})
+	cleaner := operationcleanup.Lifecycle{Cleaners: []operationcleanup.Cleaner{secretManager, resourceManager}}
+	controller := newCapacityController(*dataDir, store, scheduler, docker, buildCache, cleaner, *dryRun)
 	status, err := controller.Maintain(context.Background(), capacity.TriggerManual)
 	writeCapacityStatus(filepath.Join(*dataDir, "capacity.json"), status)
 	if *jsonOutput {

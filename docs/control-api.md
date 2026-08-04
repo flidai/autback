@@ -91,6 +91,20 @@ The API exposes no priorities, resource sizes, or task graph. Parallelism is par
 single admitted command, not separate dispatcher policy. The deprecated v1 `cpus` and
 `memory` fields remain wire-compatible but are ignored.
 
+## Job secrets
+
+`PrepareJob.secrets` is the only credential-bearing job declaration. Each item contains a
+project-scoped reference name and either an environment key or a file path below
+`/run/secrets`; the message never carries the value. `Job.secrets` returns the same
+references for inspection and idempotent replay. Environment targets cannot overlap public
+environment fields or server-owned `AUTBACK_*` keys.
+
+The server resolves references only after the FIFO lease is acquired. A revoked or missing
+reference fails the job permanently and advances after durable cleanup. Generic command or
+environment values using `secret://` or `${{ secrets.* }}` syntax are rejected so older
+workflows migrate to `--secret-env NAME=KEY` or
+`--secret-file NAME=/run/secrets/PATH` instead of persisting an interpolation token.
+
 ## Pagination
 
 `ListJobs` accepts `page_size` from 1 through 100 and an optional opaque `page_token`.

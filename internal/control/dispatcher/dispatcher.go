@@ -236,6 +236,17 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 		}
 		if d.preparer != nil {
 			if err := d.preparer.Prepare(ctx, *operation); err != nil {
+				var permanent interface{ Permanent() bool }
+				if errors.As(err, &permanent) && permanent.Permanent() && operation.Kind == control.OperationJob {
+					admissionErrors = append(admissionErrors, fmt.Errorf("prepare operation %s: %w", operation.ID, err))
+					if _, failErr := d.store.FailJob(ctx, operation.ID, err.Error()); failErr != nil {
+						return errors.Join(append(admissionErrors, failErr)...)
+					}
+					if releaseErr := d.cleanups.Request(ctx, control.OperationJob, operation.ID); releaseErr != nil {
+						return errors.Join(append(admissionErrors, releaseErr)...)
+					}
+					return errors.Join(admissionErrors...)
+				}
 				requeueErr := d.store.RequeueAdmittingOperation(ctx, operation.Kind, operation.ID)
 				return errors.Join(append(admissionErrors, fmt.Errorf("prepare operation %s resources: %w", operation.ID, err), requeueErr)...)
 			}

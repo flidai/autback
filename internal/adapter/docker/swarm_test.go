@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -214,6 +215,32 @@ func TestTypedSwarmCreatePreservesJobRuntimeContract(t *testing.T) {
 	}
 	if len(container.Mounts) != 4 || container.Mounts[3].Source != "/cache/project-1/gomod" {
 		t.Fatalf("mounts = %#v", container.Mounts)
+	}
+}
+
+func TestTypedSwarmKeepsSecretValuesOutOfServiceSpec(t *testing.T) {
+	api := &fakeSwarmEngine{createID: "service-id"}
+	spec := swarmscheduler.Spec{
+		ID: "job-1", Image: "example/image@sha256:abc", ProjectID: "project-1", JobsRoot: "/jobs",
+		Timeout: time.Minute, HasSecrets: true,
+		Secrets: []swarmscheduler.SecretMount{{Source: "/jobs/job-1/secrets/001-signing-key", Target: "/run/secrets/signing-key"}},
+	}
+	if _, err := newRuntimeClient(api, nil).Create(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	container := api.creates[0].Spec.TaskTemplate.ContainerSpec
+	if container == nil || len(container.Mounts) != 5 {
+		t.Fatalf("container mounts = %#v", container)
+	}
+	if runtime := container.Mounts[3]; runtime.Source != "/jobs/job-1/secrets" || runtime.Target != "/run/autback/secrets" || !runtime.ReadOnly {
+		t.Fatalf("runtime secret mount = %#v", runtime)
+	}
+	if file := container.Mounts[4]; file.Source != spec.Secrets[0].Source || file.Target != spec.Secrets[0].Target || !file.ReadOnly {
+		t.Fatalf("file secret mount = %#v", file)
+	}
+	encoded := fmt.Sprintf("%#v", api.creates[0].Spec)
+	if strings.Contains(encoded, "sentinel-secret-value") {
+		t.Fatalf("service spec contains secret value: %s", encoded)
 	}
 }
 

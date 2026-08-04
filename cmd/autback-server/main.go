@@ -104,9 +104,14 @@ func run(ctx context.Context) error {
 	if err := docker.Check(processCtx); err != nil {
 		return err
 	}
+	resourceDocker, err := dockeradapter.New(dockeradapter.Config{Host: dockerConfig.Host})
+	if err != nil {
+		return err
+	}
+	defer resourceDocker.Close()
 	resourceManager := operationcleanup.NewResourceManager(operationcleanup.ResourceManagerConfig{
 		Store:       store,
-		Runtime:     dockeradapter.New(dockeradapter.Config{Binary: dockerConfig.Binary, Host: dockerConfig.Host}),
+		Runtime:     resourceDocker,
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})
@@ -404,9 +409,14 @@ func maintainWorker(args []string) {
 		log.Fatal(err)
 	}
 	scheduler := swarmscheduler.New(swarmscheduler.Config{Client: docker})
+	resourceDocker, err := dockeradapter.New(dockeradapter.Config{Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resourceDocker.Close()
 	resourceManager := operationcleanup.NewResourceManager(operationcleanup.ResourceManagerConfig{
 		Store:       store,
-		Runtime:     dockeradapter.New(dockeradapter.Config{Binary: os.Getenv("AUTBACK_DOCKER"), Host: env("AUTBACK_DOCKER_HOST", "unix:///var/run/docker.sock")}),
+		Runtime:     resourceDocker,
 		GracePeriod: durationEnv("AUTBACK_RESOURCE_CLEANUP_GRACE", 10*time.Second),
 		Timeout:     durationEnv("AUTBACK_RESOURCE_CLEANUP_TIMEOUT", 2*time.Minute),
 	})

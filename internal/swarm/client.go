@@ -209,19 +209,40 @@ func (c *Client) Remove(ctx context.Context, id string) error {
 }
 
 func (c *Client) List(ctx context.Context) ([]protocol.Job, error) {
+	results, listErr := c.ListResults(ctx)
+	jobs := make([]protocol.Job, 0, len(results))
+	var resultErrors []error
+	for _, result := range results {
+		if result.Err != nil {
+			resultErrors = append(resultErrors, result.Err)
+			continue
+		}
+		jobs = append(jobs, result.Job)
+	}
+	return jobs, errors.Join(append([]error{listErr}, resultErrors...)...)
+}
+
+type JobResult struct {
+	ID  string
+	Job protocol.Job
+	Err error
+}
+
+func (c *Client) ListResults(ctx context.Context) ([]JobResult, error) {
 	data, err := c.commands.Output(ctx, "service", "ls", "--filter", "label="+managedLabel+"=true", "--format", "{{.Name}}")
 	if err != nil {
 		return nil, fmt.Errorf("list Swarm jobs: %w", err)
 	}
-	var jobs []protocol.Job
+	var jobs []JobResult
 	for _, id := range strings.Fields(string(data)) {
 		job, err := c.Status(ctx, id)
 		if err != nil {
-			return nil, err
+			jobs = append(jobs, JobResult{ID: id, Err: fmt.Errorf("inspect Swarm job %s: %w", id, err)})
+			continue
 		}
-		jobs = append(jobs, job)
+		jobs = append(jobs, JobResult{ID: id, Job: job})
 	}
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].CreatedAt.After(jobs[j].CreatedAt) })
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Job.CreatedAt.After(jobs[j].Job.CreatedAt) })
 	return jobs, nil
 }
 

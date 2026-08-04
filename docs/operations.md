@@ -91,6 +91,12 @@ before releasing the lease. Set `AUTBACK_RESOURCE_CLEANUP_GRACE` to tune the Ryu
 or partial removals leave the operation in `cleaning`; the coordinator retries and resumes
 from the same baseline after restart. Images and BuildKit cache are deliberately excluded.
 
+Runtime reconciliation is failure-isolated. A malformed Swarm service remains visible as
+an actionable reconciliation error while healthy terminal jobs and stale builds continue
+to converge. A daemon-wide list failure is never interpreted as proof that every service
+was lost; durable job state is preserved and retried when Docker recovers. Docker cleanup
+uses negotiated Engine APIs and treats typed not-found responses as idempotent success.
+
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
 rollback project images, applies recorded image last use, and reduces project caches from

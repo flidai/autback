@@ -1,213 +1,127 @@
 package docker
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"os/exec"
 	"sort"
 	"strings"
 
 	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
+	"github.com/moby/moby/client"
 )
 
 const managedLabel = "autback.managed"
 
-type commander interface {
-	Output(context.Context, ...string) ([]byte, error)
-	Run(context.Context, io.Writer, io.Writer, ...string) error
+type engine interface {
+	ServiceList(context.Context, client.ServiceListOptions) (client.ServiceListResult, error)
+	ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error)
+	NetworkList(context.Context, client.NetworkListOptions) (client.NetworkListResult, error)
+	VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error)
+	ServiceRemove(context.Context, string, client.ServiceRemoveOptions) (client.ServiceRemoveResult, error)
+	ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+	NetworkRemove(context.Context, string, client.NetworkRemoveOptions) (client.NetworkRemoveResult, error)
+	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 }
 
 type Config struct {
-	Binary string
-	Host   string
+	Host string
 }
 
 type Client struct {
-	commands commander
+	engine engine
+	close  func() error
 }
 
-func New(config Config) *Client {
-	binary := config.Binary
-	if binary == "" {
-		binary = "docker"
+func New(config Config) (*Client, error) {
+	options := []client.Opt{client.WithAPIVersionNegotiation()}
+	if config.Host != "" {
+		options = append(options, client.WithHost(config.Host))
 	}
-	return newClient(&dockerCommander{binary: binary, host: config.Host})
+	api, err := client.New(options...)
+	if err != nil {
+		return nil, fmt.Errorf("create Docker Engine client: %w", err)
+	}
+	return &Client{engine: api, close: api.Close}, nil
 }
 
-func newClient(commands commander) *Client { return &Client{commands: commands} }
+func newClient(api engine) *Client { return &Client{engine: api} }
+
+func (c *Client) Close() error {
+	if c.close != nil {
+		return c.close()
+	}
+	return nil
+}
 
 func (c *Client) Inventory(ctx context.Context) (operationcleanup.ResourceSet, error) {
-	services, err := c.services(ctx)
+	services, err := c.engine.ServiceList(ctx, client.ServiceListOptions{})
 	if err != nil {
-		return operationcleanup.ResourceSet{}, err
+		return operationcleanup.ResourceSet{}, fmt.Errorf("list Docker services: %w", err)
 	}
-	containers, err := c.containers(ctx)
+	containers, err := c.engine.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
-		return operationcleanup.ResourceSet{}, err
+		return operationcleanup.ResourceSet{}, fmt.Errorf("list Docker containers: %w", err)
 	}
-	networks, err := c.networks(ctx)
+	networks, err := c.engine.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
-		return operationcleanup.ResourceSet{}, err
+		return operationcleanup.ResourceSet{}, fmt.Errorf("list Docker networks: %w", err)
 	}
-	volumes, err := c.volumes(ctx)
+	volumes, err := c.engine.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
-		return operationcleanup.ResourceSet{}, err
+		return operationcleanup.ResourceSet{}, fmt.Errorf("list Docker volumes: %w", err)
 	}
-	sort.Strings(services)
-	sort.Strings(containers)
-	sort.Strings(networks)
-	sort.Strings(volumes)
-	return operationcleanup.ResourceSet{Services: services, Containers: containers, Networks: networks, Volumes: volumes}, nil
-}
-
-func (c *Client) services(ctx context.Context) ([]string, error) {
-	ids, err := c.ids(ctx, "service", "ls", "--quiet")
-	if err != nil || len(ids) == 0 {
-		return nil, err
-	}
-	data, err := c.commands.Output(ctx, append([]string{"service", "inspect"}, ids...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Docker services: %w", err)
-	}
-	var inspected []struct {
-		ID   string `json:"ID"`
-		Spec struct {
-			Labels map[string]string `json:"Labels"`
-		} `json:"Spec"`
-	}
-	if err := json.Unmarshal(data, &inspected); err != nil {
-		return nil, fmt.Errorf("decode Docker services: %w", err)
-	}
-	result := make([]string, 0, len(inspected))
-	for _, service := range inspected {
+	resources := operationcleanup.ResourceSet{}
+	for _, service := range services.Items {
 		if !managed(service.Spec.Labels) {
-			result = append(result, service.ID)
+			resources.Services = append(resources.Services, service.ID)
 		}
 	}
-	return result, nil
-}
-
-func (c *Client) containers(ctx context.Context) ([]string, error) {
-	ids, err := c.ids(ctx, "container", "ls", "--all", "--quiet", "--no-trunc")
-	if err != nil || len(ids) == 0 {
-		return nil, err
-	}
-	data, err := c.commands.Output(ctx, append([]string{"container", "inspect"}, ids...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Docker containers: %w", err)
-	}
-	var inspected []struct {
-		ID     string `json:"Id"`
-		Config struct {
-			Labels map[string]string `json:"Labels"`
-		} `json:"Config"`
-	}
-	if err := json.Unmarshal(data, &inspected); err != nil {
-		return nil, fmt.Errorf("decode Docker containers: %w", err)
-	}
-	result := make([]string, 0, len(inspected))
-	for _, container := range inspected {
-		if !protectedContainer(container.Config.Labels) {
-			result = append(result, container.ID)
+	for _, container := range containers.Items {
+		if !protectedContainer(container.Labels) {
+			resources.Containers = append(resources.Containers, container.ID)
 		}
 	}
-	return result, nil
-}
-
-func (c *Client) networks(ctx context.Context) ([]string, error) {
-	ids, err := c.ids(ctx, "network", "ls", "--quiet", "--no-trunc")
-	if err != nil || len(ids) == 0 {
-		return nil, err
-	}
-	data, err := c.commands.Output(ctx, append([]string{"network", "inspect"}, ids...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Docker networks: %w", err)
-	}
-	var inspected []struct {
-		ID     string            `json:"Id"`
-		Labels map[string]string `json:"Labels"`
-	}
-	if err := json.Unmarshal(data, &inspected); err != nil {
-		return nil, fmt.Errorf("decode Docker networks: %w", err)
-	}
-	result := make([]string, 0, len(inspected))
-	for _, network := range inspected {
+	for _, network := range networks.Items {
 		if !managed(network.Labels) {
-			result = append(result, network.ID)
+			resources.Networks = append(resources.Networks, network.ID)
 		}
 	}
-	return result, nil
-}
-
-func (c *Client) volumes(ctx context.Context) ([]string, error) {
-	names, err := c.ids(ctx, "volume", "ls", "--quiet")
-	if err != nil || len(names) == 0 {
-		return nil, err
-	}
-	data, err := c.commands.Output(ctx, append([]string{"volume", "inspect"}, names...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Docker volumes: %w", err)
-	}
-	var inspected []struct {
-		Name      string            `json:"Name"`
-		CreatedAt string            `json:"CreatedAt"`
-		Labels    map[string]string `json:"Labels"`
-	}
-	if err := json.Unmarshal(data, &inspected); err != nil {
-		return nil, fmt.Errorf("decode Docker volumes: %w", err)
-	}
-	result := make([]string, 0, len(inspected))
-	for _, volume := range inspected {
-		if !managed(volume.Labels) {
-			id := volume.Name
-			if volume.CreatedAt != "" {
-				id += "\x00" + volume.CreatedAt
-			}
-			result = append(result, id)
+	for _, volume := range volumes.Items {
+		if managed(volume.Labels) {
+			continue
 		}
+		id := volume.Name
+		if volume.CreatedAt != "" {
+			id += "\x00" + volume.CreatedAt
+		}
+		resources.Volumes = append(resources.Volumes, id)
 	}
-	return result, nil
-}
-
-func (c *Client) ids(ctx context.Context, args ...string) ([]string, error) {
-	data, err := c.commands.Output(ctx, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list Docker resources: %w", err)
-	}
-	return strings.Fields(string(data)), nil
-}
-
-func (c *Client) RemoveContainer(ctx context.Context, id string) error {
-	return c.remove(ctx, "container", "rm", "--force", id)
+	sort.Strings(resources.Services)
+	sort.Strings(resources.Containers)
+	sort.Strings(resources.Networks)
+	sort.Strings(resources.Volumes)
+	return resources, nil
 }
 
 func (c *Client) RemoveService(ctx context.Context, id string) error {
-	return c.remove(ctx, "service", "rm", id)
+	_, err := c.engine.ServiceRemove(ctx, id, client.ServiceRemoveOptions{})
+	return classifyRemoval("service", id, err)
+}
+
+func (c *Client) RemoveContainer(ctx context.Context, id string) error {
+	_, err := c.engine.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
+	return classifyRemoval("container", id, err)
 }
 
 func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
-	return c.remove(ctx, "network", "rm", id)
+	_, err := c.engine.NetworkRemove(ctx, id, client.NetworkRemoveOptions{})
+	return classifyRemoval("network", id, err)
 }
 
 func (c *Client) RemoveVolume(ctx context.Context, id string) error {
 	name, _, _ := strings.Cut(id, "\x00")
-	return c.remove(ctx, "volume", "rm", "--force", name)
-}
-
-func (c *Client) remove(ctx context.Context, args ...string) error {
-	var output bytes.Buffer
-	err := c.commands.Run(ctx, &output, &output, args...)
-	if err == nil {
-		return nil
-	}
-	detail := fmt.Errorf("%w: %s", err, strings.TrimSpace(output.String()))
-	if isNotFound(detail) {
-		return nil
-	}
-	return fmt.Errorf("docker %s: %w", strings.Join(args, " "), detail)
+	_, err := c.engine.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true})
+	return classifyRemoval("volume", name, err)
 }
 
 func protectedContainer(labels map[string]string) bool {
@@ -216,35 +130,11 @@ func protectedContainer(labels map[string]string) bool {
 
 func managed(labels map[string]string) bool { return labels[managedLabel] == "true" }
 
-func isNotFound(err error) bool {
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such service") || strings.Contains(message, "no such container") || strings.Contains(message, "no such network") || strings.Contains(message, "no such volume")
-}
-
-type dockerCommander struct {
-	binary string
-	host   string
-}
-
-func (d *dockerCommander) Output(ctx context.Context, args ...string) ([]byte, error) {
-	output, err := d.command(ctx, args...).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+func classifyRemoval(kind, id string, err error) error {
+	if err == nil || Classify(err) == ErrorNotFound {
+		return nil
 	}
-	return output, nil
-}
-
-func (d *dockerCommander) Run(ctx context.Context, stdout, stderr io.Writer, args ...string) error {
-	command := d.command(ctx, args...)
-	command.Stdout, command.Stderr = stdout, stderr
-	return command.Run()
-}
-
-func (d *dockerCommander) command(ctx context.Context, args ...string) *exec.Cmd {
-	if d.host != "" {
-		args = append([]string{"--host", d.host}, args...)
-	}
-	return exec.CommandContext(ctx, d.binary, args...)
+	return fmt.Errorf("remove Docker %s %s: %w", kind, id, err)
 }
 
 var _ operationcleanup.ResourceRuntime = (*Client)(nil)

@@ -15,3 +15,9 @@ type Scheduler interface {
 	Logs(context.Context, string, bool, io.Writer) error
 	Cancel(context.Context, string) error
 }
+
+type RuntimeJob struct {
+	ID  string
+	Job protocol.Job
+	Err error
+}

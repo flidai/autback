@@ -3,43 +3,46 @@ package docker
 import (
 	"context"
 	"errors"
-	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/containerd/errdefs"
 	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/swarm"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 func TestClientInventoriesUnprotectedDockerResources(t *testing.T) {
-	commands := &fakeCommander{outputs: map[string]string{
-		"service ls --quiet": "managed-service\nnested-service\n",
-		"service inspect managed-service nested-service": `[
-{"ID":"managed-service","Spec":{"Labels":{"autback.managed":"true"}}},
-{"ID":"nested-service","Spec":{"Labels":{}}}
-]`,
-		"container ls --all --quiet --no-trunc": "container-before\nswarm-task\nowned-container\n",
-		"container inspect container-before swarm-task owned-container": `[
-{"Id":"container-before","Config":{"Labels":{}}},
-{"Id":"swarm-task","Config":{"Labels":{"com.docker.swarm.service.id":"service-id"}}},
-{"Id":"owned-container","Config":{"Labels":{"org.testcontainers":"true"}}}
-]`,
-		"network ls --quiet --no-trunc": "network-before\nmanaged-network\nowned-network\n",
-		"network inspect network-before managed-network owned-network": `[
-{"Id":"network-before","Labels":{}},
-{"Id":"managed-network","Labels":{"autback.managed":"true"}},
-{"Id":"owned-network","Labels":{"org.testcontainers":"true"}}
-]`,
-		"volume ls --quiet": "volume-before\nmanaged-volume\nowned-volume\n",
-		"volume inspect volume-before managed-volume owned-volume": `[
-{"Name":"volume-before","CreatedAt":"2026-08-04T07:00:00Z","Labels":{}},
-{"Name":"managed-volume","Labels":{"autback.managed":"true"}},
-{"Name":"owned-volume","CreatedAt":"2026-08-04T08:00:00Z","Labels":{"org.testcontainers":"true"}}
-]`,
-	}}
-	client := newClient(commands)
-
-	got, err := client.Inventory(context.Background())
+	api := &fakeEngine{
+		services: []swarm.Service{
+			{ID: "managed-service", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Labels: map[string]string{"autback.managed": "true"}}}},
+			{ID: "nested-service", Spec: swarm.ServiceSpec{}},
+		},
+		containers: []container.Summary{
+			{ID: "container-before", Labels: map[string]string{}},
+			{ID: "swarm-task", Labels: map[string]string{"com.docker.swarm.service.id": "service-id"}},
+			{ID: "owned-container", Labels: map[string]string{"org.testcontainers": "true"}},
+		},
+		networks: []network.Summary{
+			{Network: network.Network{ID: "network-before", Labels: map[string]string{}}},
+			{Network: network.Network{ID: "managed-network", Labels: map[string]string{"autback.managed": "true"}}},
+			{Network: network.Network{ID: "owned-network", Labels: map[string]string{"org.testcontainers": "true"}}},
+		},
+		volumes: []volume.Volume{
+			{Name: "volume-before", CreatedAt: "2026-08-04T07:00:00Z", Labels: map[string]string{}},
+			{Name: "managed-volume", Labels: map[string]string{"autback.managed": "true"}},
+			{Name: "owned-volume", CreatedAt: "2026-08-04T08:00:00Z", Labels: map[string]string{"org.testcontainers": "true"}},
+		},
+	}
+	got, err := newClient(api).Inventory(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +57,9 @@ func TestClientInventoriesUnprotectedDockerResources(t *testing.T) {
 	}
 }
 
-func TestClientRemovesResourcesWithIdempotentNotFoundHandling(t *testing.T) {
-	commands := &fakeCommander{runErrors: map[string]error{
-		"network rm gone": errors.New("Error: No such network: gone"),
-	}}
-	client := newClient(commands)
+func TestClientRemovesResourcesAndTreatsNotFoundAsIdempotent(t *testing.T) {
+	api := &fakeEngine{removeErrors: map[string]error{"network:gone": errdefs.ErrNotFound}}
+	client := newClient(api)
 	if err := client.RemoveService(context.Background(), "nested-service"); err != nil {
 		t.Fatal(err)
 	}
@@ -66,34 +67,113 @@ func TestClientRemovesResourcesWithIdempotentNotFoundHandling(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := client.RemoveNetwork(context.Background(), "gone"); err != nil {
-		t.Fatalf("remove missing network: %v", err)
-	}
-	if err := client.RemoveVolume(context.Background(), "volume-1\x002026-08-04T08:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"service rm nested-service", "container rm --force container-1", "network rm gone", "volume rm --force volume-1"}
-	if !reflect.DeepEqual(commands.runs, want) {
-		t.Fatalf("commands = %#v, want %#v", commands.runs, want)
+	if err := client.RemoveVolume(context.Background(), "volume-1\x00created-at"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"service:nested-service", "container:container-1", "network:gone", "volume:volume-1"}
+	if !reflect.DeepEqual(api.removed, want) {
+		t.Fatalf("removed = %#v, want %#v", api.removed, want)
 	}
 }
 
-type fakeCommander struct {
-	outputs   map[string]string
-	runErrors map[string]error
-	runs      []string
-}
-
-func (f *fakeCommander) Output(_ context.Context, args ...string) ([]byte, error) {
-	key := strings.Join(args, " ")
-	value, ok := f.outputs[key]
-	if !ok {
-		return nil, errors.New("unexpected command: " + key)
+func TestClientReturnsTypedDaemonFailure(t *testing.T) {
+	want := errors.New("daemon unavailable")
+	client := newClient(&fakeEngine{listErr: want})
+	if _, err := client.Inventory(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Inventory error = %v, want %v", err, want)
 	}
-	return []byte(value), nil
 }
 
-func (f *fakeCommander) Run(_ context.Context, _ io.Writer, _ io.Writer, args ...string) error {
-	key := strings.Join(args, " ")
-	f.runs = append(f.runs, key)
-	return f.runErrors[key]
+func TestClientNegotiatesOldestAndNewestSupportedEngineAPIs(t *testing.T) {
+	for _, apiVersion := range []string{client.MinAPIVersion, client.MaxAPIVersion} {
+		t.Run(apiVersion, func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				mu.Lock()
+				paths = append(paths, request.URL.Path)
+				mu.Unlock()
+				if request.URL.Path == "/_ping" {
+					response.Header().Set("API-Version", apiVersion)
+					_, _ = response.Write([]byte("OK"))
+					return
+				}
+				switch {
+				case strings.HasSuffix(request.URL.Path, "/services"):
+					_, _ = response.Write([]byte("[]"))
+				case strings.HasSuffix(request.URL.Path, "/containers/json"):
+					_, _ = response.Write([]byte("[]"))
+				case strings.HasSuffix(request.URL.Path, "/networks"):
+					_, _ = response.Write([]byte("[]"))
+				case strings.HasSuffix(request.URL.Path, "/volumes"):
+					_, _ = response.Write([]byte(`{"Volumes":[],"Warnings":[]}`))
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			defer server.Close()
+			api, err := New(Config{Host: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer api.Close()
+			if _, err := api.Inventory(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, suffix := range []string{"/services", "/containers/json", "/networks", "/volumes"} {
+				want := "/v" + apiVersion + suffix
+				found := false
+				for _, path := range paths {
+					found = found || path == want
+				}
+				if !found {
+					t.Fatalf("paths = %#v, missing %s", paths, want)
+				}
+			}
+		})
+	}
+}
+
+type fakeEngine struct {
+	services     []swarm.Service
+	containers   []container.Summary
+	networks     []network.Summary
+	volumes      []volume.Volume
+	listErr      error
+	removeErrors map[string]error
+	removed      []string
+}
+
+func (f *fakeEngine) ServiceList(context.Context, client.ServiceListOptions) (client.ServiceListResult, error) {
+	return client.ServiceListResult{Items: f.services}, f.listErr
+}
+func (f *fakeEngine) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{Items: f.containers}, f.listErr
+}
+func (f *fakeEngine) NetworkList(context.Context, client.NetworkListOptions) (client.NetworkListResult, error) {
+	return client.NetworkListResult{Items: f.networks}, f.listErr
+}
+func (f *fakeEngine) VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error) {
+	return client.VolumeListResult{Items: f.volumes}, f.listErr
+}
+func (f *fakeEngine) ServiceRemove(_ context.Context, id string, _ client.ServiceRemoveOptions) (client.ServiceRemoveResult, error) {
+	return client.ServiceRemoveResult{}, f.removedResource("service", id)
+}
+func (f *fakeEngine) ContainerRemove(_ context.Context, id string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	return client.ContainerRemoveResult{}, f.removedResource("container", id)
+}
+func (f *fakeEngine) NetworkRemove(_ context.Context, id string, _ client.NetworkRemoveOptions) (client.NetworkRemoveResult, error) {
+	return client.NetworkRemoveResult{}, f.removedResource("network", id)
+}
+func (f *fakeEngine) VolumeRemove(_ context.Context, id string, _ client.VolumeRemoveOptions) (client.VolumeRemoveResult, error) {
+	return client.VolumeRemoveResult{}, f.removedResource("volume", id)
+}
+func (f *fakeEngine) removedResource(kind, id string) error {
+	key := kind + ":" + id
+	f.removed = append(f.removed, key)
+	return f.removeErrors[key]
 }

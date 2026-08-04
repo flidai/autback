@@ -219,6 +219,12 @@ Buildx/BuildKit, and HTTPS. Docker Swarm and the initial CAS implementation are 
 server internals. Hetzner is the current host, not a product dependency, and Terraform
 remains the provisioning source of truth for dedicated infrastructure.
 
+Server-owned Docker resource inventory and removal use the typed Moby Engine client with
+API-version negotiation rather than parsing Docker CLI output. The adapter keeps SDK types
+behind `internal/adapter/docker`; operation cleanup consumes only its narrow resource port.
+Compatibility tests exercise both the oldest and newest API versions supported by the
+pinned client. Native Buildx remains the intentional client-facing image-build boundary.
+
 ## Deliberately absent client paths
 
 The CLI has one transport and execution contract: Connect/HTTPS to the shared service.

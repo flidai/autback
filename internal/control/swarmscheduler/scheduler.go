@@ -114,8 +114,13 @@ func (s *Scheduler) Cancel(ctx context.Context, id string) error {
 	return s.config.Client.Cancel(ctx, id)
 }
 
-func (s *Scheduler) ManagedJobs(ctx context.Context) ([]protocol.Job, error) {
-	return s.config.Client.List(ctx)
+func (s *Scheduler) ManagedJobs(ctx context.Context) ([]control.RuntimeJob, error) {
+	results, err := s.config.Client.ListResults(ctx)
+	jobs := make([]control.RuntimeJob, 0, len(results))
+	for _, result := range results {
+		jobs = append(jobs, control.RuntimeJob{ID: result.ID, Job: result.Job, Err: result.Err})
+	}
+	return jobs, err
 }
 
 func (s *Scheduler) Remove(ctx context.Context, id string) error {

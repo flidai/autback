@@ -108,6 +108,64 @@ func TestRunOnceActivatesAdmittedJobWhenServiceExists(t *testing.T) {
 	}
 }
 
+func TestRunOnceIsolatesPoisonedRuntimeResourceAndConvergesOtherWork(t *testing.T) {
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	finished, exitCode := now, 0
+	poisonedErr := errors.New("malformed service task")
+	store := &fakeStore{
+		jobs: map[string]control.Job{
+			"job-poisoned": {ID: "job-poisoned", Status: protocol.StatusRunning},
+			"job-healthy":  {ID: "job-healthy", Status: protocol.StatusRunning},
+		},
+		builds: map[string]control.Build{"build-stale": {ID: "build-stale", Status: control.BuildRunning}},
+	}
+	scheduler := &fakeScheduler{
+		managed:  []protocol.Job{{ID: "job-healthy", Status: protocol.StatusSucceeded, FinishedAt: &finished, ExitCode: &exitCode, CreatedAt: now}},
+		poisoned: map[string]error{"job-poisoned": poisonedErr},
+	}
+	dispatcher := &fakeDispatcher{}
+	reconciler := New(Config{Store: store, Scheduler: scheduler, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+
+	err := reconciler.RunOnce(context.Background())
+	if !errors.Is(err, poisonedErr) {
+		t.Fatalf("RunOnce error = %v, want poisoned resource error", err)
+	}
+	if store.jobs["job-healthy"].Status != protocol.StatusSucceeded {
+		t.Fatalf("healthy job = %#v", store.jobs["job-healthy"])
+	}
+	if store.jobs["job-poisoned"].Status != protocol.StatusRunning {
+		t.Fatalf("poisoned job was mutated = %#v", store.jobs["job-poisoned"])
+	}
+	if store.builds["build-stale"].Status != control.BuildCancelled {
+		t.Fatalf("stale build = %#v", store.builds["build-stale"])
+	}
+	if len(dispatcher.released) != 2 {
+		t.Fatalf("released operations = %#v, want stale build and healthy job", dispatcher.released)
+	}
+}
+
+func TestRunOnceDoesNotMarkJobsLostDuringDockerDaemonOutage(t *testing.T) {
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	want := errors.New("Docker daemon unavailable")
+	store := &fakeStore{
+		jobs:   map[string]control.Job{"job-running": {ID: "job-running", Status: protocol.StatusRunning}},
+		builds: map[string]control.Build{"build-stale": {ID: "build-stale", Status: control.BuildRunning}},
+	}
+	reconciler := New(Config{
+		Store: store, Scheduler: &fakeScheduler{listErr: want}, Dispatcher: &fakeDispatcher{}, Now: func() time.Time { return now },
+	})
+
+	if err := reconciler.RunOnce(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("RunOnce error = %v, want daemon error", err)
+	}
+	if store.jobs["job-running"].Status != protocol.StatusRunning {
+		t.Fatalf("job during outage = %#v", store.jobs["job-running"])
+	}
+	if store.builds["build-stale"].Status != control.BuildCancelled {
+		t.Fatalf("independent stale build did not converge = %#v", store.builds["build-stale"])
+	}
+}
+
 type fakeDispatcher struct{ released []control.Operation }
 
 func (f *fakeDispatcher) Release(_ context.Context, kind control.OperationKind, id string) error {
@@ -194,12 +252,21 @@ func (f *fakeStore) SyncJob(_ context.Context, id string, remote protocol.Job) (
 }
 
 type fakeScheduler struct {
-	managed []protocol.Job
-	removed []string
+	managed  []protocol.Job
+	poisoned map[string]error
+	listErr  error
+	removed  []string
 }
 
-func (f *fakeScheduler) ManagedJobs(context.Context) ([]protocol.Job, error) {
-	return append([]protocol.Job(nil), f.managed...), nil
+func (f *fakeScheduler) ManagedJobs(context.Context) ([]control.RuntimeJob, error) {
+	results := make([]control.RuntimeJob, 0, len(f.managed)+len(f.poisoned))
+	for _, job := range f.managed {
+		results = append(results, control.RuntimeJob{ID: job.ID, Job: job})
+	}
+	for id, err := range f.poisoned {
+		results = append(results, control.RuntimeJob{ID: id, Err: err})
+	}
+	return results, f.listErr
 }
 
 func (f *fakeScheduler) Remove(_ context.Context, id string) error {

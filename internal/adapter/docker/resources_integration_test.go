@@ -42,7 +42,11 @@ func TestResourceManagerCleansRealOperationResources(t *testing.T) {
 	}
 	waitForSwarmInfrastructure(t, ctx)
 
-	client := New(Config{})
+	client, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
 	store := &integrationBaselineStore{}
 	manager := operationcleanup.NewResourceManager(operationcleanup.ResourceManagerConfig{
 		Store: store, Runtime: client, Wait: func(context.Context, time.Duration) error { return nil },

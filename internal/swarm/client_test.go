@@ -131,3 +131,34 @@ func TestCreateRejectsMissingProjectImage(t *testing.T) {
 		t.Fatalf("Docker invoked for invalid spec: %#v", commands.runs)
 	}
 }
+
+func TestListResultsKeepsHealthyJobsWhenOneServiceIsMalformed(t *testing.T) {
+	commands := &fakeCommander{outputs: map[string]string{
+		"service ls --filter label=autback.managed=true --format {{.Name}}": "poisoned\nhealthy\n",
+		"service inspect poisoned": "not-json",
+		"service inspect healthy": `[{
+          "CreatedAt":"2026-08-01T10:00:00Z",
+          "Spec":{"Name":"healthy","Labels":{"autback.managed":"true"},"TaskTemplate":{"ContainerSpec":{"Args":["true"]}}}
+        }]`,
+		"service ps -q --no-trunc healthy": "task-healthy\n",
+		"inspect task-healthy":             `[{"Status":{"State":"complete","Timestamp":"2026-08-01T10:01:00Z","ContainerStatus":{"ExitCode":0}}}]`,
+	}}
+
+	results, err := newClient(commands).ListResults(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %#v", results)
+	}
+	byID := map[string]JobResult{}
+	for _, result := range results {
+		byID[result.ID] = result
+	}
+	if byID["poisoned"].Err == nil {
+		t.Fatalf("poisoned result = %#v", byID["poisoned"])
+	}
+	if byID["healthy"].Err != nil || byID["healthy"].Job.Status != protocol.StatusSucceeded {
+		t.Fatalf("healthy result = %#v", byID["healthy"])
+	}
+}

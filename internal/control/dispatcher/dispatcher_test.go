@@ -156,6 +156,49 @@ func TestDispatcherActivatesJobOnlyAfterSchedulerCreatesService(t *testing.T) {
 	}
 }
 
+func TestDispatcherCapturesResourceBaselineBeforeCreatingRuntime(t *testing.T) {
+	ctx := context.Background()
+	store, projectID := queueFixture(t)
+	job := queueJob(t, store, projectID, "resource-baseline-before-runtime")
+	prepared := false
+	preparer := admissionPreparerFunc(func(_ context.Context, operation control.Operation) error {
+		if operation.ID != job.ID || operation.State != control.OperationAdmitting {
+			t.Fatalf("prepared operation = %#v", operation)
+		}
+		prepared = true
+		return nil
+	})
+	scheduler := &fakeScheduler{onCreate: func(control.Job) error {
+		if !prepared {
+			t.Fatal("runtime created before resource baseline")
+		}
+		return nil
+	}}
+	d := dispatcher.New(store, scheduler, dispatcher.WithAdmissionPreparer(preparer))
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDispatcherRequeuesOperationWhenResourceBaselineFails(t *testing.T) {
+	ctx := context.Background()
+	store, projectID := queueFixture(t)
+	job := queueJob(t, store, projectID, "resource-baseline-failure")
+	want := errors.New("Docker daemon unavailable")
+	d := dispatcher.New(store, &fakeScheduler{}, dispatcher.WithAdmissionPreparer(admissionPreparerFunc(func(context.Context, control.Operation) error {
+		return want
+	})))
+
+	if err := d.RunOnce(ctx); !errors.Is(err, want) {
+		t.Fatalf("RunOnce error = %v, want %v", err, want)
+	}
+	state, err := store.OperationState(ctx, control.OperationJob, job.ID)
+	if err != nil || state != control.OperationQueued {
+		t.Fatalf("operation state = %s, %v; want queued", state, err)
+	}
+}
+
 func TestDispatcherForwardsCancellationRequestedDuringAdmission(t *testing.T) {
 	ctx := context.Background()
 	store, projectID := queueFixture(t)
@@ -304,6 +347,12 @@ type fakeScheduler struct {
 
 type blockingScheduler struct {
 	started chan struct{}
+}
+
+type admissionPreparerFunc func(context.Context, control.Operation) error
+
+func (f admissionPreparerFunc) Prepare(ctx context.Context, operation control.Operation) error {
+	return f(ctx, operation)
 }
 
 func (s *blockingScheduler) Create(ctx context.Context, _ control.Job) error {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
+	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 	"github.com/flidai/autback/internal/protocol"
 )
 
@@ -220,6 +221,47 @@ func TestOperationCleanupLifecycleSurvivesRestartAndBlocksFIFO(t *testing.T) {
 		t.Fatalf("released operation = %#v, %v", operation, err)
 	}
 	assertNextOperation(t, store, control.OperationJob, second.ID)
+}
+
+func TestResourceBaselineIsImmutableAndSurvivesRestart(t *testing.T) {
+	root := t.TempDir()
+	pepper := []byte("test-pepper-that-is-at-least-32-bytes")
+	store, err := controlsqlite.Open(root, pepper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "resource-baseline", RequestHash: "resource-baseline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := operationcleanup.ResourceSet{Containers: []string{"container-before"}, Networks: []string{"network-before"}, Volumes: []string{"volume-before"}}
+	if err := store.SaveResourceBaseline(ctx, control.OperationJob, job.ID, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveResourceBaseline(ctx, control.OperationJob, job.ID, operationcleanup.ResourceSet{Containers: []string{"must-not-replace"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = controlsqlite.Open(root, pepper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	got, err := store.ResourceBaseline(ctx, control.OperationJob, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Containers) != 1 || got.Containers[0] != want.Containers[0] || len(got.Networks) != 1 || got.Networks[0] != want.Networks[0] || len(got.Volumes) != 1 || got.Volumes[0] != want.Volumes[0] {
+		t.Fatalf("resource baseline = %#v, want %#v", got, want)
+	}
 }
 
 func TestTerminalWritesBeginCleanupInTheSameTransaction(t *testing.T) {

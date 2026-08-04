@@ -17,6 +17,7 @@ var ErrDraining = errors.New("dispatcher is draining")
 type Store interface {
 	operationcleanup.Store
 	AcquireNextOperation(context.Context) (*control.Operation, error)
+	RequeueAdmittingOperation(context.Context, control.OperationKind, string) error
 	ActivateOperation(context.Context, control.OperationKind, string) error
 	Job(context.Context, string) (control.Job, error)
 	FailJob(context.Context, string, string) (control.Job, error)
@@ -29,6 +30,10 @@ type Scheduler interface {
 
 type Capacity interface {
 	Admit(context.Context, func() error) error
+}
+
+type AdmissionPreparer interface {
+	Prepare(context.Context, control.Operation) error
 }
 
 type Option func(*Dispatcher)
@@ -49,6 +54,10 @@ func WithCleaner(cleaner operationcleanup.Cleaner) Option {
 	return func(dispatcher *Dispatcher) { dispatcher.cleaner = cleaner }
 }
 
+func WithAdmissionPreparer(preparer AdmissionPreparer) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.preparer = preparer }
+}
+
 func WithCleanupRetryDelay(delay time.Duration) Option {
 	return func(dispatcher *Dispatcher) { dispatcher.cleanupRetryDelay = delay }
 }
@@ -58,6 +67,7 @@ type Dispatcher struct {
 	scheduler Scheduler
 	capacity  Capacity
 	cleaner   operationcleanup.Cleaner
+	preparer  AdmissionPreparer
 	cleanups  *operationcleanup.Coordinator
 
 	advanceCtx        context.Context
@@ -223,6 +233,12 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 		}
 		if operation == nil {
 			return errors.Join(admissionErrors...)
+		}
+		if d.preparer != nil {
+			if err := d.preparer.Prepare(ctx, *operation); err != nil {
+				requeueErr := d.store.RequeueAdmittingOperation(ctx, operation.Kind, operation.ID)
+				return errors.Join(append(admissionErrors, fmt.Errorf("prepare operation %s resources: %w", operation.ID, err), requeueErr)...)
+			}
 		}
 		if operation.Kind == control.OperationBuild {
 			if err := d.store.ActivateOperation(ctx, operation.Kind, operation.ID); err != nil {

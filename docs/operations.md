@@ -83,6 +83,14 @@ worker-busy states; `released` is the tombstone proving teardown completed. Tran
 cleanup, capacity, or scheduler errors are recorded/logged and retried; they do not turn a
 completed build into a client-visible failure.
 
+Admission also stores a baseline of containers, networks, and volumes before creating the
+operation runtime. Cleanup waits ten seconds for Ryuk by default, removes every unprotected
+resource added during the exclusive operation window, and verifies the resulting inventory
+before releasing the lease. Set `AUTBACK_RESOURCE_CLEANUP_GRACE` to tune the Ryuk window and
+`AUTBACK_RESOURCE_CLEANUP_TIMEOUT` to tune the two-minute per-attempt bound. Docker outages
+or partial removals leave the operation in `cleaning`; the coordinator retries and resumes
+from the same baseline after restart. Images and BuildKit cache are deliberately excluded.
+
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
 rollback project images, applies recorded image last use, and reduces project caches from

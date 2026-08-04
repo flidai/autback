@@ -20,6 +20,7 @@ import (
 
 	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
+	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 	"github.com/flidai/autback/internal/protocol"
 )
 
@@ -225,6 +226,15 @@ CREATE TABLE IF NOT EXISTS control_queue (
 );
 CREATE INDEX IF NOT EXISTS control_queue_fifo_idx ON control_queue(state, sequence);
 CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(state) WHERE state = 'active';
+CREATE TABLE IF NOT EXISTS operation_resource_baselines (
+  kind TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  containers_json TEXT NOT NULL,
+  networks_json TEXT NOT NULL,
+  volumes_json TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  PRIMARY KEY(kind, operation_id)
+);
 `)
 	if err != nil {
 		return err
@@ -1314,6 +1324,18 @@ func (s *Store) WorkerBusy(ctx context.Context) (bool, error) {
 	return count > 0, err
 }
 
+func (s *Store) RequeueAdmittingOperation(ctx context.Context, kind control.OperationKind, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,leased_at=NULL WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationQueued, kind, id, control.OperationAdmitting)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ActivateOperation(ctx context.Context, kind control.OperationKind, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1517,6 +1539,47 @@ func (s *Store) OperationState(ctx context.Context, kind control.OperationKind, 
 func (s *Store) Operation(ctx context.Context, kind control.OperationKind, id string) (control.Operation, error) {
 	return scanOperation(s.db.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at,cleanup_attempts,cleanup_error,cleanup_updated_at
 FROM control_queue WHERE kind=? AND operation_id=?`, kind, id))
+}
+
+func (s *Store) SaveResourceBaseline(ctx context.Context, kind control.OperationKind, id string, resources operationcleanup.ResourceSet) error {
+	containers, err := json.Marshal(resources.Containers)
+	if err != nil {
+		return err
+	}
+	networks, err := json.Marshal(resources.Networks)
+	if err != nil {
+		return err
+	}
+	volumes, err := json.Marshal(resources.Volumes)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO operation_resource_baselines(kind,operation_id,containers_json,networks_json,volumes_json,captured_at)
+VALUES(?,?,?,?,?,?) ON CONFLICT(kind,operation_id) DO NOTHING`, kind, id, string(containers), string(networks), string(volumes), time.Now().UTC().UnixNano())
+	return err
+}
+
+func (s *Store) ResourceBaseline(ctx context.Context, kind control.OperationKind, id string) (operationcleanup.ResourceSet, error) {
+	var resources operationcleanup.ResourceSet
+	var containers, networks, volumes string
+	err := s.db.QueryRowContext(ctx, `SELECT containers_json,networks_json,volumes_json FROM operation_resource_baselines WHERE kind=? AND operation_id=?`, kind, id).
+		Scan(&containers, &networks, &volumes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return operationcleanup.ResourceSet{}, control.ErrNotFound
+	}
+	if err != nil {
+		return operationcleanup.ResourceSet{}, err
+	}
+	if err := json.Unmarshal([]byte(containers), &resources.Containers); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode container baseline: %w", err)
+	}
+	if err := json.Unmarshal([]byte(networks), &resources.Networks); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode network baseline: %w", err)
+	}
+	if err := json.Unmarshal([]byte(volumes), &resources.Volumes); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode volume baseline: %w", err)
+	}
+	return resources, nil
 }
 
 func scanOperation(row interface{ Scan(...any) error }) (control.Operation, error) {

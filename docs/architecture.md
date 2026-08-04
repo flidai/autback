@@ -175,6 +175,15 @@ Trusted test jobs may mount the worker Docker socket. The workspace is mounted a
 absolute path on the host and inside the runner so sibling Testcontainers can bind project
 files. Published ports are reachable from the runner, and Ryuk remains enabled for cleanup.
 
+Before each operation can create a runtime, Autback persists an inventory of unprotected
+Docker containers, networks, and volumes. Because the worker admits only one operation,
+every unprotected resource added after that baseline belongs to the operation. Terminal
+cleanup gives Ryuk a short grace period, then removes the difference in reverse dependency
+order (containers, networks, volumes) and verifies that none remain before releasing FIFO.
+The immutable baseline and cleanup state survive control-plane or Docker restarts. Swarm
+task containers and explicitly `autback.managed=true` infrastructure are excluded; images
+and BuildKit records remain governed by capacity/LRU policy rather than per-job deletion.
+
 Docker access is root-equivalent host control, not an isolation boundary. The service only
 accepts trusted repositories and trusted pull requests. Running untrusted code requires a
 VM or equivalent strong sandbox per job and is a future architecture decision.

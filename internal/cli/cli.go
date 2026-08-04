@@ -129,7 +129,7 @@ func defaults(streams IO) IO {
 func usage(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
   autback init [--project <project>]
-  autback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] -- <command> [arguments...]
+  autback [--token <token>] exec [--project <project>] [--image <digest>] [--detach] [--timeout 15m] [--workdir <path>] [--env KEY=VALUE] [--cache NAME=/absolute/path] [--secret-env NAME=ENV_KEY] [--secret-file NAME=/run/secrets/PATH] -- <command> [arguments...]
   autback [--token <token>] build [--project <project>] [-- <buildx arguments...>]
   autback [--token <token>] image show [--project <project>]
   autback [--token <token>] image activate [--project <project>] --image <digest>

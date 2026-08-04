@@ -58,3 +58,19 @@ func TestPreparingCacheRecordsDurableLastUse(t *testing.T) {
 		t.Fatalf("cache last use = %s, want after %s", info.ModTime(), old)
 	}
 }
+
+func TestSecretSpecUsesOperationSnapshotAndDedicatedTargets(t *testing.T) {
+	root := t.TempDir()
+	job := control.Job{ID: "job-1", ProjectID: "project-1", Secrets: []control.SecretBinding{
+		{Name: "registry-token", Environment: "REGISTRY_TOKEN"},
+		{Name: "signing-key", File: "/run/secrets/signing-key"},
+	}}
+	spec := specForJob(Config{JobsRoot: root}, job)
+	if !spec.HasSecrets || len(spec.Secrets) != 1 {
+		t.Fatalf("secret spec = %#v", spec)
+	}
+	wantSource := filepath.Join(root, job.ID, "secrets", "001-signing-key")
+	if spec.Secrets[0].Source != wantSource || spec.Secrets[0].Target != "/run/secrets/signing-key" {
+		t.Fatalf("secret mounts = %#v", spec.Secrets)
+	}
+}

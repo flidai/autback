@@ -75,7 +75,8 @@ after an ambiguous transport failure before attempting a different operation.
 and users. At most one operation is active on the initial worker. A queued build has
 `BUILD_STATUS_QUEUED` and no BuildKit connection; clients poll `GetBuild` by stable ID until
 it becomes running, then receive a fresh operation-scoped connection. `CancelBuild` removes
-a waiting build or terminates the active build record and advances the queue. `GetBuild`
+a waiting build or terminates the active build record and schedules durable cleanup. The
+next FIFO entry is admitted only after that cleanup releases the worker reservation. `GetBuild`
 renews the lease while the authenticated client is waiting or building. The service expires
 an abandoned queued or running build after two minutes by default; this is a worker safety
 bound, not a scheduler priority.
@@ -89,6 +90,20 @@ server lease-policy upgrade from silently admitting a client that cannot keep it
 The API exposes no priorities, resource sizes, or task graph. Parallelism is part of the
 single admitted command, not separate dispatcher policy. The deprecated v1 `cpus` and
 `memory` fields remain wire-compatible but are ignored.
+
+## Job secrets
+
+`PrepareJob.secrets` is the only credential-bearing job declaration. Each item contains a
+project-scoped reference name and either an environment key or a file path below
+`/run/secrets`; the message never carries the value. `Job.secrets` returns the same
+references for inspection and idempotent replay. Environment targets cannot overlap public
+environment fields or server-owned `AUTBACK_*` keys.
+
+The server resolves references only after the FIFO lease is acquired. A revoked or missing
+reference fails the job permanently and advances after durable cleanup. Generic command or
+environment values using `secret://` or `${{ secrets.* }}` syntax are rejected so older
+workflows migrate to `--secret-env NAME=KEY` or
+`--secret-file NAME=/run/secrets/PATH` instead of persisting an interpolation token.
 
 ## Pagination
 

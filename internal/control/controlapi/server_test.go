@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -108,7 +109,17 @@ func TestGetJobRepairsStatusAfterAdmissionLeaseReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.scheduler.complete(prepared.Msg.Job.Id, protocol.StatusSucceeded, 0)
-	if err := fixture.store.ReleaseOperation(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
+	if err := fixture.store.BeginOperationCleanup(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := fixture.store.ClaimOperationCleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation == nil || operation.ID != prepared.Msg.Job.Id {
+		t.Fatalf("cleanup operation = %#v", operation)
+	}
+	if err := fixture.store.CompleteOperationCleanup(ctx, control.OperationJob, prepared.Msg.Job.Id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,17 +168,22 @@ func TestBuildsAndJobsShareStrictFIFOAdmission(t *testing.T) {
 	if _, err := client.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: first.Id})); err != nil {
 		t.Fatal(err)
 	}
-	runningBuild, err := client.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
-	if err != nil {
-		t.Fatal(err)
+	var runningBuild *connect.Response[autbackv1.GetBuildResponse]
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runningBuild, err = client.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: build.Msg.Build.Id}))
+		if err == nil && runningBuild.Msg.Build.Status == autbackv1.BuildStatus_BUILD_STATUS_RUNNING {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if runningBuild.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
-		t.Fatalf("admitted build = %#v", runningBuild.Msg)
+	if err != nil || runningBuild == nil || runningBuild.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || runningBuild.Msg.Buildkit == nil {
+		t.Fatalf("admitted build = %#v, %v", runningBuild, err)
 	}
 	if _, err := client.FinishBuild(ctx, connect.NewRequest(&autbackv1.FinishBuildRequest{Id: build.Msg.Build.Id})); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline = time.Now().Add(time.Second)
 	for fixture.scheduler.createdCount() != 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -304,6 +320,72 @@ func TestJobAdmissionValidatesAndPersistsGenericProjectCaches(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func TestJobAdmissionPersistsOnlySecretReferences(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	request := &autbackv1.PrepareJobRequest{
+		IdempotencyKey: "first-class-secrets", Project: "example",
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64), Command: []string{"task", "ci"},
+		Secrets: []*autbackv1.JobSecret{
+			{Name: "registry-token", Target: &autbackv1.JobSecret_Environment{Environment: "REGISTRY_TOKEN"}},
+			{Name: "signing-key", Target: &autbackv1.JobSecret_File{File: "/run/secrets/signing-key"}},
+		},
+	}
+	prepared, err := client.PrepareJob(context.Background(), connect.NewRequest(request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.Msg.Job.Secrets; len(got) != 2 || got[0].Name != "registry-token" || got[0].GetEnvironment() != "REGISTRY_TOKEN" || got[1].GetFile() != "/run/secrets/signing-key" {
+		t.Fatalf("prepared secret references = %#v", got)
+	}
+	stored, err := fixture.store.Job(context.Background(), prepared.Msg.Job.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Secrets) != 2 || stored.Secrets[0].Environment != "REGISTRY_TOKEN" || stored.Secrets[1].File != "/run/secrets/signing-key" {
+		t.Fatalf("stored secret references = %#v", stored.Secrets)
+	}
+}
+
+func TestJobAdmissionRejectsLegacyAndOverlappingSecretFields(t *testing.T) {
+	fixture := newFixture(t)
+	client := fixture.client(fixture.bootstrap.Token)
+	base := &autbackv1.PrepareJobRequest{
+		IdempotencyKey: "invalid-secret-00", Project: "example",
+		Image: "ghcr.io/example/ci@sha256:" + strings.Repeat("a", 64), Command: []string{"task", "ci"},
+	}
+	tests := []func(*autbackv1.PrepareJobRequest){
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Environment = map[string]string{"TOKEN": "secret://registry-token"}
+		},
+		func(request *autbackv1.PrepareJobRequest) { request.Command = []string{"echo", "${{ secrets.TOKEN }}"} },
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Environment = map[string]string{"TOKEN": "public"}
+			request.Secrets = []*autbackv1.JobSecret{{Name: "registry-token", Target: &autbackv1.JobSecret_Environment{Environment: "TOKEN"}}}
+		},
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Secrets = []*autbackv1.JobSecret{{Name: "signing-key", Target: &autbackv1.JobSecret_File{File: "/tmp/signing-key"}}}
+		},
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Caches = []*autbackv1.CacheMount{{Name: "unsafe", Target: "/run/secrets"}}
+		},
+		func(request *autbackv1.PrepareJobRequest) {
+			request.Secrets = []*autbackv1.JobSecret{
+				{Name: "one", Target: &autbackv1.JobSecret_File{File: "/run/secrets/nested"}},
+				{Name: "two", Target: &autbackv1.JobSecret_File{File: "/run/secrets/nested/value"}},
+			}
+		},
+	}
+	for index, mutate := range tests {
+		request := proto.Clone(base).(*autbackv1.PrepareJobRequest)
+		request.IdempotencyKey = fmt.Sprintf("invalid-secret-%02d", index)
+		mutate(request)
+		if _, err := client.PrepareJob(context.Background(), connect.NewRequest(request)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("case %d error = %v", index, err)
+		}
 	}
 }
 
@@ -757,6 +839,7 @@ type fixture struct {
 	bootstrap control.BootstrapResult
 	scheduler *fakeScheduler
 	server    *httptest.Server
+	draining  *atomic.Bool
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -793,18 +876,20 @@ func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.
 	}
 	scheduler := &fakeScheduler{jobs: map[string]protocol.Job{}}
 	dispatch := dispatcher.New(store, scheduler, dispatcher.WithCapacity(capacity))
+	draining := &atomic.Bool{}
 	handler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority,
 		CASEndpoint: "cas.example:50051", CASInstance: "autback", BuildKitEndpoint: "buildkit.example:1234",
 		CredentialTTL: 15 * time.Minute, OIDCVerifier: verifier, Capacity: capacity,
 		RequiredBuildClientCapability: capability,
+		Ready:                         func() bool { return !draining.Load() },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return &fixture{store: store, bootstrap: bootstrap, scheduler: scheduler, server: server}
+	return &fixture{store: store, bootstrap: bootstrap, scheduler: scheduler, server: server, draining: draining}
 }
 
 func TestAdmissionRejectsBeforeIssuingDataPlaneCredentialsWhenCapacityIsExhausted(t *testing.T) {
@@ -873,6 +958,16 @@ func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("ready status = %d", response.StatusCode)
 	}
+	fixture.draining.Store(true)
+	response, err = http.Get(fixture.server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("draining status = %d", response.StatusCode)
+	}
+	fixture.draining.Store(false)
 
 	fixture.scheduler.checkErr = errors.New("swarm unavailable")
 	response, err = http.Get(fixture.server.URL + "/readyz")

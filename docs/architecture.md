@@ -67,6 +67,21 @@ The data planes remain upstream protocols:
 - Swarm node certificates identify workers independently from users. Only the control
   plane can reach the Swarm manager API.
 
+### Process lifecycle
+
+The control plane binds the HTTPS, CAS proxy, and BuildKit proxy listeners before it starts
+any serving or background component. A bind failure therefore aborts startup before
+`/readyz` can be advertised. Metrics collection, reconciliation, capacity maintenance,
+FIFO dispatch, both mTLS proxies, and the HTTP server then run under one process context.
+
+SIGTERM, SIGINT, or the first unexpected component exit starts the same bounded drain:
+readiness becomes unavailable, the dispatcher rejects new admission, and every component
+receives cancellation. Listeners stop in reverse startup order, admission and durable
+cleanup goroutines are joined, and SQLite closes only after every component has returned.
+Normal cancellation is not an operational error. Swarm jobs are intentionally detached
+from this process context; they continue running and the reconciler converges their state
+after restart.
+
 ## Authentication and authorization
 
 ### Local clients
@@ -160,6 +175,15 @@ Trusted test jobs may mount the worker Docker socket. The workspace is mounted a
 absolute path on the host and inside the runner so sibling Testcontainers can bind project
 files. Published ports are reachable from the runner, and Ryuk remains enabled for cleanup.
 
+Before each operation can create a runtime, Autback persists an inventory of unprotected
+Docker services, containers, networks, and volumes. Because the worker admits only one operation,
+every unprotected resource added after that baseline belongs to the operation. Terminal
+cleanup gives Ryuk a short grace period, then removes the difference in reverse dependency
+order (services, containers, networks, volumes) and verifies that none remain before releasing FIFO.
+The immutable baseline and cleanup state survive control-plane or Docker restarts. Swarm
+task containers and explicitly `autback.managed=true` infrastructure are excluded; images
+and BuildKit records remain governed by capacity/LRU policy rather than per-job deletion.
+
 Docker access is root-equivalent host control, not an isolation boundary. The service only
 accepts trusted repositories and trusted pull requests. Running untrusted code requires a
 VM or equivalent strong sandbox per job and is a future architecture decision.
@@ -169,7 +193,12 @@ VM or equivalent strong sandbox per job and is a future architecture decision.
 Builds and commands share one SQLite-backed FIFO. Submission order is represented by a
 monotonic database sequence, and exactly one row may hold the active worker lease. The
 dispatcher admits the oldest queued operation and makes no priority, fairness, or resource
-estimates. Queue and lease state survive a control-plane restart.
+estimates. An admitted operation moves through `queued`, `admitting`, `active`,
+`terminalizing`, `cleaning`, and `released`. Terminal results can be returned immediately,
+but terminalizing and cleaning continue to own the worker reservation so the next FIFO
+entry cannot overlap teardown. Cleanup attempts and the last error are durable; an
+idempotent cleanup resumes after a control-plane restart. Queue and lease state survive a
+control-plane restart.
 Active build leases have a configurable two-minute safety timeout. Released clients renew
 the lease while queued and while Buildx is running, so a killed or disconnected client
 cannot block every later operation indefinitely. Build admission requires the corresponding
@@ -189,6 +218,12 @@ The portable boundaries are Linux, Git, OCI, REAPI CAS/ByteStream, Dockerfiles,
 Buildx/BuildKit, and HTTPS. Docker Swarm and the initial CAS implementation are replaceable
 server internals. Hetzner is the current host, not a product dependency, and Terraform
 remains the provisioning source of truth for dedicated infrastructure.
+
+Server-owned Docker resource inventory and removal use the typed Moby Engine client with
+API-version negotiation rather than parsing Docker CLI output. The adapter keeps SDK types
+behind `internal/adapter/docker`; operation cleanup consumes only its narrow resource port.
+Compatibility tests exercise both the oldest and newest API versions supported by the
+pinned client. Native Buildx remains the intentional client-facing image-build boundary.
 
 ## Deliberately absent client paths
 

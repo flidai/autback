@@ -21,6 +21,7 @@ type PrincipalKind string
 const (
 	PrincipalDevice PrincipalKind = "device"
 	PrincipalGitHub PrincipalKind = "github"
+	PrincipalSystem PrincipalKind = "system"
 )
 
 type Principal struct {
@@ -157,11 +158,18 @@ type Job struct {
 	CancelRequested  bool
 	WorkerID         string
 	Caches           []CacheMount
+	Secrets          []SecretBinding
 }
 
 type CacheMount struct {
 	Name   string
 	Target string
+}
+
+type SecretBinding struct {
+	Name        string
+	Environment string
+	File        string
 }
 
 type PrepareJob struct {
@@ -172,6 +180,7 @@ type PrepareJob struct {
 	Environment      map[string]string
 	Timeout          time.Duration
 	Caches           []CacheMount
+	Secrets          []SecretBinding
 }
 
 type Idempotency struct {
@@ -204,17 +213,23 @@ const (
 type OperationState string
 
 const (
-	OperationQueued    OperationState = "queued"
-	OperationAdmitting OperationState = "admitting"
-	OperationActive    OperationState = "active"
+	OperationQueued        OperationState = "queued"
+	OperationAdmitting     OperationState = "admitting"
+	OperationActive        OperationState = "active"
+	OperationTerminalizing OperationState = "terminalizing"
+	OperationCleaning      OperationState = "cleaning"
+	OperationReleased      OperationState = "released"
 )
 
 type Operation struct {
-	Kind       OperationKind
-	ID         string
-	State      OperationState
-	AcceptedAt time.Time
-	LeasedAt   *time.Time
+	Kind             OperationKind
+	ID               string
+	State            OperationState
+	AcceptedAt       time.Time
+	LeasedAt         *time.Time
+	CleanupAttempts  int
+	CleanupError     string
+	CleanupUpdatedAt *time.Time
 }
 
 type QueueOperation struct {

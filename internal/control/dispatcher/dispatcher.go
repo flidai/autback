@@ -5,15 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flidai/autback/internal/control"
+	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 )
 
+var ErrDraining = errors.New("dispatcher is draining")
+
 type Store interface {
+	operationcleanup.Store
 	AcquireNextOperation(context.Context) (*control.Operation, error)
+	RequeueAdmittingOperation(context.Context, control.OperationKind, string) error
 	ActivateOperation(context.Context, control.OperationKind, string) error
-	ReleaseOperation(context.Context, control.OperationKind, string) error
 	Job(context.Context, string) (control.Job, error)
 	FailJob(context.Context, string, string) (control.Job, error)
 }
@@ -25,6 +30,10 @@ type Scheduler interface {
 
 type Capacity interface {
 	Admit(context.Context, func() error) error
+}
+
+type AdmissionPreparer interface {
+	Prepare(context.Context, control.Operation) error
 }
 
 type Option func(*Dispatcher)
@@ -41,23 +50,51 @@ func WithErrorHandler(handler func(error)) Option {
 	return func(dispatcher *Dispatcher) { dispatcher.onError = handler }
 }
 
+func WithCleaner(cleaner operationcleanup.Cleaner) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.cleaner = cleaner }
+}
+
+func WithAdmissionPreparer(preparer AdmissionPreparer) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.preparer = preparer }
+}
+
+func WithCleanupRetryDelay(delay time.Duration) Option {
+	return func(dispatcher *Dispatcher) { dispatcher.cleanupRetryDelay = delay }
+}
+
 type Dispatcher struct {
 	store     Store
 	scheduler Scheduler
 	capacity  Capacity
+	cleaner   operationcleanup.Cleaner
+	preparer  AdmissionPreparer
+	cleanups  *operationcleanup.Coordinator
 
-	advanceCtx     context.Context
-	onError        func(error)
-	advanceMu      sync.Mutex
-	advancing      bool
-	advancePending bool
+	advanceCtx        context.Context
+	onError           func(error)
+	cleanupRetryDelay time.Duration
+	advanceMu         sync.Mutex
+	advancing         bool
+	advancePending    bool
+	advanceWake       chan struct{}
+	advanceWG         sync.WaitGroup
+	draining          atomic.Bool
 }
 
 func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
-	dispatcher := &Dispatcher{store: store, scheduler: scheduler, advanceCtx: context.Background()}
+	dispatcher := &Dispatcher{
+		store: store, scheduler: scheduler, advanceCtx: context.Background(), cleanupRetryDelay: 5 * time.Second,
+		advanceWake: make(chan struct{}, 1),
+	}
 	for _, option := range options {
 		option(dispatcher)
 	}
+	dispatcher.cleanups = operationcleanup.New(store, dispatcher.cleaner,
+		operationcleanup.WithContext(dispatcher.advanceCtx),
+		operationcleanup.WithRetryDelay(dispatcher.cleanupRetryDelay),
+		operationcleanup.WithErrorHandler(dispatcher.reportError),
+		operationcleanup.WithCompleted(func(control.Operation) { dispatcher.Advance() }),
+	)
 	return dispatcher
 }
 
@@ -65,15 +102,57 @@ func New(store Store, scheduler Scheduler, options ...Option) *Dispatcher {
 // acknowledgement to capacity reclaim or runtime creation. Concurrent wakeups
 // are coalesced; transient failures retry until the server context ends.
 func (d *Dispatcher) Advance() {
+	if d.draining.Load() {
+		return
+	}
+	d.cleanups.Advance()
 	d.advanceMu.Lock()
+	if d.draining.Load() {
+		d.advanceMu.Unlock()
+		return
+	}
 	d.advancePending = true
 	if d.advancing {
+		select {
+		case d.advanceWake <- struct{}{}:
+		default:
+		}
 		d.advanceMu.Unlock()
 		return
 	}
 	d.advancing = true
+	d.advanceWG.Add(1)
 	d.advanceMu.Unlock()
-	go d.advance()
+	go func() {
+		defer d.advanceWG.Done()
+		d.advance()
+	}()
+}
+
+func (d *Dispatcher) Drain() {
+	d.draining.Store(true)
+	d.cleanups.Drain()
+}
+
+// Wait joins admission and cleanup work that started before Drain.
+func (d *Dispatcher) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		d.advanceWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return d.cleanups.Wait(ctx)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (d *Dispatcher) reportError(err error) {
+	if d.onError != nil {
+		d.onError(err)
+	}
 }
 
 func (d *Dispatcher) advance() {
@@ -83,9 +162,11 @@ func (d *Dispatcher) advance() {
 		d.advanceMu.Unlock()
 
 		if err := d.RunOnce(d.advanceCtx); err != nil {
-			if d.onError != nil {
-				d.onError(err)
+			if errors.Is(err, ErrDraining) || isContextCancellation(err, d.advanceCtx) {
+				d.finishAdvance()
+				return
 			}
+			d.reportError(err)
 			timer := time.NewTimer(5 * time.Second)
 			select {
 			case <-d.advanceCtx.Done():
@@ -97,6 +178,14 @@ func (d *Dispatcher) advance() {
 				}
 				d.finishAdvance()
 				return
+			case <-d.advanceWake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				continue
 			case <-timer.C:
 				continue
 			}
@@ -123,6 +212,9 @@ func (d *Dispatcher) finishAdvance() {
 // operation becomes active after its runtime is ready. Failed job admission is
 // terminal and does not block FIFO.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
+	if d.draining.Load() {
+		return ErrDraining
+	}
 	if d.capacity != nil {
 		return d.capacity.Admit(ctx, func() error { return d.runOnce(ctx) })
 	}
@@ -130,6 +222,9 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 }
 
 func (d *Dispatcher) runOnce(ctx context.Context) error {
+	if d.draining.Load() {
+		return ErrDraining
+	}
 	var admissionErrors []error
 	for {
 		operation, err := d.store.AcquireNextOperation(ctx)
@@ -138,6 +233,23 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 		}
 		if operation == nil {
 			return errors.Join(admissionErrors...)
+		}
+		if d.preparer != nil {
+			if err := d.preparer.Prepare(ctx, *operation); err != nil {
+				var permanent interface{ Permanent() bool }
+				if errors.As(err, &permanent) && permanent.Permanent() && operation.Kind == control.OperationJob {
+					admissionErrors = append(admissionErrors, fmt.Errorf("prepare operation %s: %w", operation.ID, err))
+					if _, failErr := d.store.FailJob(ctx, operation.ID, err.Error()); failErr != nil {
+						return errors.Join(append(admissionErrors, failErr)...)
+					}
+					if releaseErr := d.cleanups.Request(ctx, control.OperationJob, operation.ID); releaseErr != nil {
+						return errors.Join(append(admissionErrors, releaseErr)...)
+					}
+					return errors.Join(admissionErrors...)
+				}
+				requeueErr := d.store.RequeueAdmittingOperation(ctx, operation.Kind, operation.ID)
+				return errors.Join(append(admissionErrors, fmt.Errorf("prepare operation %s resources: %w", operation.ID, err), requeueErr)...)
+			}
 		}
 		if operation.Kind == control.OperationBuild {
 			if err := d.store.ActivateOperation(ctx, operation.Kind, operation.ID); err != nil {
@@ -150,14 +262,17 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 			return errors.Join(append(admissionErrors, fmt.Errorf("read admitted job %s: %w", operation.ID, err))...)
 		}
 		if err := d.scheduler.Create(ctx, job); err != nil {
+			if isContextCancellation(err, ctx) {
+				return errors.Join(append(admissionErrors, err)...)
+			}
 			admissionErrors = append(admissionErrors, fmt.Errorf("admit job %s: %w", operation.ID, err))
 			if _, failErr := d.store.FailJob(ctx, operation.ID, err.Error()); failErr != nil {
 				return errors.Join(append(admissionErrors, failErr)...)
 			}
-			if releaseErr := d.store.ReleaseOperation(ctx, control.OperationJob, operation.ID); releaseErr != nil {
+			if releaseErr := d.cleanups.Request(ctx, control.OperationJob, operation.ID); releaseErr != nil {
 				return errors.Join(append(admissionErrors, releaseErr)...)
 			}
-			continue
+			return errors.Join(admissionErrors...)
 		}
 		if err := d.store.ActivateOperation(ctx, operation.Kind, operation.ID); err != nil {
 			return errors.Join(append(admissionErrors, fmt.Errorf("activate job %s: %w", operation.ID, err))...)
@@ -176,8 +291,9 @@ func (d *Dispatcher) runOnce(ctx context.Context) error {
 }
 
 func (d *Dispatcher) Release(ctx context.Context, kind control.OperationKind, id string) error {
-	if err := d.store.ReleaseOperation(ctx, kind, id); err != nil {
-		return err
-	}
-	return d.RunOnce(ctx)
+	return d.cleanups.Request(ctx, kind, id)
+}
+
+func isContextCancellation(err error, ctx context.Context) bool {
+	return ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }

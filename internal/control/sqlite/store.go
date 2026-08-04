@@ -20,6 +20,7 @@ import (
 
 	"github.com/flidai/autback/internal/capacity"
 	"github.com/flidai/autback/internal/control"
+	operationcleanup "github.com/flidai/autback/internal/operation/cleanup"
 	"github.com/flidai/autback/internal/protocol"
 )
 
@@ -183,6 +184,7 @@ CREATE TABLE IF NOT EXISTS control_jobs (
   command_json TEXT NOT NULL,
   working_directory TEXT NOT NULL,
   environment_json TEXT NOT NULL,
+  secrets_json TEXT NOT NULL DEFAULT '[]',
   caches_json TEXT NOT NULL DEFAULT '[]',
   root_digest TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
@@ -218,10 +220,23 @@ CREATE TABLE IF NOT EXISTS control_queue (
   state TEXT NOT NULL,
   accepted_at INTEGER NOT NULL,
   leased_at INTEGER,
+	cleanup_attempts INTEGER NOT NULL DEFAULT 0,
+	cleanup_error TEXT NOT NULL DEFAULT '',
+	cleanup_updated_at INTEGER NOT NULL DEFAULT 0,
   UNIQUE(kind, operation_id)
 );
 CREATE INDEX IF NOT EXISTS control_queue_fifo_idx ON control_queue(state, sequence);
 CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(state) WHERE state = 'active';
+CREATE TABLE IF NOT EXISTS operation_resource_baselines (
+  kind TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  services_json TEXT NOT NULL DEFAULT '[]',
+  containers_json TEXT NOT NULL,
+  networks_json TEXT NOT NULL,
+  volumes_json TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  PRIMARY KEY(kind, operation_id)
+);
 `)
 	if err != nil {
 		return err
@@ -231,8 +246,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(
 	}{
 		{"control_jobs", "idempotency_key"}, {"control_jobs", "request_hash"},
 		{"control_jobs", "caches_json"},
+		{"control_jobs", "secrets_json"},
 		{"control_builds", "idempotency_key"}, {"control_builds", "request_hash"},
 		{"projects", "active_image"}, {"projects", "previous_image"},
+		{"control_queue", "cleanup_error"},
+		{"operation_resource_baselines", "services_json"},
 	} {
 		if err := s.ensureTextColumn(ctx, column.table, column.name); err != nil {
 			return err
@@ -241,11 +259,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(
 	if err := s.ensureIntegerColumn(ctx, "projects", "allow_image_overrides", 1); err != nil {
 		return err
 	}
+	if err := s.ensureIntegerColumn(ctx, "control_queue", "cleanup_attempts", 0); err != nil {
+		return err
+	}
+	if err := s.ensureIntegerColumn(ctx, "control_queue", "cleanup_updated_at", 0); err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, `
 CREATE UNIQUE INDEX IF NOT EXISTS control_jobs_idempotency_idx ON control_jobs(project_id,idempotency_key) WHERE idempotency_key <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS control_builds_idempotency_idx ON control_builds(project_id,idempotency_key) WHERE idempotency_key <> '';
 DROP INDEX IF EXISTS control_queue_one_active_idx;
-CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_reserved_idx ON control_queue((1)) WHERE state IN ('admitting','active');
+DROP INDEX IF EXISTS control_queue_one_reserved_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_reserved_idx ON control_queue((1)) WHERE state IN ('admitting','active','terminalizing','cleaning');
 `)
 	if err != nil {
 		return err
@@ -260,8 +285,11 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 	allowed := map[string]bool{
 		"control_jobs.idempotency_key": true, "control_jobs.request_hash": true,
 		"control_jobs.caches_json":       true,
+		"control_jobs.secrets_json":      true,
 		"control_builds.idempotency_key": true, "control_builds.request_hash": true,
 		"projects.active_image": true, "projects.previous_image": true,
+		"control_queue.cleanup_error":                true,
+		"operation_resource_baselines.services_json": true,
 	}
 	if !allowed[table+"."+column] {
 		return errors.New("unsupported migration column")
@@ -288,7 +316,10 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 		return nil
 	}
 	defaultValue := `''`
-	if table == "control_jobs" && column == "caches_json" {
+	if table == "control_jobs" && (column == "caches_json" || column == "secrets_json") {
+		defaultValue = `'[]'`
+	}
+	if table == "operation_resource_baselines" && column == "services_json" {
 		defaultValue = `'[]'`
 	}
 	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` TEXT NOT NULL DEFAULT `+defaultValue)
@@ -296,10 +327,15 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 }
 
 func (s *Store) ensureIntegerColumn(ctx context.Context, table, column string, defaultValue int) error {
-	if table != "projects" || column != "allow_image_overrides" || defaultValue != 1 {
+	allowed := map[string]int{
+		"projects.allow_image_overrides":   1,
+		"control_queue.cleanup_attempts":   0,
+		"control_queue.cleanup_updated_at": 0,
+	}
+	if value, ok := allowed[table+"."+column]; !ok || value != defaultValue {
 		return errors.New("unsupported integer migration column")
 	}
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(projects)`)
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return err
 	}
@@ -317,7 +353,7 @@ func (s *Store) ensureIntegerColumn(ctx context.Context, table, column string, d
 	if err := rows.Close(); err != nil || found {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN allow_image_overrides INTEGER NOT NULL DEFAULT 1`)
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` INTEGER NOT NULL DEFAULT `+fmt.Sprint(defaultValue))
 	return err
 }
 
@@ -890,6 +926,12 @@ func (s *Store) Audit(ctx context.Context, principal control.Principal, projectI
 	return err
 }
 
+// RecordSecretAccess records only the reference name and job identity. Secret
+// material must never enter the control database or its backups.
+func (s *Store) RecordSecretAccess(ctx context.Context, projectID, jobID, name string) error {
+	return s.Audit(ctx, control.Principal{Kind: control.PrincipalSystem, Subject: "dispatcher"}, projectID, "job.secret.access", jobID, map[string]string{"name": name})
+}
+
 func actorID(principal control.Principal) string {
 	if principal.UserID != "" {
 		return principal.UserID
@@ -906,6 +948,10 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 	if err != nil {
 		return control.Job{}, false, err
 	}
+	secrets, err := json.Marshal(input.Secrets)
+	if err != nil {
+		return control.Job{}, false, err
+	}
 	caches, err := json.Marshal(input.Caches)
 	if err != nil {
 		return control.Job{}, false, err
@@ -915,7 +961,7 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 		return control.Job{}, false, err
 	}
 	defer tx.Rollback()
-	row := tx.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id,request_hash FROM control_jobs WHERE project_id=? AND idempotency_key=?`, input.ProjectID, idempotency.Key)
+	row := tx.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id,request_hash FROM control_jobs WHERE project_id=? AND idempotency_key=?`, input.ProjectID, idempotency.Key)
 	job, storedHash, err := scanIdempotentJob(row)
 	if err == nil {
 		if storedHash != idempotency.RequestHash {
@@ -935,10 +981,10 @@ func (s *Store) CreatePreparedJob(ctx context.Context, input control.PrepareJob,
 		ID: id, ProjectID: input.ProjectID, Image: input.Image,
 		Command: append([]string(nil), input.Command...), WorkingDirectory: input.WorkingDirectory,
 		Environment: cloneMap(input.Environment), Status: protocol.StatusPreparing, Timeout: input.Timeout,
-		Caches: cloneCaches(input.Caches), CreatedAt: now,
+		Caches: cloneCaches(input.Caches), Secrets: cloneSecrets(input.Secrets), CreatedAt: now,
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO control_jobs(id,project_id,image,command_json,working_directory,environment_json,caches_json,status,timeout_millis,cpus,memory,created_at,idempotency_key,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		job.ID, job.ProjectID, job.Image, string(command), job.WorkingDirectory, string(environment), string(caches), job.Status,
+	_, err = tx.ExecContext(ctx, `INSERT INTO control_jobs(id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,status,timeout_millis,cpus,memory,created_at,idempotency_key,request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		job.ID, job.ProjectID, job.Image, string(command), job.WorkingDirectory, string(environment), string(secrets), string(caches), job.Status,
 		job.Timeout.Milliseconds(), "", "", unix(now), idempotency.Key, idempotency.RequestHash)
 	if err != nil {
 		return control.Job{}, false, err
@@ -978,12 +1024,12 @@ func (s *Store) StartJob(ctx context.Context, id, rootDigest string) (control.Jo
 }
 
 func (s *Store) Job(ctx context.Context, id string) (control.Job, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE id=?`, id)
 	return scanJob(row)
 }
 
 func (s *Store) ScheduledJobs(ctx context.Context) ([]control.Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.project_id,j.image,j.command_json,j.working_directory,j.environment_json,j.caches_json,j.root_digest,j.status,j.timeout_millis,j.cpus,j.memory,j.created_at,j.started_at,j.finished_at,j.exit_code,j.error_message,j.cancel_requested,j.worker_id FROM control_jobs j JOIN control_queue q ON q.kind=? AND q.operation_id=j.id AND q.state IN (?,?) WHERE j.status IN (?,?) ORDER BY j.created_at,j.id`, control.OperationJob, control.OperationAdmitting, control.OperationActive, protocol.StatusQueued, protocol.StatusRunning)
+	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.project_id,j.image,j.command_json,j.working_directory,j.environment_json,j.secrets_json,j.caches_json,j.root_digest,j.status,j.timeout_millis,j.cpus,j.memory,j.created_at,j.started_at,j.finished_at,j.exit_code,j.error_message,j.cancel_requested,j.worker_id FROM control_jobs j JOIN control_queue q ON q.kind=? AND q.operation_id=j.id AND q.state IN (?,?) WHERE j.status IN (?,?) ORDER BY j.created_at,j.id`, control.OperationJob, control.OperationAdmitting, control.OperationActive, protocol.StatusQueued, protocol.StatusRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -1003,7 +1049,7 @@ func (s *Store) ListJobs(ctx context.Context, projectID string, pageSize int, pa
 	if pageSize < 1 || pageSize > 100 {
 		return control.JobPage{}, errors.New("job page size must be between 1 and 100")
 	}
-	query := `SELECT id,project_id,image,command_json,working_directory,environment_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE project_id=?`
+	query := `SELECT id,project_id,image,command_json,working_directory,environment_json,secrets_json,caches_json,root_digest,status,timeout_millis,cpus,memory,created_at,started_at,finished_at,exit_code,error_message,cancel_requested,worker_id FROM control_jobs WHERE project_id=?`
 	arguments := []any{projectID}
 	if pageToken != "" {
 		cursor, err := s.decodeJobCursor(projectID, pageToken)
@@ -1056,7 +1102,10 @@ func (s *Store) SyncJob(ctx context.Context, id string, remote protocol.Job) (co
 		return control.Job{}, err
 	}
 	if remote.Status.Terminal() {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationJob, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+			control.OperationTerminalizing, time.Now().UTC().UnixNano(), control.OperationJob, id,
+			control.OperationAdmitting, control.OperationActive); err != nil {
 			return control.Job{}, err
 		}
 	}
@@ -1086,7 +1135,8 @@ WHERE id=? AND status NOT IN (?,?,?,?,?)`,
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, control.OperationJob, id, control.OperationQueued); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=? WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationReleased, time.Now().UTC().UnixNano(), control.OperationJob, id, control.OperationQueued); err != nil {
 		return control.Job{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1111,7 +1161,10 @@ func (s *Store) FailJob(ctx context.Context, id, message string) (control.Job, e
 	if count != 1 {
 		return control.Job{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationJob, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?,?)`,
+		control.OperationTerminalizing, time.Now().UTC().UnixNano(), control.OperationJob, id,
+		control.OperationQueued, control.OperationAdmitting, control.OperationActive); err != nil {
 		return control.Job{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1246,7 +1299,8 @@ func (s *Store) AcquireNextOperation(ctx context.Context) (*control.Operation, e
 	}
 	defer tx.Rollback()
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?)`, control.OperationAdmitting, control.OperationActive).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?,?,?)`,
+		control.OperationAdmitting, control.OperationActive, control.OperationTerminalizing, control.OperationCleaning).Scan(&active); err != nil {
 		return nil, err
 	}
 	if active > 0 {
@@ -1284,8 +1338,21 @@ func (s *Store) AcquireNextOperation(ctx context.Context) (*control.Operation, e
 // worker lease. Queued operations do not make destructive maintenance unsafe.
 func (s *Store) WorkerBusy(ctx context.Context) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?)`, control.OperationAdmitting, control.OperationActive).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_queue WHERE state IN (?,?,?,?)`,
+		control.OperationAdmitting, control.OperationActive, control.OperationTerminalizing, control.OperationCleaning).Scan(&count)
 	return count > 0, err
+}
+
+func (s *Store) RequeueAdmittingOperation(ctx context.Context, kind control.OperationKind, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,leased_at=NULL WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationQueued, kind, id, control.OperationAdmitting)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) ActivateOperation(ctx context.Context, kind control.OperationKind, id string) error {
@@ -1314,9 +1381,101 @@ func (s *Store) ActivateOperation(ctx context.Context, kind control.OperationKin
 	return tx.Commit()
 }
 
-func (s *Store) ReleaseOperation(ctx context.Context, kind control.OperationKind, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state IN (?,?)`, kind, id, control.OperationAdmitting, control.OperationActive)
-	return err
+// BeginOperationCleanup durably transfers the single worker reservation from
+// execution to teardown. It is idempotent so terminal refreshes, reconciliation,
+// and client retries can all request the same transition safely.
+func (s *Store) BeginOperationCleanup(ctx context.Context, kind control.OperationKind, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?,?)`,
+		control.OperationTerminalizing, time.Now().UTC().UnixNano(), kind, id,
+		control.OperationQueued, control.OperationAdmitting, control.OperationActive)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	state, err := s.OperationState(ctx, kind, id)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case control.OperationTerminalizing, control.OperationCleaning, control.OperationReleased:
+		return nil
+	default:
+		return fmt.Errorf("operation %s %s cannot begin cleanup from state %s", kind, id, state)
+	}
+}
+
+// ClaimOperationCleanup returns the oldest teardown reservation. A cleanup
+// left in progress by a process crash is deliberately claimed again; cleaners
+// must therefore be idempotent.
+func (s *Store) ClaimOperationCleanup(ctx context.Context) (*control.Operation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	operation, err := scanOperation(tx.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at,cleanup_attempts,cleanup_error,cleanup_updated_at
+FROM control_queue WHERE state IN (?,?) ORDER BY sequence LIMIT 1`, control.OperationTerminalizing, control.OperationCleaning))
+	if errors.Is(err, control.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	updatedAt := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_attempts=cleanup_attempts+1,cleanup_error='',cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+		control.OperationCleaning, updatedAt.UnixNano(), operation.Kind, operation.ID,
+		control.OperationTerminalizing, control.OperationCleaning)
+	if err != nil {
+		return nil, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return nil, errors.New("operation cleanup was concurrently claimed")
+	}
+	operation.State = control.OperationCleaning
+	operation.CleanupAttempts++
+	operation.CleanupError = ""
+	operation.CleanupUpdatedAt = &updatedAt
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &operation, nil
+}
+
+func (s *Store) RecordOperationCleanupFailure(ctx context.Context, kind control.OperationKind, id, message string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET cleanup_error=?,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state=?`, message, time.Now().UTC().UnixNano(), kind, id, control.OperationCleaning)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return control.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CompleteOperationCleanup(ctx context.Context, kind control.OperationKind, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_error='',cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?)`,
+		control.OperationReleased, time.Now().UTC().UnixNano(), kind, id,
+		control.OperationTerminalizing, control.OperationCleaning)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	state, err := s.OperationState(ctx, kind, id)
+	if err != nil {
+		return err
+	}
+	if state == control.OperationReleased {
+		return nil
+	}
+	return fmt.Errorf("operation %s %s cannot complete cleanup from state %s", kind, id, state)
 }
 
 // EmergencyStopActiveOperation atomically protects the control plane from a
@@ -1367,7 +1526,8 @@ func (s *Store) EmergencyStopActiveOperation(ctx context.Context, message string
 	default:
 		return nil, fmt.Errorf("unsupported operation kind %q", operation.Kind)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, operation.Kind, operation.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=? WHERE kind=? AND operation_id=?`,
+		control.OperationTerminalizing, time.Now().UTC().UnixNano(), operation.Kind, operation.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1377,7 +1537,8 @@ func (s *Store) EmergencyStopActiveOperation(ctx context.Context, message string
 }
 
 func (s *Store) CancelQueuedOperation(ctx context.Context, kind control.OperationKind, id string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=? AND state=?`, kind, id, control.OperationQueued)
+	result, err := s.db.ExecContext(ctx, `UPDATE control_queue SET state=?,cleanup_updated_at=? WHERE kind=? AND operation_id=? AND state=?`,
+		control.OperationReleased, time.Now().UTC().UnixNano(), kind, id, control.OperationQueued)
 	if err != nil {
 		return false, err
 	}
@@ -1395,11 +1556,65 @@ func (s *Store) OperationState(ctx context.Context, kind control.OperationKind, 
 }
 
 func (s *Store) Operation(ctx context.Context, kind control.OperationKind, id string) (control.Operation, error) {
+	return scanOperation(s.db.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at,cleanup_attempts,cleanup_error,cleanup_updated_at
+FROM control_queue WHERE kind=? AND operation_id=?`, kind, id))
+}
+
+func (s *Store) SaveResourceBaseline(ctx context.Context, kind control.OperationKind, id string, resources operationcleanup.ResourceSet) error {
+	services, err := json.Marshal(resources.Services)
+	if err != nil {
+		return err
+	}
+	containers, err := json.Marshal(resources.Containers)
+	if err != nil {
+		return err
+	}
+	networks, err := json.Marshal(resources.Networks)
+	if err != nil {
+		return err
+	}
+	volumes, err := json.Marshal(resources.Volumes)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO operation_resource_baselines(kind,operation_id,services_json,containers_json,networks_json,volumes_json,captured_at)
+VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,operation_id) DO NOTHING`, kind, id, string(services), string(containers), string(networks), string(volumes), time.Now().UTC().UnixNano())
+	return err
+}
+
+func (s *Store) ResourceBaseline(ctx context.Context, kind control.OperationKind, id string) (operationcleanup.ResourceSet, error) {
+	var resources operationcleanup.ResourceSet
+	var services, containers, networks, volumes string
+	err := s.db.QueryRowContext(ctx, `SELECT services_json,containers_json,networks_json,volumes_json FROM operation_resource_baselines WHERE kind=? AND operation_id=?`, kind, id).
+		Scan(&services, &containers, &networks, &volumes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return operationcleanup.ResourceSet{}, control.ErrNotFound
+	}
+	if err != nil {
+		return operationcleanup.ResourceSet{}, err
+	}
+	if err := json.Unmarshal([]byte(services), &resources.Services); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode service baseline: %w", err)
+	}
+	if err := json.Unmarshal([]byte(containers), &resources.Containers); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode container baseline: %w", err)
+	}
+	if err := json.Unmarshal([]byte(networks), &resources.Networks); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode network baseline: %w", err)
+	}
+	if err := json.Unmarshal([]byte(volumes), &resources.Volumes); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode volume baseline: %w", err)
+	}
+	return resources, nil
+}
+
+func scanOperation(row interface{ Scan(...any) error }) (control.Operation, error) {
 	var operation control.Operation
 	var acceptedAt int64
 	var leasedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT kind,operation_id,state,accepted_at,leased_at FROM control_queue WHERE kind=? AND operation_id=?`, kind, id).
-		Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt, &leasedAt)
+	var cleanupUpdatedAt int64
+	err := row.Scan(&operation.Kind, &operation.ID, &operation.State, &acceptedAt, &leasedAt,
+		&operation.CleanupAttempts, &operation.CleanupError, &cleanupUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return control.Operation{}, control.ErrNotFound
 	}
@@ -1410,6 +1625,10 @@ func (s *Store) Operation(ctx context.Context, kind control.OperationKind, id st
 	if leasedAt.Valid {
 		value := time.Unix(0, leasedAt.Int64).UTC()
 		operation.LeasedAt = &value
+	}
+	if cleanupUpdatedAt != 0 {
+		value := time.Unix(0, cleanupUpdatedAt).UTC()
+		operation.CleanupUpdatedAt = &value
 	}
 	return operation, nil
 }
@@ -1488,7 +1707,10 @@ func (s *Store) FinishBuild(ctx context.Context, id string, status control.Build
 	if count != 1 {
 		return control.Build{}, control.ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM control_queue WHERE kind=? AND operation_id=?`, control.OperationBuild, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE control_queue SET state=CASE WHEN state=? THEN ? ELSE ? END,cleanup_updated_at=?
+WHERE kind=? AND operation_id=? AND state IN (?,?,?)`,
+		control.OperationQueued, control.OperationReleased, control.OperationTerminalizing, time.Now().UTC().UnixNano(),
+		control.OperationBuild, id, control.OperationQueued, control.OperationAdmitting, control.OperationActive); err != nil {
 		return control.Build{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1549,12 +1771,12 @@ func scanTrust(row interface{ Scan(...any) error }) (control.GitHubTrust, error)
 
 func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 	var job control.Job
-	var command, environment, caches, status string
+	var command, environment, secrets, caches, status string
 	var timeoutMillis, created int64
 	var started, finished, exitCode sql.NullInt64
 	var cancelled int
 	var legacyCPUs, legacyMemory string
-	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &caches,
+	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &secrets, &caches,
 		&job.RootDigest, &status, &timeoutMillis, &legacyCPUs, &legacyMemory, &created, &started, &finished,
 		&exitCode, &job.ErrorMessage, &cancelled, &job.WorkerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1566,6 +1788,9 @@ func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 		return control.Job{}, err
 	}
 	if err := json.Unmarshal([]byte(environment), &job.Environment); err != nil {
+		return control.Job{}, err
+	}
+	if err := json.Unmarshal([]byte(secrets), &job.Secrets); err != nil {
 		return control.Job{}, err
 	}
 	if err := json.Unmarshal([]byte(caches), &job.Caches); err != nil {
@@ -1582,12 +1807,12 @@ func scanJob(row interface{ Scan(...any) error }) (control.Job, error) {
 
 func scanIdempotentJob(row interface{ Scan(...any) error }) (control.Job, string, error) {
 	var job control.Job
-	var command, environment, caches, status, requestHash string
+	var command, environment, secrets, caches, status, requestHash string
 	var timeoutMillis, created int64
 	var started, finished, exitCode sql.NullInt64
 	var cancelled int
 	var legacyCPUs, legacyMemory string
-	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &caches,
+	if err := row.Scan(&job.ID, &job.ProjectID, &job.Image, &command, &job.WorkingDirectory, &environment, &secrets, &caches,
 		&job.RootDigest, &status, &timeoutMillis, &legacyCPUs, &legacyMemory, &created, &started, &finished,
 		&exitCode, &job.ErrorMessage, &cancelled, &job.WorkerID, &requestHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1599,6 +1824,9 @@ func scanIdempotentJob(row interface{ Scan(...any) error }) (control.Job, string
 		return control.Job{}, "", err
 	}
 	if err := json.Unmarshal([]byte(environment), &job.Environment); err != nil {
+		return control.Job{}, "", err
+	}
+	if err := json.Unmarshal([]byte(secrets), &job.Secrets); err != nil {
 		return control.Job{}, "", err
 	}
 	if err := json.Unmarshal([]byte(caches), &job.Caches); err != nil {
@@ -1777,4 +2005,8 @@ func cloneMap(input map[string]string) map[string]string {
 
 func cloneCaches(input []control.CacheMount) []control.CacheMount {
 	return append([]control.CacheMount(nil), input...)
+}
+
+func cloneSecrets(input []control.SecretBinding) []control.SecretBinding {
+	return append([]control.SecretBinding(nil), input...)
 }

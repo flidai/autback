@@ -1,7 +1,9 @@
 package console
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	controlsqlite "github.com/flidai/autback/internal/control/sqlite"
+	"github.com/flidai/autback/internal/operation/redact"
 	"github.com/flidai/autback/internal/protocol"
 )
 
@@ -110,6 +113,67 @@ func TestSQLiteSourceBuildsOperationDetailAndStreamsBoundedLogTail(t *testing.T)
 	}
 	if !open || !view.Available || !view.Truncated || !strings.HasSuffix(view.Content, "last useful line\n") || len(view.Content) > maxLogTailBytes {
 		t.Fatalf("log = open:%v available:%v truncated:%v bytes:%d suffix:%q", open, view.Available, view.Truncated, len(view.Content), tail(view.Content, 32))
+	}
+}
+
+func TestConsoleProjectionContainsSecretReferenceButNeverResolvedValue(t *testing.T) {
+	const sentinel = "autback-console-sentinel-secret-value"
+	store, bootstrap, principal := consoleStore(t)
+	ctx := context.Background()
+	job, _, err := store.CreatePreparedJob(ctx, control.PrepareJob{
+		ProjectID: bootstrap.Project.ID, Image: "runner@test", Command: []string{"task", "ci"}, Timeout: time.Minute,
+		Secrets: []control.SecretBinding{{Name: "registry-token", Environment: "REGISTRY_TOKEN"}},
+	}, control.Idempotency{Key: "console-secret", RequestHash: "console-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSecretAccess(ctx, bootstrap.Project.ID, job.ID, "registry-token"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FailJob(ctx, job.ID, "provider reference revoked"); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	redactor, err := redact.NewWriter(&logs, []string{sentinel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = redactor.Write([]byte("output " + sentinel + "\n"))
+	if err := redactor.Close(); err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewSQLiteSource(SQLiteSourceConfig{Store: store, Scheduler: &consoleScheduler{logs: logs.String()}, Version: "0.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := Route{Kind: RouteOperation, OperationKind: "job", OperationID: job.ID}
+	snapshot, err := source.Snapshot(ctx, principal, route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := source.SubscribeLog(ctx, principal, route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logView := <-updates
+	payload, err := json.Marshal(struct {
+		Snapshot Snapshot
+		Log      LogView
+	}{snapshot, logView})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), sentinel) {
+		t.Fatalf("console projection contains sentinel: %s", payload)
+	}
+	foundName := false
+	for _, event := range snapshot.Audit {
+		if event.Action == "job.secret.access" && event.Metadata["name"] == "registry-token" {
+			foundName = true
+		}
+	}
+	if !foundName {
+		t.Fatalf("console audit omits useful secret reference name: %#v", snapshot.Audit)
 	}
 }
 

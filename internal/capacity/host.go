@@ -2,16 +2,13 @@ package capacity
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -29,9 +26,24 @@ type ImagePolicy struct {
 	Protected  bool
 }
 
-type Commands interface {
-	Run(context.Context, ...string) error
-	Output(context.Context, ...string) ([]byte, error)
+type BuildCache interface {
+	Prune(context.Context, int64) error
+}
+
+type Runtime interface {
+	PruneContainers(context.Context, time.Duration, bool) error
+	PruneNetworks(context.Context, time.Duration) error
+	PruneVolumes(context.Context) error
+	PruneImages(context.Context, time.Duration) error
+	ListImages(context.Context) ([]RuntimeImage, error)
+	RemoveImage(context.Context, string) error
+}
+
+type RuntimeImage struct {
+	ID          string
+	RepoTags    []string
+	RepoDigests []string
+	CreatedAt   time.Time
 }
 
 type HostConfig struct {
@@ -40,7 +52,8 @@ type HostConfig struct {
 	CacheRoot    string
 	LockPath     string
 	Store        CapacityStore
-	Commands     Commands
+	Runtime      Runtime
+	BuildCache   BuildCache
 	Emergency    func(context.Context) error
 	Now          func() time.Time
 	DryRun       bool
@@ -53,9 +66,6 @@ type Host struct {
 func NewHost(config HostConfig) *Host {
 	if config.Now == nil {
 		config.Now = time.Now
-	}
-	if config.Commands == nil {
-		config.Commands = DockerCommands{}
 	}
 	return &Host{config: config}
 }
@@ -97,19 +107,34 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 		return h.finishReport(ctx, before, report, errors.Join(reclaimErrors...))
 	}
 
-	age := dockerAge(request.NormalObjectAge)
+	ageDuration := request.NormalObjectAge
+	if ageDuration <= 0 {
+		ageDuration = 24 * time.Hour
+	}
+	age := dockerAge(ageDuration)
 	containerCommand := []string{"container", "prune", "--force", "--filter", "label=org.testcontainers=true", "--filter", "until=" + age}
 	if request.Pressure {
-		age = "5m"
+		ageDuration = 5 * time.Minute
+		age = dockerAge(ageDuration)
 		containerCommand = []string{"container", "prune", "--force", "--filter", "until=" + age}
 	}
-	for _, command := range [][]string{containerCommand,
-		{"network", "prune", "--force", "--filter", "until=" + age},
-		{"volume", "prune", "--force"},
-	} {
+	runtimeCalls := []struct {
+		command []string
+		run     func() error
+	}{
+		{containerCommand, func() error {
+			return h.config.Runtime.PruneContainers(ctx, ageDuration, request.Pressure)
+		}},
+		{[]string{"network", "prune", "--force", "--filter", "until=" + age}, func() error { return h.config.Runtime.PruneNetworks(ctx, ageDuration) }},
+		{[]string{"volume", "prune", "--force"}, func() error { return h.config.Runtime.PruneVolumes(ctx) }},
+	}
+	for _, runtimeCall := range runtimeCalls {
+		command := runtimeCall.command
 		report.Commands = append(report.Commands, "docker "+joinCommand(command))
 		if !h.config.DryRun {
-			if err := h.config.Commands.Run(ctx, command...); err != nil {
+			if h.config.Runtime == nil {
+				reclaimErrors = append(reclaimErrors, errors.New("Docker capacity runtime is not configured"))
+			} else if err := runtimeCall.run(); err != nil {
 				reclaimErrors = append(reclaimErrors, fmt.Errorf("docker %s: %w", joinCommand(command), err))
 			}
 		}
@@ -128,7 +153,9 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 		imageCommand := []string{"image", "prune", "--force", "--filter", "until=" + age}
 		report.Commands = append(report.Commands, "docker "+joinCommand(imageCommand))
 		if !h.config.DryRun {
-			if err := h.config.Commands.Run(ctx, imageCommand...); err != nil {
+			if h.config.Runtime == nil {
+				reclaimErrors = append(reclaimErrors, errors.New("Docker capacity runtime is not configured"))
+			} else if err := h.config.Runtime.PruneImages(ctx, ageDuration); err != nil {
 				reclaimErrors = append(reclaimErrors, fmt.Errorf("docker %s: %w", joinCommand(imageCommand), err))
 			}
 		}
@@ -149,11 +176,12 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 	if !request.Pressure {
 		return h.finishReport(ctx, before, report, errors.Join(reclaimErrors...))
 	}
-	keepStorage := "2000"
-	buildkitCommand := []string{"exec", "autback-buildkit", "buildctl", "--addr", "tcp://127.0.0.1:1234", "prune", "--all", "--keep-storage", keepStorage}
-	report.Commands = append(report.Commands, "docker "+joinCommand(buildkitCommand))
+	const maxUsedBytes = int64(2_000_000_000)
+	report.Commands = append(report.Commands, "buildkit prune --all --max-used-space 2000000000")
 	if !h.config.DryRun {
-		if err := h.config.Commands.Run(ctx, buildkitCommand...); err != nil {
+		if h.config.BuildCache == nil {
+			reclaimErrors = append(reclaimErrors, errors.New("BuildKit capacity runtime is not configured"))
+		} else if err := h.config.BuildCache.Prune(ctx, maxUsedBytes); err != nil {
 			reclaimErrors = append(reclaimErrors, fmt.Errorf("prune BuildKit: %w", err))
 		}
 	}
@@ -161,30 +189,25 @@ func (h *Host) Reclaim(ctx context.Context, request ReclaimRequest) (ReclaimRepo
 }
 
 type dockerImage struct {
-	ID          string    `json:"Id"`
-	RepoTags    []string  `json:"RepoTags"`
-	RepoDigests []string  `json:"RepoDigests"`
-	Created     time.Time `json:"Created"`
-	lastUsed    time.Time
-	protected   bool
+	RuntimeImage
+	lastUsed  time.Time
+	protected bool
 }
 
 func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([]string, error) {
-	idsOutput, err := h.config.Commands.Output(ctx, "image", "ls", "--quiet", "--no-trunc")
+	if h.config.Runtime == nil {
+		return nil, errors.New("Docker capacity runtime is not configured")
+	}
+	runtimeImages, err := h.config.Runtime.ListImages(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list Docker images: %w", err)
 	}
-	ids := strings.Fields(string(idsOutput))
-	if len(ids) == 0 {
+	if len(runtimeImages) == 0 {
 		return nil, nil
 	}
-	inspectOutput, err := h.config.Commands.Output(ctx, append([]string{"image", "inspect"}, ids...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect Docker images: %w", err)
-	}
-	var images []dockerImage
-	if err := json.Unmarshal(inspectOutput, &images); err != nil {
-		return nil, fmt.Errorf("decode Docker images: %w", err)
+	images := make([]dockerImage, 0, len(runtimeImages))
+	for _, image := range runtimeImages {
+		images = append(images, dockerImage{RuntimeImage: image})
 	}
 	policies, err := h.config.Store.CapacityImagePolicies(ctx)
 	if err != nil {
@@ -195,7 +218,7 @@ func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([
 		byReference[policy.Reference] = policy
 	}
 	for index := range images {
-		images[index].lastUsed = images[index].Created
+		images[index].lastUsed = images[index].CreatedAt
 		for _, reference := range append(append([]string(nil), images[index].RepoTags...), images[index].RepoDigests...) {
 			policy, ok := byReference[reference]
 			if !ok {
@@ -224,7 +247,7 @@ func (h *Host) pruneUnusedImages(ctx context.Context, targetFreeBytes uint64) ([
 		if !h.config.DryRun {
 			// Docker refuses removal while any container references the image. That
 			// runtime ownership protection is intentional, so a conflict is skipped.
-			_ = h.config.Commands.Run(ctx, command...)
+			_ = h.config.Runtime.RemoveImage(ctx, image.ID)
 		}
 		if targetFreeBytes > 0 {
 			snapshot, snapshotErr := h.Snapshot(ctx)
@@ -445,29 +468,4 @@ func joinCommand(arguments []string) string {
 		result += argument
 	}
 	return result
-}
-
-type DockerCommands struct {
-	Binary string
-	Host   string
-}
-
-func (d DockerCommands) Run(ctx context.Context, arguments ...string) error {
-	_, err := d.Output(ctx, arguments...)
-	return err
-}
-
-func (d DockerCommands) Output(ctx context.Context, arguments ...string) ([]byte, error) {
-	binary := d.Binary
-	if binary == "" {
-		binary = "docker"
-	}
-	if d.Host != "" {
-		arguments = append([]string{"--host", d.Host}, arguments...)
-	}
-	output, err := exec.CommandContext(ctx, binary, arguments...).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", err, string(output))
-	}
-	return output, nil
 }

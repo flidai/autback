@@ -23,7 +23,7 @@ import (
 
 func TestParseExecUsesGenericProjectImageAndArbitraryArgv(t *testing.T) {
 	settings := config.Config{Service: &config.Service{Image: "image@sha256:digest"}}
-	got, err := parseExec(settings, "example", []string{"--timeout", "5m", "--workdir", "service", "--env", "CI=true", "--cache", "go-build=/root/.cache/go-build", "--cache", "modules=/go/pkg/mod", "--", "task", "test", "--race"})
+	got, err := parseExec(settings, "example", []string{"--timeout", "5m", "--workdir", "service", "--env", "CI=true", "--cache", "go-build=/root/.cache/go-build", "--cache", "modules=/go/pkg/mod", "--secret-env", "registry-token=REGISTRY_TOKEN", "--secret-file", "signing-key=/run/secrets/signing-key", "--", "task", "test", "--race"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,6 +35,9 @@ func TestParseExecUsesGenericProjectImageAndArbitraryArgv(t *testing.T) {
 	}
 	if len(got.caches) != 2 || got.caches[0].Name != "go-build" || got.caches[0].Target != "/root/.cache/go-build" || got.caches[1].Name != "modules" || got.caches[1].Target != "/go/pkg/mod" {
 		t.Fatalf("caches = %#v", got.caches)
+	}
+	if len(got.secrets) != 2 || got.secrets[0].Name != "registry-token" || got.secrets[0].GetEnvironment() != "REGISTRY_TOKEN" || got.secrets[1].GetFile() != "/run/secrets/signing-key" {
+		t.Fatalf("secrets = %#v", got.secrets)
 	}
 }
 

@@ -10,11 +10,11 @@ import (
 
 	"github.com/flidai/autback/internal/control"
 	"github.com/flidai/autback/internal/protocol"
-	"github.com/flidai/autback/internal/swarm"
+	jobsecrets "github.com/flidai/autback/internal/secrets"
 )
 
 type Config struct {
-	Client             *swarm.Client
+	Client             Client
 	CASAddress         string
 	CASInstance        string
 	JobsRoot           string
@@ -22,6 +22,54 @@ type Config struct {
 	CacheRoot          string
 	HostUID            string
 	HostGID            string
+}
+
+type Client interface {
+	Check(context.Context) error
+	ValidateImage(context.Context, string) error
+	Create(context.Context, Spec) (string, error)
+	Status(context.Context, string) (protocol.Job, error)
+	Logs(context.Context, string, bool, io.Writer) error
+	Cancel(context.Context, string) error
+	ListResults(context.Context) ([]JobResult, error)
+	Remove(context.Context, string) error
+}
+
+type Spec struct {
+	ID                 string
+	Image              string
+	CASAddress         string
+	CASInstance        string
+	RootDigest         string
+	JobsRoot           string
+	Command            []string
+	WorkingDirectory   string
+	Environment        map[string]string
+	EntrypointHostPath string
+	Timeout            time.Duration
+	CacheRoot          string
+	ProjectID          string
+	Caches             []CacheMount
+	Secrets            []SecretMount
+	HasSecrets         bool
+	HostUID            string
+	HostGID            string
+}
+
+type CacheMount struct {
+	Name   string
+	Target string
+}
+
+type SecretMount struct {
+	Source string
+	Target string
+}
+
+type JobResult struct {
+	ID  string
+	Job protocol.Job
+	Err error
 }
 
 type Scheduler struct {
@@ -44,12 +92,21 @@ func (s *Scheduler) Create(ctx context.Context, job control.Job) error {
 	return err
 }
 
-func specForJob(config Config, job control.Job) swarm.Spec {
-	caches := make([]swarm.CacheMount, 0, len(job.Caches))
+func specForJob(config Config, job control.Job) Spec {
+	caches := make([]CacheMount, 0, len(job.Caches))
 	for _, cache := range job.Caches {
-		caches = append(caches, swarm.CacheMount{Name: cache.Name, Target: cache.Target})
+		caches = append(caches, CacheMount{Name: cache.Name, Target: cache.Target})
 	}
-	return swarm.Spec{
+	secretMounts := make([]SecretMount, 0, len(job.Secrets))
+	for index, secret := range job.Secrets {
+		if secret.File != "" {
+			secretMounts = append(secretMounts, SecretMount{
+				Source: filepath.Join(config.JobsRoot, job.ID, "secrets", jobsecrets.ValueFile(index, secret.Name)),
+				Target: secret.File,
+			})
+		}
+	}
+	return Spec{
 		ID:    job.ID,
 		Image: job.Image, CASAddress: config.CASAddress, CASInstance: config.CASInstance,
 		RootDigest: job.RootDigest, JobsRoot: config.JobsRoot, Command: job.Command,
@@ -57,7 +114,7 @@ func specForJob(config Config, job control.Job) swarm.Spec {
 		EntrypointHostPath: config.EntrypointHostPath,
 		Timeout:            job.Timeout,
 		CacheRoot:          config.CacheRoot, ProjectID: job.ProjectID, Caches: caches,
-		HostUID: config.HostUID, HostGID: config.HostGID,
+		HostUID: config.HostUID, HostGID: config.HostGID, Secrets: secretMounts, HasSecrets: len(job.Secrets) > 0,
 	}
 }
 
@@ -114,8 +171,13 @@ func (s *Scheduler) Cancel(ctx context.Context, id string) error {
 	return s.config.Client.Cancel(ctx, id)
 }
 
-func (s *Scheduler) ManagedJobs(ctx context.Context) ([]protocol.Job, error) {
-	return s.config.Client.List(ctx)
+func (s *Scheduler) ManagedJobs(ctx context.Context) ([]control.RuntimeJob, error) {
+	results, err := s.config.Client.ListResults(ctx)
+	jobs := make([]control.RuntimeJob, 0, len(results))
+	for _, result := range results {
+		jobs = append(jobs, control.RuntimeJob{ID: result.ID, Job: result.Job, Err: result.Err})
+	}
+	return jobs, err
 }
 
 func (s *Scheduler) Remove(ctx context.Context, id string) error {

@@ -23,8 +23,35 @@ The actual bazel-remote and BuildKit daemons listen only on `127.0.0.1:50051` an
 `127.0.0.1:1234`. The private CA key, token pepper, SQLite control state, and audit data
 live under `/var/lib/autback` with service-user-only permissions.
 
-`/healthz` is process liveness. `/readyz` returns success only when both SQLite and
-Docker Swarm respond, so it is the endpoint to use for alerts and deployment verification.
+Job secret values are deliberately outside that tree. Mount an operator-managed tmpfs or
+secret-provider filesystem at `/run/autback/secret-store` (or set
+`AUTBACK_SECRET_ROOT`) and create private regular files at
+`<root>/<project-id>/<reference-name>`. Directories should be `0700` and values `0600`,
+owned by the Autback service user. Clients submit only reference names:
+
+```console
+autback exec \
+  --secret-env registry-token=REGISTRY_TOKEN \
+  --secret-file signing-key=/run/secrets/signing-key \
+  -- task ci
+```
+
+Replace a value atomically to rotate it and remove the file to revoke it. Queued jobs read
+the value current at admission; running jobs keep their operation-scoped snapshot. A
+revoked reference fails admission without blocking the next FIFO entry. Audit records name
+the project, job, and reference but never the value. Inspect `job.secret.access` events when
+investigating use.
+
+`/healthz` is process liveness. `/readyz` returns success only when the process is accepting
+work and both SQLite and Docker Swarm respond, so it is the endpoint to use for alerts and
+deployment verification. It returns `503` as soon as shutdown starts, before listeners or
+durable state are closed.
+
+Autback uses one coordinated 15-second shutdown budget. It first marks readiness as
+draining and rejects new FIFO admission, then cancels and joins HTTP, both mTLS proxies,
+metrics, reconciliation, capacity maintenance, dispatcher admission, and cleanup workers.
+SQLite closes last. Active Swarm jobs are detached and are not cancelled by process
+shutdown; after restart, reconciliation recovers their status and resumes durable cleanup.
 
 ## Capacity
 
@@ -36,9 +63,10 @@ control useful parallelism without allowing independent submissions to oversubsc
 worker.
 
 Queued operations consume control-plane state only. Swarm services and BuildKit credentials
-are created only after admission. A one-second reconciliation loop releases completed or
-lost detached jobs and immediately admits the next FIFO entry. Queue state and the active
-lease are persisted in `/var/lib/autback/control.db` and survive a server restart.
+are created only after admission. A one-second reconciliation loop terminalizes completed
+or lost detached jobs. A durable cleanup coordinator then releases the reservation and
+admits the next FIFO entry. Queue state, cleanup attempts/errors, and the active lease are
+persisted in `/var/lib/autback/control.db` and survive a server restart.
 Queued and running builds use a renewable lease so a killed or disconnected client cannot
 block the FIFO indefinitely. The CLI renews the lease while waiting and while Buildx runs;
 the server cancels a build after two minutes without a heartbeat by default
@@ -68,9 +96,30 @@ the worker is idle. Only the hard emergency floor may stop active work, and it d
 before any Docker, cache, or BuildKit reclaim begins.
 
 Terminal operation acknowledgements are independent of queue advancement. After durable
-completion is recorded, Autback responds to the client and advances the FIFO in a
-coalesced background loop. Transient capacity or scheduler errors are logged and retried;
-they do not turn a completed build into a client-visible failure.
+completion is recorded, Autback responds to the client, converges idempotent cleanup, and
+then advances the FIFO in coalesced background loops. `terminalizing` and `cleaning` remain
+worker-busy states; `released` is the tombstone proving teardown completed. Transient
+cleanup, capacity, or scheduler errors are recorded/logged and retried; they do not turn a
+completed build into a client-visible failure.
+
+Admission also stores a baseline of non-Autback services, containers, networks, and volumes before creating the
+operation runtime. Cleanup waits ten seconds for Ryuk by default, removes every unprotected
+resource added during the exclusive operation window, and verifies the resulting inventory
+before releasing the lease. Set `AUTBACK_RESOURCE_CLEANUP_GRACE` to tune the Ryuk window and
+`AUTBACK_RESOURCE_CLEANUP_TIMEOUT` to tune the two-minute per-attempt bound. Docker outages
+or partial removals leave the operation in `cleaning`; the coordinator retries and resumes
+from the same baseline after restart. Images and BuildKit cache are deliberately excluded.
+
+Runtime reconciliation is failure-isolated. A malformed Swarm service remains visible as
+an actionable reconciliation error while healthy terminal jobs and stale builds continue
+to converge. A daemon-wide list failure is never interpreted as proof that every service
+was lost; durable job state is preserved and retried when Docker recovers. Docker cleanup
+uses negotiated Engine APIs and treats typed not-found responses as idempotent success.
+
+The CLI removes its ephemeral native Buildx remote-driver record with an independent
+15-second deadline and three bounded attempts, even when the build context was cancelled.
+An already-missing builder is success; a persistent removal failure is returned instead of
+being silently discarded, so automation can retry without leaking local builder records.
 
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
@@ -179,7 +228,9 @@ sudo -u autback autback-server backup \
 The bundle contains a SQLite `VACUUM INTO` snapshot, token pepper, private PKI, and a
 SHA-256 manifest. Copy it to storage outside the worker and apply separate retention and
 encryption there. It deliberately excludes rebuildable CAS, BuildKit layers, job
-workspaces, and project caches.
+workspaces, project caches, and `/run/autback/secret-store`. Back up or regenerate the
+external secret provider under its own access and retention policy; restore/remount it
+before allowing new admission. Restored control state contains references only.
 
 Restore is offline and refuses to overwrite a data directory. Stop the service, move the
 old directory to a dated recovery path, restore, fix ownership, and start the service:

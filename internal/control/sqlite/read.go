@@ -69,7 +69,8 @@ COALESCE(j.project_id,b.project_id,'')
 FROM control_queue q
 LEFT JOIN control_jobs j ON q.kind='job' AND j.id=q.operation_id
 LEFT JOIN control_builds b ON q.kind='build' AND b.id=q.operation_id
-ORDER BY q.sequence`)
+WHERE q.state<>?
+ORDER BY q.sequence`, control.OperationReleased)
 	if err != nil {
 		return nil, err
 	}

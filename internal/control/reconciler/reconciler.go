@@ -21,7 +21,7 @@ type Store interface {
 }
 
 type Scheduler interface {
-	ManagedJobs(context.Context) ([]protocol.Job, error)
+	ManagedJobs(context.Context) ([]control.RuntimeJob, error)
 	Remove(context.Context, string) error
 }
 
@@ -61,38 +61,55 @@ func New(config Config) *Reconciler {
 
 func (r *Reconciler) RunOnce(ctx context.Context) error {
 	now := r.config.Now().UTC()
+	var reconciliationErrors []error
 	staleBuilds, err := r.config.Store.StaleBuilds(ctx, now.Add(-r.config.BuildLeaseTimeout))
 	if err != nil {
-		return fmt.Errorf("list stale builds: %w", err)
+		reconciliationErrors = append(reconciliationErrors, fmt.Errorf("list stale builds: %w", err))
 	}
 	for _, build := range staleBuilds {
 		if _, err := r.config.Store.FinishBuild(ctx, build.ID, control.BuildCancelled, 130); err != nil {
-			return fmt.Errorf("cancel stale build %s: %w", build.ID, err)
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("cancel stale build %s: %w", build.ID, err))
+			continue
 		}
 		if r.config.Dispatcher != nil {
 			if err := r.config.Dispatcher.Release(ctx, control.OperationBuild, build.ID); err != nil {
-				return fmt.Errorf("release stale build %s: %w", build.ID, err)
+				reconciliationErrors = append(reconciliationErrors, fmt.Errorf("release stale build %s: %w", build.ID, err))
 			}
 		}
 	}
 	scheduled, err := r.config.Store.ScheduledJobs(ctx)
 	if err != nil {
-		return fmt.Errorf("list scheduled jobs: %w", err)
+		reconciliationErrors = append(reconciliationErrors, fmt.Errorf("list scheduled jobs: %w", err))
 	}
-	managed, err := r.config.Scheduler.ManagedJobs(ctx)
-	if err != nil {
-		return fmt.Errorf("list managed jobs: %w", err)
+	managed, managedErr := r.config.Scheduler.ManagedJobs(ctx)
+	if managedErr != nil {
+		reconciliationErrors = append(reconciliationErrors, fmt.Errorf("list managed jobs: %w", managedErr))
 	}
 	remoteByID := make(map[string]protocol.Job, len(managed))
-	for _, job := range managed {
-		remoteByID[job.ID] = job
+	poisoned := make(map[string]bool)
+	for _, result := range managed {
+		if result.Err != nil {
+			poisoned[result.ID] = true
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("inspect managed job %s: %w", result.ID, result.Err))
+			continue
+		}
+		remoteByID[result.Job.ID] = result.Job
 	}
 	for _, job := range scheduled {
+		if poisoned[job.ID] {
+			continue
+		}
 		remote, ok := remoteByID[job.ID]
 		if !ok {
+			// A failed list is not evidence that an individual service is gone.
+			// Preserve its durable state and retry after daemon recovery.
+			if managedErr != nil {
+				continue
+			}
 			operation, operationErr := r.config.Store.Operation(ctx, control.OperationJob, job.ID)
 			if operationErr != nil && !errors.Is(operationErr, control.ErrNotFound) {
-				return fmt.Errorf("read admission lease for job %s: %w", job.ID, operationErr)
+				reconciliationErrors = append(reconciliationErrors, fmt.Errorf("read admission lease for job %s: %w", job.ID, operationErr))
+				continue
 			}
 			if operationErr == nil && operation.LeasedAt != nil && operation.LeasedAt.After(now.Add(-r.config.AdmissionGrace)) {
 				continue
@@ -102,30 +119,38 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 		} else {
 			operation, operationErr := r.config.Store.Operation(ctx, control.OperationJob, job.ID)
 			if operationErr != nil && !errors.Is(operationErr, control.ErrNotFound) {
-				return fmt.Errorf("read operation for job %s: %w", job.ID, operationErr)
+				reconciliationErrors = append(reconciliationErrors, fmt.Errorf("read operation for job %s: %w", job.ID, operationErr))
+				continue
 			}
 			if operationErr == nil && operation.State == control.OperationAdmitting {
 				if err := r.config.Store.ActivateOperation(ctx, control.OperationJob, job.ID); err != nil {
-					return fmt.Errorf("activate admitted job %s: %w", job.ID, err)
+					reconciliationErrors = append(reconciliationErrors, fmt.Errorf("activate admitted job %s: %w", job.ID, err))
+					continue
 				}
 			}
 		}
 		stored, err := r.config.Store.SyncJob(ctx, job.ID, remote)
 		if err != nil {
-			return fmt.Errorf("synchronize job %s: %w", job.ID, err)
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("synchronize job %s: %w", job.ID, err))
+			continue
 		}
 		if stored.Status.Terminal() && r.config.Dispatcher != nil {
 			if err := r.config.Dispatcher.Release(ctx, control.OperationJob, job.ID); err != nil {
-				return fmt.Errorf("release job %s: %w", job.ID, err)
+				reconciliationErrors = append(reconciliationErrors, fmt.Errorf("release job %s: %w", job.ID, err))
 			}
 		}
 	}
 
 	cutoff := now.Add(-r.config.ServiceRetention)
-	for _, remote := range managed {
+	for _, result := range managed {
+		if result.Err != nil {
+			continue
+		}
+		remote := result.Job
 		stored, err := r.config.Store.Job(ctx, remote.ID)
 		if err != nil && !errors.Is(err, control.ErrNotFound) {
-			return fmt.Errorf("read managed job %s: %w", remote.ID, err)
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("read managed job %s: %w", remote.ID, err))
+			continue
 		}
 		removeAfter := remote.CreatedAt
 		if err == nil {
@@ -144,8 +169,8 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 			continue
 		}
 		if err := r.config.Scheduler.Remove(ctx, remote.ID); err != nil {
-			return fmt.Errorf("remove managed job %s: %w", remote.ID, err)
+			reconciliationErrors = append(reconciliationErrors, fmt.Errorf("remove managed job %s: %w", remote.ID, err))
 		}
 	}
-	return nil
+	return errors.Join(reconciliationErrors...)
 }

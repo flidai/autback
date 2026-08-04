@@ -62,6 +62,11 @@ The installer explicitly sets `AUTBACK_WORKER_OWNERSHIP=exclusive`. Without that
 declaration the controller is observation-only, preventing local Autback development from
 pruning unrelated resources on a shared Docker Desktop or OrbStack daemon.
 
+Maintenance and FIFO admission use one inter-process gate. Routine and soft-pressure
+cleanup reports `deferred` while a job or build is admitting or running, then retries once
+the worker is idle. Only the hard emergency floor may stop active work, and it does so
+before any Docker, cache, or BuildKit reclaim begins.
+
 The controller keeps terminal Swarm services for one hour through the ordinary reconciler
 and job workspaces/logs for seven days. It cleans unused Docker objects, protects active and
 rollback project images, applies recorded image last use, and reduces project caches from

@@ -160,7 +160,12 @@ type activationFailStore struct {
 
 type fakeCapacity struct{ err error }
 
-func (f fakeCapacity) Ensure(context.Context) error { return f.err }
+func (f fakeCapacity) Admit(_ context.Context, reserve func() error) error {
+	if f.err != nil {
+		return f.err
+	}
+	return reserve()
+}
 
 func (s activationFailStore) ActivateOperation(context.Context, control.OperationKind, string) error {
 	return s.err

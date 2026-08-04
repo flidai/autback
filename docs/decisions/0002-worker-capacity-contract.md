@@ -64,16 +64,21 @@ On the current approximately 150 GiB worker this means a 30 GiB soft floor, a 37
 post-reclaim target, and an 8 GiB hard floor.
 
 Before issuing CAS or BuildKit credentials and before leasing the FIFO head, Autback
-measures capacity. Below the soft floor it synchronously reclaims toward the post-reclaim
-target. If the soft floor still cannot be restored, the request fails with Connect
+measures capacity. Admission and maintenance share an inter-process gate through the FIFO
+reservation, so there is no idle-check/admission race. Below the soft floor it
+synchronously reclaims toward the post-reclaim target only while the worker is idle. If
+an operation is admitting or active, routine and soft-pressure collection is deferred;
+Docker, BuildKit, and project-cache resources are never pruned underneath live work. If
+the soft floor still cannot be restored once idle, the request fails with Connect
 `RESOURCE_EXHAUSTED`; existing queued work remains queued. Below the hard floor, Autback
 atomically terminalizes the one admitting or active operation, revokes its data-plane
 access through the durable operation lease, stops its Swarm runtime when applicable, and
-reclaims again.
+only then reclaims.
 
 ### Reclaim order
 
-The serialized controller uses an inter-process lock and remeasures after each tier:
+The serialized controller uses the same inter-process lock for admission and maintenance
+and remeasures after each tier:
 
 1. terminal job workspaces older than seven days, selected from SQLite rather than file
    timestamps;
@@ -114,6 +119,8 @@ capacity filesystem cannot be measured.
 
 - Jobs retain elastic CPU and memory access; the controller reserves storage for the OS
   and control plane rather than assigning fixed per-job disk quotas.
+- Normal cleanup may wait for a long operation to finish. Bounded producers and the hard
+  emergency floor keep that delay safe without risking corruption of active work.
 - Warm project images, rollback images, CAS content, and BuildKit records have explicit
   protection or native LRU behavior.
 - Every persistent or Docker-backed producer has a bound, so no manual janitor is required

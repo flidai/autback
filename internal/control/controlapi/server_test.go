@@ -783,7 +783,13 @@ func TestAdmissionRejectsBeforeIssuingDataPlaneCredentialsWhenCapacityIsExhauste
 type fakeCapacity struct{ err error }
 
 func (f fakeCapacity) Ensure(context.Context) error { return f.err }
-func (f fakeCapacity) Check(context.Context) error  { return f.err }
+func (f fakeCapacity) Admit(_ context.Context, reserve func() error) error {
+	if f.err != nil {
+		return f.err
+	}
+	return reserve()
+}
+func (f fakeCapacity) Check(context.Context) error { return f.err }
 
 func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	fixture := newFixture(t)

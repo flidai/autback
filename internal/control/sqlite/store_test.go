@@ -262,6 +262,44 @@ func TestEmergencyStopAtomicallyTerminatesActiveOperation(t *testing.T) {
 	}
 }
 
+func TestWorkerBusyIncludesAdmissionAndActiveButNotQueued(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	bootstrap, err := store.Bootstrap(ctx, control.Bootstrap{UserName: "Owner", ProjectSlug: "example", ProjectName: "Example", TokenName: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := store.CreatePreparedJob(ctx, testPreparedJob(bootstrap.Project.ID), control.Idempotency{Key: "worker-busy-job", RequestHash: "worker-busy-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueJob(ctx, job.ID, "abc/1"); err != nil {
+		t.Fatal(err)
+	}
+	if busy, err := store.WorkerBusy(ctx); err != nil || busy {
+		t.Fatalf("queued busy = %v, %v; want false", busy, err)
+	}
+	operation, err := store.AcquireNextOperation(ctx)
+	if err != nil || operation == nil {
+		t.Fatalf("acquire = %#v, %v", operation, err)
+	}
+	if busy, err := store.WorkerBusy(ctx); err != nil || !busy {
+		t.Fatalf("admitting busy = %v, %v; want true", busy, err)
+	}
+	if err := store.ActivateOperation(ctx, control.OperationJob, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if busy, err := store.WorkerBusy(ctx); err != nil || !busy {
+		t.Fatalf("active busy = %v, %v; want true", busy, err)
+	}
+	if err := store.ReleaseOperation(ctx, control.OperationJob, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if busy, err := store.WorkerBusy(ctx); err != nil || busy {
+		t.Fatalf("released busy = %v, %v; want false", busy, err)
+	}
+}
+
 func TestCapacityImagePoliciesProtectActiveAndRollbackImages(t *testing.T) {
 	store := openStore(t)
 	ctx := context.Background()

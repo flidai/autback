@@ -2,6 +2,7 @@ package capacity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -42,7 +43,9 @@ type ReclaimReport struct {
 }
 
 type Backend interface {
+	Lock(context.Context) (func(), error)
 	Snapshot(context.Context) (Snapshot, error)
+	Busy(context.Context) (bool, error)
 	Reclaim(context.Context, ReclaimRequest) (ReclaimReport, error)
 	Emergency(context.Context) error
 }
@@ -86,6 +89,24 @@ func (c *Controller) Ensure(ctx context.Context) error {
 	return err
 }
 
+// Admit serializes the capacity decision and the caller's durable operation
+// reservation with maintenance. This closes the idle-check/admission race: a
+// collector cannot begin after capacity was checked but before the FIFO lease
+// records the worker as busy.
+func (c *Controller) Admit(ctx context.Context, reserve func() error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	unlock, err := c.backend.Lock(ctx)
+	if err != nil {
+		return fmt.Errorf("lock worker capacity: %w", err)
+	}
+	defer unlock()
+	if _, err := c.runLocked(ctx, TriggerAdmission); err != nil {
+		return err
+	}
+	return reserve()
+}
+
 func (c *Controller) Maintain(ctx context.Context, trigger Trigger) (Status, error) {
 	return c.run(ctx, trigger)
 }
@@ -111,7 +132,15 @@ func (c *Controller) Status() Status {
 func (c *Controller) run(ctx context.Context, trigger Trigger) (Status, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	unlock, err := c.backend.Lock(ctx)
+	if err != nil {
+		return Status{}, fmt.Errorf("lock worker capacity: %w", err)
+	}
+	defer unlock()
+	return c.runLocked(ctx, trigger)
+}
 
+func (c *Controller) runLocked(ctx context.Context, trigger Trigger) (Status, error) {
 	before, err := c.backend.Snapshot(ctx)
 	if err != nil {
 		return Status{}, fmt.Errorf("measure worker capacity: %w", err)
@@ -125,6 +154,48 @@ func (c *Controller) run(ctx context.Context, trigger Trigger) (Status, error) {
 			c.status = status
 			return status, nil
 		}
+	}
+	needsReclaim := pressure || trigger != TriggerAdmission
+	if needsReclaim {
+		busy, busyErr := c.backend.Busy(ctx)
+		if busyErr != nil {
+			status.State, status.Error = "blocked", busyErr.Error()
+			status.CompletedAt = time.Now().UTC()
+			c.status = status
+			return status, fmt.Errorf("read worker activity: %w", busyErr)
+		}
+		hardPressure := before.FreeBytes < thresholds.HardFreeBytes || inodePressure(before, c.policy.MinimumFreeInodes)
+		if busy && !hardPressure {
+			status.State = "deferred"
+			status.CompletedAt = time.Now().UTC()
+			c.status = status
+			return status, nil
+		}
+		if busy {
+			status.State = "emergency"
+			if emergencyErr := c.backend.Emergency(ctx); emergencyErr != nil {
+				status.State, status.Error = "blocked", emergencyErr.Error()
+				status.CompletedAt = time.Now().UTC()
+				c.status = status
+				return status, fmt.Errorf("stop active operation before emergency reclaim: %w", emergencyErr)
+			}
+			busy, busyErr = c.backend.Busy(ctx)
+			if busyErr != nil {
+				status.State, status.Error = "blocked", busyErr.Error()
+				status.CompletedAt = time.Now().UTC()
+				c.status = status
+				return status, fmt.Errorf("verify worker activity after emergency: %w", busyErr)
+			}
+			if busy {
+				err = errors.New("worker remains busy after emergency stop")
+				status.State, status.Error = "blocked", err.Error()
+				status.CompletedAt = time.Now().UTC()
+				c.status = status
+				return status, err
+			}
+		}
+	}
+	if trigger == TriggerPressure {
 		now := time.Now().UTC()
 		if c.policy.PressureThrottle > 0 && now.Sub(c.lastPressure) < c.policy.PressureThrottle {
 			status.State = "reclaiming"
@@ -137,7 +208,7 @@ func (c *Controller) run(ctx context.Context, trigger Trigger) (Status, error) {
 	if pressure {
 		status.State = "reclaiming"
 	}
-	if pressure || trigger != TriggerAdmission {
+	if needsReclaim {
 		status.Reclaim, err = c.backend.Reclaim(ctx, ReclaimRequest{
 			Trigger: trigger, Pressure: pressure, TargetFreeBytes: thresholds.TargetFreeBytes,
 			JobRetention: c.policy.JobRetention, CacheHighBytes: before.TotalBytes * c.policy.CacheHighPercent / 100,

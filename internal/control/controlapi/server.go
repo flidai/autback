@@ -49,17 +49,18 @@ type Capacity interface {
 }
 
 type Config struct {
-	Store               *controlsqlite.Store
-	Scheduler           control.Scheduler
-	Dispatcher          Dispatcher
-	Authority           *pki.Authority
-	OIDCVerifier        OIDCVerifier
-	CASEndpoint         string
-	CASInstance         string
-	BuildKitEndpoint    string
-	CredentialTTL       time.Duration
-	AllowUnpinnedImages bool
-	Capacity            Capacity
+	Store                         *controlsqlite.Store
+	Scheduler                     control.Scheduler
+	Dispatcher                    Dispatcher
+	Authority                     *pki.Authority
+	OIDCVerifier                  OIDCVerifier
+	CASEndpoint                   string
+	CASInstance                   string
+	BuildKitEndpoint              string
+	CredentialTTL                 time.Duration
+	AllowUnpinnedImages           bool
+	Capacity                      Capacity
+	RequiredBuildClientCapability string
 }
 
 type Server struct {
@@ -567,6 +568,13 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 	if !idempotencyKeyPattern.MatchString(request.Msg.IdempotencyKey) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("idempotency key must contain 8 to 128 safe characters"))
 	}
+	if required := s.config.RequiredBuildClientCapability; required != "" && !headerContainsToken(request.Header(), version.ClientCapabilitiesHeader, required) {
+		clientVersion := strings.TrimSpace(request.Header().Get(version.ClientVersionHeader))
+		if clientVersion == "" {
+			clientVersion = "unknown"
+		}
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("autback client %s does not support %s; upgrade the autback CLI", clientVersion, required))
+	}
 	if err := s.ensureCapacity(ctx); err != nil {
 		return nil, err
 	}
@@ -600,6 +608,17 @@ func (s *Server) PrepareBuild(ctx context.Context, request *connect.Request[autb
 		response.Buildkit = connectionProto(s.config.BuildKitEndpoint, "", credential)
 	}
 	return connect.NewResponse(response), nil
+}
+
+func headerContainsToken(header http.Header, name, required string) bool {
+	for _, value := range header.Values(name) {
+		for token := range strings.SplitSeq(value, ",") {
+			if strings.TrimSpace(token) == required {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) ensureCapacity(ctx context.Context) error {

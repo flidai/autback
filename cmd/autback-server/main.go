@@ -33,6 +33,7 @@ import (
 	"github.com/flidai/autback/internal/control/swarmscheduler"
 	"github.com/flidai/autback/internal/hostmetrics"
 	"github.com/flidai/autback/internal/swarm"
+	"github.com/flidai/autback/internal/version"
 )
 
 func main() {
@@ -133,10 +134,11 @@ func serve() {
 	controlHandler, err := controlapi.New(controlapi.Config{
 		Store: store, Scheduler: scheduler, Dispatcher: dispatch, Authority: authority, OIDCVerifier: verifier,
 		CASEndpoint: env("AUTBACK_CAS_ENDPOINT", endpoint(serverName, casListen)), CASInstance: casInstance,
-		BuildKitEndpoint:    env("AUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
-		CredentialTTL:       durationEnv("AUTBACK_CREDENTIAL_TTL", 15*time.Minute),
-		AllowUnpinnedImages: os.Getenv("AUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
-		Capacity:            capacityController,
+		BuildKitEndpoint:              env("AUTBACK_BUILDKIT_ENDPOINT", endpoint(serverName, buildKitListen)),
+		CredentialTTL:                 durationEnv("AUTBACK_CREDENTIAL_TTL", 15*time.Minute),
+		AllowUnpinnedImages:           os.Getenv("AUTBACK_ALLOW_UNPINNED_IMAGES") == "1",
+		Capacity:                      capacityController,
+		RequiredBuildClientCapability: version.CapabilityBuildLeaseHeartbeat,
 	})
 	if err != nil {
 		log.Fatal(err)

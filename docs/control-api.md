@@ -80,6 +80,12 @@ renews the lease while the authenticated client is waiting or building. The serv
 an abandoned queued or running build after two minutes by default; this is a worker safety
 bound, not a scheduler priority.
 
+`PrepareBuild` also requires the `build-lease-heartbeat` token in the
+`Autback-Client-Capabilities` request header. The released CLI supplies this metadata with
+its `Autback-Client-Version`. A client without the capability receives `FAILED_PRECONDITION`
+before Autback creates a build record or issues a BuildKit credential. This prevents a
+server lease-policy upgrade from silently admitting a client that cannot keep its lease.
+
 The API exposes no priorities, resource sizes, or task graph. Parallelism is part of the
 single admitted command, not separate dispatcher policy. The deprecated v1 `cpus` and
 `memory` fields remain wire-compatible but are ignored.

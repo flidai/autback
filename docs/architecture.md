@@ -170,8 +170,10 @@ Builds and commands share one SQLite-backed FIFO. Submission order is represente
 monotonic database sequence, and exactly one row may hold the active worker lease. The
 dispatcher admits the oldest queued operation and makes no priority, fairness, or resource
 estimates. Queue and lease state survive a control-plane restart.
-Active build leases have a configurable two-hour safety timeout so a client killed without
-a cancellation request cannot block every later operation indefinitely.
+Active build leases have a configurable two-minute safety timeout. Released clients renew
+the lease while queued and while Buildx is running, so a killed or disconnected client
+cannot block every later operation indefinitely. Build admission requires the corresponding
+client capability and fails before issuing credentials when an older CLI cannot provide it.
 
 The admitted operation receives the VM's available CPU and memory: Autback does not set
 per-job Swarm reservations or limits, and BuildKit is not capped separately. A repository

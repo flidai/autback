@@ -239,7 +239,7 @@ func TestResourceBaselineIsImmutableAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := operationcleanup.ResourceSet{Containers: []string{"container-before"}, Networks: []string{"network-before"}, Volumes: []string{"volume-before"}}
+	want := operationcleanup.ResourceSet{Services: []string{"service-before"}, Containers: []string{"container-before"}, Networks: []string{"network-before"}, Volumes: []string{"volume-before"}}
 	if err := store.SaveResourceBaseline(ctx, control.OperationJob, job.ID, want); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestResourceBaselineIsImmutableAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Containers) != 1 || got.Containers[0] != want.Containers[0] || len(got.Networks) != 1 || got.Networks[0] != want.Networks[0] || len(got.Volumes) != 1 || got.Volumes[0] != want.Volumes[0] {
+	if len(got.Services) != 1 || got.Services[0] != want.Services[0] || len(got.Containers) != 1 || got.Containers[0] != want.Containers[0] || len(got.Networks) != 1 || got.Networks[0] != want.Networks[0] || len(got.Volumes) != 1 || got.Volumes[0] != want.Volumes[0] {
 		t.Fatalf("resource baseline = %#v, want %#v", got, want)
 	}
 }
@@ -550,6 +550,11 @@ CREATE TABLE control_builds (
 CREATE TABLE control_queue (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, operation_id TEXT NOT NULL,
   state TEXT NOT NULL, accepted_at INTEGER NOT NULL, leased_at INTEGER, UNIQUE(kind, operation_id)
+);
+CREATE TABLE operation_resource_baselines (
+  kind TEXT NOT NULL, operation_id TEXT NOT NULL, containers_json TEXT NOT NULL,
+  networks_json TEXT NOT NULL, volumes_json TEXT NOT NULL, captured_at INTEGER NOT NULL,
+  PRIMARY KEY(kind, operation_id)
 );`)
 	if err != nil {
 		t.Fatal(err)
@@ -634,6 +639,13 @@ CREATE TABLE control_queue (
 	}
 	if !strings.Contains(reservationIndex, "terminalizing") || !strings.Contains(reservationIndex, "cleaning") {
 		t.Fatalf("reservation index = %q", reservationIndex)
+	}
+	var servicesColumn int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('operation_resource_baselines') WHERE name='services_json'`).Scan(&servicesColumn); err != nil {
+		t.Fatal(err)
+	}
+	if servicesColumn != 1 {
+		t.Fatal("operation_resource_baselines.services_json was not migrated")
 	}
 }
 

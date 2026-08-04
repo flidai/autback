@@ -83,7 +83,7 @@ worker-busy states; `released` is the tombstone proving teardown completed. Tran
 cleanup, capacity, or scheduler errors are recorded/logged and retried; they do not turn a
 completed build into a client-visible failure.
 
-Admission also stores a baseline of containers, networks, and volumes before creating the
+Admission also stores a baseline of non-Autback services, containers, networks, and volumes before creating the
 operation runtime. Cleanup waits ten seconds for Ryuk by default, removes every unprotected
 resource added during the exclusive operation window, and verifies the resulting inventory
 before releasing the lease. Set `AUTBACK_RESOURCE_CLEANUP_GRACE` to tune the Ryuk window and

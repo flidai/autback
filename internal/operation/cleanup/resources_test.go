@@ -25,6 +25,7 @@ func TestResourceManagerCapturesBaselineOnceAndRemovesOnlyOperationResources(t *
 		t.Fatal(err)
 	}
 	runtime.inventory = cleanup.ResourceSet{
+		Services:   []string{"nested-service"},
 		Containers: []string{"infra-container", "ryuk", "detached"},
 		Networks:   []string{"infra-network", "test-network"},
 		Volumes:    []string{"infra-volume", "test-volume"},
@@ -39,6 +40,7 @@ func TestResourceManagerCapturesBaselineOnceAndRemovesOnlyOperationResources(t *
 		t.Fatal(err)
 	}
 	want := []string{
+		"service:nested-service",
 		"container:detached", "container:ryuk",
 		"network:test-network",
 		"volume:test-volume",
@@ -153,6 +155,10 @@ func (r *resourceRuntime) Inventory(context.Context) (cleanup.ResourceSet, error
 
 func (r *resourceRuntime) RemoveContainer(_ context.Context, id string) error {
 	return r.remove("container", id, &r.inventory.Containers)
+}
+
+func (r *resourceRuntime) RemoveService(_ context.Context, id string) error {
+	return r.remove("service", id, &r.inventory.Services)
 }
 
 func (r *resourceRuntime) RemoveNetwork(_ context.Context, id string) error {

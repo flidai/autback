@@ -176,10 +176,10 @@ absolute path on the host and inside the runner so sibling Testcontainers can bi
 files. Published ports are reachable from the runner, and Ryuk remains enabled for cleanup.
 
 Before each operation can create a runtime, Autback persists an inventory of unprotected
-Docker containers, networks, and volumes. Because the worker admits only one operation,
+Docker services, containers, networks, and volumes. Because the worker admits only one operation,
 every unprotected resource added after that baseline belongs to the operation. Terminal
 cleanup gives Ryuk a short grace period, then removes the difference in reverse dependency
-order (containers, networks, volumes) and verifies that none remain before releasing FIFO.
+order (services, containers, networks, volumes) and verifies that none remain before releasing FIFO.
 The immutable baseline and cleanup state survive control-plane or Docker restarts. Swarm
 task containers and explicitly `autback.managed=true` infrastructure are excluded; images
 and BuildKit records remain governed by capacity/LRU policy rather than per-job deletion.

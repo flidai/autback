@@ -40,6 +40,10 @@ func New(config Config) *Client {
 func newClient(commands commander) *Client { return &Client{commands: commands} }
 
 func (c *Client) Inventory(ctx context.Context) (operationcleanup.ResourceSet, error) {
+	services, err := c.services(ctx)
+	if err != nil {
+		return operationcleanup.ResourceSet{}, err
+	}
 	containers, err := c.containers(ctx)
 	if err != nil {
 		return operationcleanup.ResourceSet{}, err
@@ -52,10 +56,38 @@ func (c *Client) Inventory(ctx context.Context) (operationcleanup.ResourceSet, e
 	if err != nil {
 		return operationcleanup.ResourceSet{}, err
 	}
+	sort.Strings(services)
 	sort.Strings(containers)
 	sort.Strings(networks)
 	sort.Strings(volumes)
-	return operationcleanup.ResourceSet{Containers: containers, Networks: networks, Volumes: volumes}, nil
+	return operationcleanup.ResourceSet{Services: services, Containers: containers, Networks: networks, Volumes: volumes}, nil
+}
+
+func (c *Client) services(ctx context.Context) ([]string, error) {
+	ids, err := c.ids(ctx, "service", "ls", "--quiet")
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	data, err := c.commands.Output(ctx, append([]string{"service", "inspect"}, ids...)...)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Docker services: %w", err)
+	}
+	var inspected []struct {
+		ID   string `json:"ID"`
+		Spec struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"Spec"`
+	}
+	if err := json.Unmarshal(data, &inspected); err != nil {
+		return nil, fmt.Errorf("decode Docker services: %w", err)
+	}
+	result := make([]string, 0, len(inspected))
+	for _, service := range inspected {
+		if !managed(service.Spec.Labels) {
+			result = append(result, service.ID)
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) containers(ctx context.Context) ([]string, error) {
@@ -152,6 +184,10 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 	return c.remove(ctx, "container", "rm", "--force", id)
 }
 
+func (c *Client) RemoveService(ctx context.Context, id string) error {
+	return c.remove(ctx, "service", "rm", id)
+}
+
 func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
 	return c.remove(ctx, "network", "rm", id)
 }
@@ -182,7 +218,7 @@ func managed(labels map[string]string) bool { return labels[managedLabel] == "tr
 
 func isNotFound(err error) bool {
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such container") || strings.Contains(message, "no such network") || strings.Contains(message, "no such volume")
+	return strings.Contains(message, "no such service") || strings.Contains(message, "no such container") || strings.Contains(message, "no such network") || strings.Contains(message, "no such volume")
 }
 
 type dockerCommander struct {

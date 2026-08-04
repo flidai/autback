@@ -11,6 +11,7 @@ import (
 )
 
 type ResourceSet struct {
+	Services   []string `json:"services"`
 	Containers []string `json:"containers"`
 	Networks   []string `json:"networks"`
 	Volumes    []string `json:"volumes"`
@@ -23,6 +24,7 @@ type ResourceBaselineStore interface {
 
 type ResourceRuntime interface {
 	Inventory(context.Context) (ResourceSet, error)
+	RemoveService(context.Context, string) error
 	RemoveContainer(context.Context, string) error
 	RemoveNetwork(context.Context, string) error
 	RemoveVolume(context.Context, string) error
@@ -75,9 +77,10 @@ func (m *ResourceManager) Prepare(ctx context.Context, operation control.Operati
 }
 
 // Cleanup removes every unprotected resource created after the persisted
-// baseline. Removal order reverses resource dependencies: containers first,
-// then networks, then volumes. A final inventory prevents lease release while
-// any operation-owned resource remains.
+// baseline. Removal order reverses resource dependencies: services first so
+// Swarm releases their tasks and attachments, then containers, networks, and
+// volumes. A final inventory prevents lease release while any operation-owned
+// resource remains.
 func (m *ResourceManager) Cleanup(ctx context.Context, operation control.Operation) error {
 	if err := m.validate(); err != nil {
 		return err
@@ -102,6 +105,11 @@ func (m *ResourceManager) Cleanup(ctx context.Context, operation control.Operati
 	}
 	owned := difference(current, baseline)
 	var cleanupErrors []error
+	for _, id := range owned.Services {
+		if err := m.config.Runtime.RemoveService(ctx, id); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("remove service %s: %w", id, err))
+		}
+	}
 	for _, id := range owned.Containers {
 		if err := m.config.Runtime.RemoveContainer(ctx, id); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("remove container %s: %w", id, err))
@@ -121,8 +129,8 @@ func (m *ResourceManager) Cleanup(ctx context.Context, operation control.Operati
 	if err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("verify Docker resource cleanup: %w", err))
 	} else if remaining = difference(remaining, baseline); !remaining.empty() {
-		cleanupErrors = append(cleanupErrors, fmt.Errorf("operation-owned Docker resources remain: containers=%v networks=%v volumes=%v",
-			remaining.Containers, remaining.Networks, remaining.Volumes))
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("operation-owned Docker resources remain: services=%v containers=%v networks=%v volumes=%v",
+			remaining.Services, remaining.Containers, remaining.Networks, remaining.Volumes))
 	}
 	return errors.Join(cleanupErrors...)
 }
@@ -136,6 +144,7 @@ func (m *ResourceManager) validate() error {
 
 func difference(current, baseline ResourceSet) ResourceSet {
 	return normalize(ResourceSet{
+		Services:   subtract(current.Services, baseline.Services),
 		Containers: subtract(current.Containers, baseline.Containers),
 		Networks:   subtract(current.Networks, baseline.Networks),
 		Volumes:    subtract(current.Volumes, baseline.Volumes),
@@ -157,6 +166,7 @@ func subtract(current, baseline []string) []string {
 }
 
 func normalize(resources ResourceSet) ResourceSet {
+	resources.Services = uniqueSorted(resources.Services)
 	resources.Containers = uniqueSorted(resources.Containers)
 	resources.Networks = uniqueSorted(resources.Networks)
 	resources.Volumes = uniqueSorted(resources.Volumes)
@@ -181,7 +191,7 @@ func uniqueSorted(values []string) []string {
 }
 
 func (r ResourceSet) empty() bool {
-	return len(r.Containers) == 0 && len(r.Networks) == 0 && len(r.Volumes) == 0
+	return len(r.Services) == 0 && len(r.Containers) == 0 && len(r.Networks) == 0 && len(r.Volumes) == 0
 }
 
 func waitDuration(ctx context.Context, duration time.Duration) error {

@@ -229,6 +229,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS control_queue_one_active_idx ON control_queue(
 CREATE TABLE IF NOT EXISTS operation_resource_baselines (
   kind TEXT NOT NULL,
   operation_id TEXT NOT NULL,
+  services_json TEXT NOT NULL DEFAULT '[]',
   containers_json TEXT NOT NULL,
   networks_json TEXT NOT NULL,
   volumes_json TEXT NOT NULL,
@@ -247,6 +248,7 @@ CREATE TABLE IF NOT EXISTS operation_resource_baselines (
 		{"control_builds", "idempotency_key"}, {"control_builds", "request_hash"},
 		{"projects", "active_image"}, {"projects", "previous_image"},
 		{"control_queue", "cleanup_error"},
+		{"operation_resource_baselines", "services_json"},
 	} {
 		if err := s.ensureTextColumn(ctx, column.table, column.name); err != nil {
 			return err
@@ -283,7 +285,8 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 		"control_jobs.caches_json":       true,
 		"control_builds.idempotency_key": true, "control_builds.request_hash": true,
 		"projects.active_image": true, "projects.previous_image": true,
-		"control_queue.cleanup_error": true,
+		"control_queue.cleanup_error":                true,
+		"operation_resource_baselines.services_json": true,
 	}
 	if !allowed[table+"."+column] {
 		return errors.New("unsupported migration column")
@@ -311,6 +314,9 @@ func (s *Store) ensureTextColumn(ctx context.Context, table, column string) erro
 	}
 	defaultValue := `''`
 	if table == "control_jobs" && column == "caches_json" {
+		defaultValue = `'[]'`
+	}
+	if table == "operation_resource_baselines" && column == "services_json" {
 		defaultValue = `'[]'`
 	}
 	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` TEXT NOT NULL DEFAULT `+defaultValue)
@@ -1542,6 +1548,10 @@ FROM control_queue WHERE kind=? AND operation_id=?`, kind, id))
 }
 
 func (s *Store) SaveResourceBaseline(ctx context.Context, kind control.OperationKind, id string, resources operationcleanup.ResourceSet) error {
+	services, err := json.Marshal(resources.Services)
+	if err != nil {
+		return err
+	}
 	containers, err := json.Marshal(resources.Containers)
 	if err != nil {
 		return err
@@ -1554,21 +1564,24 @@ func (s *Store) SaveResourceBaseline(ctx context.Context, kind control.Operation
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO operation_resource_baselines(kind,operation_id,containers_json,networks_json,volumes_json,captured_at)
-VALUES(?,?,?,?,?,?) ON CONFLICT(kind,operation_id) DO NOTHING`, kind, id, string(containers), string(networks), string(volumes), time.Now().UTC().UnixNano())
+	_, err = s.db.ExecContext(ctx, `INSERT INTO operation_resource_baselines(kind,operation_id,services_json,containers_json,networks_json,volumes_json,captured_at)
+VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,operation_id) DO NOTHING`, kind, id, string(services), string(containers), string(networks), string(volumes), time.Now().UTC().UnixNano())
 	return err
 }
 
 func (s *Store) ResourceBaseline(ctx context.Context, kind control.OperationKind, id string) (operationcleanup.ResourceSet, error) {
 	var resources operationcleanup.ResourceSet
-	var containers, networks, volumes string
-	err := s.db.QueryRowContext(ctx, `SELECT containers_json,networks_json,volumes_json FROM operation_resource_baselines WHERE kind=? AND operation_id=?`, kind, id).
-		Scan(&containers, &networks, &volumes)
+	var services, containers, networks, volumes string
+	err := s.db.QueryRowContext(ctx, `SELECT services_json,containers_json,networks_json,volumes_json FROM operation_resource_baselines WHERE kind=? AND operation_id=?`, kind, id).
+		Scan(&services, &containers, &networks, &volumes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return operationcleanup.ResourceSet{}, control.ErrNotFound
 	}
 	if err != nil {
 		return operationcleanup.ResourceSet{}, err
+	}
+	if err := json.Unmarshal([]byte(services), &resources.Services); err != nil {
+		return operationcleanup.ResourceSet{}, fmt.Errorf("decode service baseline: %w", err)
 	}
 	if err := json.Unmarshal([]byte(containers), &resources.Containers); err != nil {
 		return operationcleanup.ResourceSet{}, fmt.Errorf("decode container baseline: %w", err)

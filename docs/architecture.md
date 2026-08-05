@@ -73,6 +73,8 @@ The control plane binds the HTTPS, CAS proxy, and BuildKit proxy listeners befor
 any serving or background component. A bind failure therefore aborts startup before
 `/readyz` can be advertised. Metrics collection, reconciliation, capacity maintenance,
 FIFO dispatch, both mTLS proxies, and the HTTP server then run under one process context.
+Readiness subsequently probes SQLite, Swarm, capacity, CAS capabilities, and BuildKit info
+under bounded per-dependency deadlines. Liveness deliberately remains process-only.
 
 SIGTERM, SIGINT, or the first unexpected component exit starts the same bounded drain:
 readiness becomes unavailable, the dispatcher rejects new admission, and every component

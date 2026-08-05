@@ -24,6 +24,9 @@ ReadWritePaths=/var/lib/autback
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
 MemoryDenyWriteExecute=true
+MemoryHigh=512M
+MemoryMax=768M
+TasksMax=1024
 
 [Install]
 WantedBy=multi-user.target

@@ -8,7 +8,8 @@ Type=simple
 EnvironmentFile=-/etc/autback/standards.env
 EnvironmentFile=-/etc/autback/swarm.env
 ExecStartPre=-/usr/bin/docker rm -f autback-buildkit
-ExecStart=/usr/bin/docker run --rm --name autback-buildkit --privileged --network host --pids-limit 4096 --log-driver local --log-opt max-size=10m --log-opt max-file=2 -v autback-buildkit-state:/var/lib/buildkit -v /etc/autback/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro ${AUTBACK_BUILDKIT_IMAGE} --config /etc/buildkit/buildkitd.toml --addr tcp://127.0.0.1:1234
+ExecStartPre=/usr/bin/docker volume create --label autback.managed=true autback-buildkit-state
+ExecStart=/usr/bin/docker run --rm --name autback-buildkit --label autback.managed=true --privileged --network host --cgroup-parent autback-infrastructure.slice --memory ${AUTBACK_BUILDKIT_MEMORY_LIMIT} --memory-reservation ${AUTBACK_BUILDKIT_MEMORY_RESERVATION} --cpus ${AUTBACK_BUILDKIT_CPU_LIMIT} --pids-limit 4096 --log-driver local --log-opt max-size=10m --log-opt max-file=2 -v autback-buildkit-state:/var/lib/buildkit -v /etc/autback/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro ${AUTBACK_BUILDKIT_IMAGE} --config /etc/buildkit/buildkitd.toml --addr tcp://127.0.0.1:1234
 ExecStop=/usr/bin/docker stop -t 20 autback-buildkit
 Restart=on-failure
 RestartSec=3

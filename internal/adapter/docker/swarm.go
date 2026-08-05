@@ -108,6 +108,9 @@ func (c *Client) Create(ctx context.Context, spec swarmscheduler.Spec) (string, 
 	if spec.Image == "" {
 		return "", fmt.Errorf("project image is required: %w", errdefs.ErrInvalidArgument)
 	}
+	if err := spec.Resources.Validate(); err != nil {
+		return "", fmt.Errorf("job resource envelope: %v: %w", err, errdefs.ErrOutOfRange)
+	}
 	result, err := c.runtime.ServiceCreate(ctx, client.ServiceCreateOptions{Spec: serviceSpec(spec), QueryRegistry: true})
 	if err != nil {
 		return "", fmt.Errorf("create Swarm job %s: %w", spec.ID, err)
@@ -186,7 +189,15 @@ func serviceSpec(spec swarmscheduler.Spec) engineswarm.ServiceSpec {
 				Env: environment, User: "0:0", Init: &init, Mounts: mounts, StopGracePeriod: &stopGracePeriod,
 			},
 			RestartPolicy: &engineswarm.RestartPolicy{Condition: engineswarm.RestartPolicyConditionNone},
-			Networks:      []engineswarm.NetworkAttachmentConfig{{Target: "host"}},
+			Resources: &engineswarm.ResourceRequirements{
+				Limits: &engineswarm.Limit{
+					NanoCPUs: spec.Resources.CPULimitNano, MemoryBytes: spec.Resources.MemoryLimitBytes, Pids: spec.Resources.PIDsLimit,
+				},
+				Reservations: &engineswarm.Resources{
+					NanoCPUs: spec.Resources.CPUReservationNano, MemoryBytes: spec.Resources.MemoryReservationBytes,
+				},
+			},
+			Networks: []engineswarm.NetworkAttachmentConfig{{Target: "host"}},
 			LogDriver: &engineswarm.Driver{Name: "local", Options: map[string]string{
 				"max-size": "10m", "max-file": "2",
 			}},
@@ -249,10 +260,16 @@ func (c *Client) status(ctx context.Context, service engineswarm.Service, fallba
 	sort.Slice(tasks.Items, func(i, j int) bool { return tasks.Items[i].CreatedAt.After(tasks.Items[j].CreatedAt) })
 	task := tasks.Items[0]
 	exitCode := 0
-	if task.Status.ContainerStatus != nil {
+	hasContainerStatus := task.Status.ContainerStatus != nil
+	if hasContainerStatus {
 		exitCode = task.Status.ContainerStatus.ExitCode
-	} else if terminalTaskState(task.Status.State) {
-		return protocol.Job{}, fmt.Errorf("inspect Swarm job %s task %s: missing container status: %w", id, task.ID, errdefs.ErrDataLoss)
+	} else if job.CancelRequested {
+		exitCode = 130
+	} else if runtimeTaskStatus(task.Status.State, 1, false).Terminal() {
+		// Docker can terminalize tasks that never created a container, notably
+		// rejected tasks. Preserve convergence with a non-zero synthetic exit
+		// code instead of poisoning the service indefinitely.
+		exitCode = 1
 	}
 	job.Status = runtimeTaskStatus(task.Status.State, exitCode, job.CancelRequested)
 	job.WorkerID = task.NodeID
@@ -268,8 +285,38 @@ func (c *Client) status(ctx context.Context, service engineswarm.Service, fallba
 		job.FinishedAt = &finished
 		job.ExitCode = &exitCode
 		job.ErrorMessage = task.Status.Err
+		job.ErrorMessage = resourceFailureMessage(exitCode, job.ErrorMessage)
+		if job.ErrorMessage == "" && job.Status != protocol.StatusCancelled {
+			switch {
+			case !hasContainerStatus:
+				job.ErrorMessage = fmt.Sprintf("Swarm task entered terminal state %q without container status", task.Status.State)
+			case job.Status == protocol.StatusLost:
+				job.ErrorMessage = fmt.Sprintf("Swarm task entered non-success state %q", task.Status.State)
+			}
+		}
 	}
 	return job, nil
+}
+
+func resourceFailureMessage(exitCode int, runtimeError string) string {
+	lower := strings.ToLower(runtimeError)
+	var diagnosis string
+	switch {
+	case exitCode == 137 || strings.Contains(lower, "oom") || strings.Contains(lower, "out of memory"):
+		diagnosis = "workload exceeded the memory/resource envelope or was OOM-killed; inspect cgroup memory.events and PSI telemetry"
+	case strings.Contains(lower, "pids limit") || strings.Contains(lower, "resource temporarily unavailable") || strings.Contains(lower, "cannot fork"):
+		diagnosis = "workload exceeded its process/PID limit; inspect cgroup pids.current and pids.max"
+	case strings.Contains(lower, "no space left") && strings.Contains(lower, "inode"):
+		diagnosis = "worker inode capacity was exhausted; inspect disk inode telemetry and capacity status"
+	case strings.Contains(lower, "no space left"):
+		diagnosis = "worker disk capacity was exhausted; inspect disk telemetry and capacity status"
+	default:
+		return runtimeError
+	}
+	if runtimeError == "" {
+		return diagnosis
+	}
+	return diagnosis + ": " + runtimeError
 }
 
 func (c *Client) Logs(ctx context.Context, id string, follow bool, output io.Writer) error {
@@ -357,25 +404,34 @@ func runtimeTaskStatus(state engineswarm.TaskState, exitCode int, cancelled bool
 		return protocol.StatusCancelled
 	}
 	switch state {
+	case engineswarm.TaskStateNew,
+		engineswarm.TaskStateAllocated,
+		engineswarm.TaskStatePending,
+		engineswarm.TaskStateAssigned,
+		engineswarm.TaskStateAccepted,
+		engineswarm.TaskStatePreparing,
+		engineswarm.TaskStateReady,
+		engineswarm.TaskStateStarting:
+		return protocol.StatusQueued
+	case engineswarm.TaskStateRunning:
+		return protocol.StatusRunning
 	case engineswarm.TaskStateComplete:
 		if exitCode == 0 {
 			return protocol.StatusSucceeded
 		}
 		return protocol.StatusFailed
-	case engineswarm.TaskStateFailed, engineswarm.TaskStateRejected, engineswarm.TaskStateOrphaned:
+	case engineswarm.TaskStateFailed, engineswarm.TaskStateRejected:
 		if exitCode == 124 {
 			return protocol.StatusTimedOut
 		}
 		return protocol.StatusFailed
-	case engineswarm.TaskStateRunning:
-		return protocol.StatusRunning
+	case engineswarm.TaskStateOrphaned, engineswarm.TaskStateShutdown, engineswarm.TaskStateRemove:
+		return protocol.StatusLost
 	default:
-		return protocol.StatusQueued
+		// A future Engine state must not strand Autback's global FIFO. Unknown
+		// states fail closed and retain their raw value in the job diagnostic.
+		return protocol.StatusLost
 	}
-}
-
-func terminalTaskState(state engineswarm.TaskState) bool {
-	return state == engineswarm.TaskStateComplete || state == engineswarm.TaskStateFailed || state == engineswarm.TaskStateRejected || state == engineswarm.TaskStateOrphaned
 }
 
 func encodeLabel(value string) string {

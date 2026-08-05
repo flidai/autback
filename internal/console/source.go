@@ -281,6 +281,17 @@ func (s *SQLiteSource) resources(ctx context.Context, route Route, projectID str
 		view.MemoryTotalBytes = sample.MemoryTotalBytes
 		view.DiskUsageBytes = sample.DiskUsageBytes
 		view.DiskTotalBytes = sample.DiskTotalBytes
+		view.DiskInodesUsed, view.DiskInodesTotal = sample.DiskInodesUsed, sample.DiskInodesTotal
+		view.CPUPressurePeak = max(view.CPUPressurePeak, sample.CPUPressure)
+		view.MemoryPressurePeak = max(view.MemoryPressurePeak, max(sample.MemoryPressure, sample.MemoryFullPressure))
+		view.IOPressurePeak = max(view.IOPressurePeak, max(sample.IOPressure, sample.IOFullPressure))
+		view.MemoryHighEvents += sample.MemoryHighEvents
+		view.OOMEvents += sample.OOMEvents
+		view.OOMKills += sample.OOMKills
+		view.PIDsCurrent, view.PIDsLimit = sample.PIDsCurrent, sample.PIDsLimit
+		if sample.OperationID == "" && (sample.CPUPressure > 0 || sample.MemoryPressure > 0 || sample.MemoryFullPressure > 0 || sample.IOPressure > 0 || sample.IOFullPressure > 0 || sample.MemoryHighEvents > 0 || sample.OOMEvents > 0 || sample.OOMKills > 0) {
+			view.UnattributedPressureSamples++
+		}
 	}
 	if len(samples) > 0 {
 		view.BusyRatio = float64(view.ActiveSampleCount) / float64(len(samples))
@@ -343,12 +354,15 @@ func resourceSampleViews(samples []control.ResourceSample, limit int) []Resource
 		end := min(start+step, len(samples))
 		selected := samples[start]
 		for _, candidate := range samples[start+1 : end] {
-			if max(candidate.CPUUtilization, candidate.MemoryUtilization) > max(selected.CPUUtilization, selected.MemoryUtilization) {
+			candidatePeak := max(max(candidate.CPUUtilization, candidate.MemoryUtilization), max(candidate.CPUPressure, max(candidate.MemoryPressure, candidate.IOPressure)))
+			selectedPeak := max(max(selected.CPUUtilization, selected.MemoryUtilization), max(selected.CPUPressure, max(selected.MemoryPressure, selected.IOPressure)))
+			if candidatePeak > selectedPeak {
 				selected = candidate
 			}
 		}
 		views = append(views, ResourceSampleView{ObservedAt: selected.ObservedAt, CPUUtilization: selected.CPUUtilization,
-			MemoryUtilization: selected.MemoryUtilization})
+			MemoryUtilization: selected.MemoryUtilization, CPUPressure: selected.CPUPressure,
+			MemoryPressure: max(selected.MemoryPressure, selected.MemoryFullPressure), IOPressure: max(selected.IOPressure, selected.IOFullPressure)})
 	}
 	return views
 }

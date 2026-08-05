@@ -33,6 +33,10 @@ type Collector struct {
 	config         CollectorConfig
 	mu             sync.Mutex
 	lastCompaction time.Time
+	eventsReady    bool
+	memoryHigh     uint64
+	oom            uint64
+	oomKills       uint64
 }
 
 func NewCollector(config CollectorConfig) (*Collector, error) {
@@ -69,6 +73,17 @@ func (c *Collector) CollectOnce(ctx context.Context) error {
 	if active {
 		sample.ResourceScope = scope
 	}
+	c.mu.Lock()
+	previousHigh, previousOOM, previousKills, eventsReady := c.memoryHigh, c.oom, c.oomKills, c.eventsReady
+	c.memoryHigh, c.oom, c.oomKills, c.eventsReady = sample.MemoryHighEvents, sample.OOMEvents, sample.OOMKills, true
+	c.mu.Unlock()
+	if !eventsReady {
+		sample.MemoryHighEvents, sample.OOMEvents, sample.OOMKills = 0, 0, 0
+	} else {
+		sample.MemoryHighEvents = counterDelta(sample.MemoryHighEvents, previousHigh)
+		sample.OOMEvents = counterDelta(sample.OOMEvents, previousOOM)
+		sample.OOMKills = counterDelta(sample.OOMKills, previousKills)
+	}
 	if err := c.config.Store.AppendResourceSample(ctx, sample); err != nil {
 		return err
 	}
@@ -83,6 +98,13 @@ func (c *Collector) CollectOnce(ctx context.Context) error {
 		return c.config.Store.CompactResourceSamples(ctx, now.Add(-c.config.RawRetention), now.Add(-c.config.RollupRetention))
 	}
 	return nil
+}
+
+func counterDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return current
+	}
+	return current - previous
 }
 
 func (c *Collector) Run(ctx context.Context) {

@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	backoff "github.com/flidai/autback/internal/retry"
 )
 
 type Commands struct {
@@ -106,22 +108,18 @@ func removeBuilder(runner commandRunner, docker string, command []string, direct
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), policy.Timeout)
 	defer cancel()
-	var lastErr error
-	for attempt := 1; attempt <= policy.Attempts; attempt++ {
+	err := backoff.Do(ctx, backoff.Policy{
+		InitialDelay: policy.RetryDelay, MaxDelay: 4 * policy.RetryDelay,
+		MaxAttempts: policy.Attempts, MaxElapsed: policy.Timeout, Wait: policy.Wait,
+	}, func(attemptCtx context.Context) error {
 		var output bytes.Buffer
-		err := runner.Run(ctx, docker, command, directory, io.Discard, &output)
+		err := runner.Run(attemptCtx, docker, command, directory, io.Discard, &output)
 		if err == nil || builderNotFound(output.String()) {
 			return nil
 		}
-		lastErr = fmt.Errorf("remove ephemeral Buildx builder: %w: %s", err, strings.TrimSpace(output.String()))
-		if attempt == policy.Attempts {
-			break
-		}
-		if err := policy.Wait(ctx, policy.RetryDelay); err != nil {
-			return errors.Join(lastErr, err)
-		}
-	}
-	return lastErr
+		return fmt.Errorf("remove ephemeral Buildx builder: %w: %s", err, strings.TrimSpace(output.String()))
+	}, func(error) bool { return true })
+	return err
 }
 
 func builderNotFound(output string) bool {

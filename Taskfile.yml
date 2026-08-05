@@ -11,6 +11,16 @@ tasks:
       - task: proto:check
       - task: terraform:check
 
+  stability:fast:
+    desc: Run the deterministic, unprivileged recovery fault matrix
+    cmds:
+      - go run ./cmd/autback-stability --mode fast --artifacts .tmp/stability/fast {{.CLI_ARGS}}
+
+  stability:full:
+    desc: Run the complete recovery matrix, including real Docker/Swarm cleanup
+    cmds:
+      - go run ./cmd/autback-stability --mode full --artifacts .tmp/stability/full {{.CLI_ARGS}}
+
   generate:
     desc: Regenerate typed console contracts and embedded browser assets
     cmds:

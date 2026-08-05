@@ -25,6 +25,9 @@ func TestResourceSamplesAreDurableAttributedAndSummarized(t *testing.T) {
 			CPUUtilization: cpu, CPUCores: 4, MemoryUtilization: .5 + float64(index)*.1,
 			MemoryUsageBytes: uint64(4+index) << 30, MemoryTotalBytes: 8 << 30,
 			DiskUsageBytes: 40 << 30, DiskTotalBytes: 80 << 30,
+			DiskInodesUsed: 100, DiskInodesTotal: 1000,
+			CPUPressure: .1, MemoryPressure: .2, MemoryFullPressure: .05, IOPressure: .3, IOFullPressure: .1,
+			MemoryHighEvents: uint64(index), OOMEvents: uint64(index), OOMKills: uint64(index), PIDsCurrent: 100, PIDsLimit: 4096,
 		}
 		if err := store.AppendResourceSample(ctx, sample); err != nil {
 			t.Fatal(err)
@@ -38,6 +41,9 @@ func TestResourceSamplesAreDurableAttributedAndSummarized(t *testing.T) {
 	samples, err := store.ListResourceSamples(ctx, control.ResourceFilter{OperationKind: control.OperationJob, OperationID: "job_example", From: now.Add(-time.Second)}, 100)
 	if err != nil || len(samples) != 3 {
 		t.Fatalf("samples=%#v err=%v", samples, err)
+	}
+	if sample := samples[2]; sample.DiskInodesUsed != 100 || sample.DiskInodesTotal != 1000 || sample.CPUPressure != .1 || sample.MemoryPressure != .2 || sample.MemoryFullPressure != .05 || sample.IOPressure != .3 || sample.IOFullPressure != .1 || sample.OOMKills != 2 || sample.PIDsCurrent != 100 || sample.PIDsLimit != 4096 {
+		t.Fatalf("resource evidence was not durable: %#v", sample)
 	}
 	summary, err := store.ResourceSummary(ctx, control.ResourceFilter{OperationKind: control.OperationJob, OperationID: "job_example"})
 	if err != nil {

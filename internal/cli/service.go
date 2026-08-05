@@ -20,11 +20,12 @@ import (
 	"github.com/flidai/autback/internal/cas"
 	"github.com/flidai/autback/internal/config"
 	"github.com/flidai/autback/internal/control/controlclient"
-	"github.com/flidai/autback/internal/credentialfiles"
+	"github.com/flidai/autback/internal/dataplane"
 	autbackv1 "github.com/flidai/autback/internal/gen/rtest/v1"
 	"github.com/flidai/autback/internal/gen/rtest/v1/autbackv1connect"
 	"github.com/flidai/autback/internal/projectlink"
 	"github.com/flidai/autback/internal/protocol"
+	backoff "github.com/flidai/autback/internal/retry"
 	"github.com/flidai/autback/internal/workspace"
 	"golang.org/x/term"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -516,25 +517,26 @@ func serviceExec(ctx context.Context, api autbackv1connect.ControlServiceClient,
 	if err != nil {
 		return fail(streams.Stderr, cancelServiceJobAfterError(api, prepared.Msg.Job.Id, err))
 	}
-	credentials, err := credentialfiles.Write(connection.CaPem, connection.CertificatePem, connection.PrivateKeyPem)
+	uploadCtx, stopUpload := context.WithCancel(ctx)
+	proxy, err := dataplane.Start(uploadCtx, dataPlaneCredential(connection))
 	if err != nil {
+		stopUpload()
 		return fail(streams.Stderr, cancelServiceJobAfterError(api, job.Id, err))
 	}
-	defer credentials.Cleanup()
-	uploadCtx, stopUpload := context.WithCancel(ctx)
+	defer proxy.Close()
 	heartbeatCtx, stopHeartbeat := context.WithCancel(uploadCtx)
 	heartbeatDone := make(chan error, 1)
 	go func() {
-		err := heartbeatServiceJobPreparation(heartbeatCtx, api, job.Id, 30*time.Second)
+		err := heartbeatServiceJobPreparationWithPolicy(heartbeatCtx, api, job.Id, func(refreshed *autbackv1.DataPlaneConnection) error {
+			return proxy.Update(dataPlaneCredential(refreshed))
+		}, heartbeatPolicy{Interval: 30 * time.Second})
 		if err != nil {
 			stopUpload()
 		}
 		heartbeatDone <- err
 	}()
 	upload, err := cas.UploadConnection(uploadCtx, cas.Connection{
-		Service: grpcAddress(connection.Endpoint), Instance: connection.InstanceName,
-		CACertFile: credentials.CA, ClientCertFile: credentials.Certificate, ClientKeyFile: credentials.Key,
-		ServerName: connection.ServerName,
+		Service: proxy.Address(), Instance: connection.InstanceName, Insecure: true,
 	}, root, files)
 	stopHeartbeat()
 	heartbeatErr := <-heartbeatDone
@@ -593,34 +595,32 @@ func waitForServiceJobPreparation(ctx context.Context, api autbackv1connect.Cont
 }
 
 func heartbeatServiceJobPreparation(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, interval time.Duration) error {
-	if interval <= 0 {
+	return heartbeatServiceJobPreparationWithPolicy(ctx, api, id, nil, heartbeatPolicy{Interval: interval})
+}
+
+func heartbeatServiceJobPreparationWithPolicy(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, update func(*autbackv1.DataPlaneConnection) error, policy heartbeatPolicy) error {
+	if policy.Interval <= 0 {
 		return errors.New("job preparation heartbeat interval must be positive")
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-		response, err := api.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
+	return runLeaseHeartbeat(ctx, policy, func(attemptCtx context.Context) error {
+		response, err := api.GetJob(attemptCtx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
 		if connect.CodeOf(err) == connect.CodeUnauthenticated {
-			api, err = renewServiceClient(ctx, api)
+			api, err = renewServiceClient(attemptCtx, api)
 			if err == nil {
-				response, err = api.GetJob(ctx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
+				response, err = api.GetJob(attemptCtx, connect.NewRequest(&autbackv1.GetJobRequest{Id: id}))
 			}
 		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		}
-		if response.Msg.Job == nil || response.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || response.Msg.Cas == nil {
+		if response == nil || response.Msg == nil || response.Msg.Job == nil || response.Msg.Job.Status != autbackv1.JobStatus_JOB_STATUS_PREPARING || response.Msg.Cas == nil {
 			return errors.New("remote job preparation lease is no longer admitted")
 		}
-	}
+		if update != nil {
+			return update(response.Msg.Cas)
+		}
+		return nil
+	})
 }
 
 func cancelServiceJobAfterError(api autbackv1connect.ControlServiceClient, id string, cause error) error {
@@ -980,30 +980,28 @@ func serviceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient
 	if build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || connection == nil {
 		return fail(streams.Stderr, cancelServiceBuildAfterError(api, prepared.Msg.Build.Id, errors.New("remote build was admitted without a BuildKit connection")))
 	}
-	credentials, err := credentialfiles.Write(connection.CaPem, connection.CertificatePem, connection.PrivateKeyPem)
+	buildCtx, stopBuild := context.WithCancel(ctx)
+	proxy, err := dataplane.Start(buildCtx, dataPlaneCredential(connection))
 	if err != nil {
+		stopBuild()
 		return fail(streams.Stderr, cancelServiceBuildAfterError(api, prepared.Msg.Build.Id, err))
 	}
-	defer credentials.Cleanup()
+	defer proxy.Close()
 	builderName := strings.Replace(random, "autback-", "autback-build-", 1)
-	address := connection.Endpoint
-	if !strings.Contains(address, "://") {
-		address = "tcp://" + address
-	}
-	fmt.Fprintf(streams.Stderr, "Builder: %s\n", address)
-	buildCtx, stopBuild := context.WithCancel(ctx)
+	address := "tcp://" + proxy.Address()
+	fmt.Fprintf(streams.Stderr, "Builder: %s\n", connection.Endpoint)
 	heartbeatCtx, stopHeartbeat := context.WithCancel(buildCtx)
 	heartbeatDone := make(chan error, 1)
 	go func() {
-		err := heartbeatServiceBuild(heartbeatCtx, api, prepared.Msg.Build.Id, 30*time.Second)
+		err := heartbeatServiceBuildWithPolicy(heartbeatCtx, api, prepared.Msg.Build.Id, func(refreshed *autbackv1.DataPlaneConnection) error {
+			return proxy.Update(dataPlaneCredential(refreshed))
+		}, heartbeatPolicy{Interval: 30 * time.Second})
 		if err != nil {
 			stopBuild()
 		}
 		heartbeatDone <- err
 	}()
-	code, runErr := buildkit.RunWithTLS(buildCtx, os.Getenv("AUTBACK_DOCKER"), address, builderName, streams.Dir, args, buildkit.TLS{
-		CA: credentials.CA, Certificate: credentials.Certificate, Key: credentials.Key, ServerName: connection.ServerName,
-	}, streams.Stdout, streams.Stderr)
+	code, runErr := buildkit.Run(buildCtx, os.Getenv("AUTBACK_DOCKER"), address, builderName, streams.Dir, args, streams.Stdout, streams.Stderr)
 	stopHeartbeat()
 	heartbeatErr := <-heartbeatDone
 	stopBuild()
@@ -1038,33 +1036,110 @@ func cancelServiceBuildAfterError(api autbackv1connect.ControlServiceClient, id 
 }
 
 func heartbeatServiceBuild(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, interval time.Duration) error {
-	if interval <= 0 {
+	return heartbeatServiceBuildWithPolicy(ctx, api, id, nil, heartbeatPolicy{Interval: interval})
+}
+
+func heartbeatServiceBuildWithPolicy(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, update func(*autbackv1.DataPlaneConnection) error, policy heartbeatPolicy) error {
+	if policy.Interval <= 0 {
 		return errors.New("build heartbeat interval must be positive")
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-		response, err := api.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: id}))
+	return runLeaseHeartbeat(ctx, policy, func(attemptCtx context.Context) error {
+		response, err := api.GetBuild(attemptCtx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: id}))
 		if connect.CodeOf(err) == connect.CodeUnauthenticated {
-			api, err = renewServiceClient(ctx, api)
+			api, err = renewServiceClient(attemptCtx, api)
 			if err == nil {
-				response, err = api.GetBuild(ctx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: id}))
+				response, err = api.GetBuild(attemptCtx, connect.NewRequest(&autbackv1.GetBuildRequest{Id: id}))
 			}
 		}
 		if err != nil {
+			return err
+		}
+		if response == nil || response.Msg == nil || response.Msg.Build == nil || response.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING || response.Msg.Buildkit == nil {
+			return errors.New("remote build lease is no longer running")
+		}
+		if update != nil {
+			return update(response.Msg.Buildkit)
+		}
+		return nil
+	})
+}
+
+type heartbeatPolicy struct {
+	Interval          time.Duration
+	RequestTimeout    time.Duration
+	InitialRetryDelay time.Duration
+	MaxRetryDelay     time.Duration
+	FailureBudget     time.Duration
+	Wait              func(context.Context, time.Duration) error
+	Now               func() time.Time
+	Jitter            func(time.Duration) time.Duration
+}
+
+func runLeaseHeartbeat(ctx context.Context, policy heartbeatPolicy, heartbeat func(context.Context) error) error {
+	policy = normalizeHeartbeatPolicy(policy)
+	for {
+		if err := policy.Wait(ctx, policy.Interval); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
 			return err
 		}
-		if response.Msg.Build == nil || response.Msg.Build.Status != autbackv1.BuildStatus_BUILD_STATUS_RUNNING {
-			return errors.New("remote build lease is no longer running")
+		err := backoff.Do(ctx, backoff.Policy{
+			InitialDelay: policy.InitialRetryDelay, MaxDelay: policy.MaxRetryDelay, MaxAttempts: 1000,
+			MaxElapsed: policy.FailureBudget, AttemptTimeout: policy.RequestTimeout,
+			Wait: policy.Wait, Now: policy.Now, Jitter: policy.Jitter,
+		}, heartbeat, transientHeartbeatError)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("heartbeat: %w", err)
 		}
+	}
+}
+
+func normalizeHeartbeatPolicy(policy heartbeatPolicy) heartbeatPolicy {
+	if policy.RequestTimeout <= 0 {
+		policy.RequestTimeout = 10 * time.Second
+	}
+	if policy.InitialRetryDelay <= 0 {
+		policy.InitialRetryDelay = 250 * time.Millisecond
+	}
+	if policy.MaxRetryDelay <= 0 {
+		policy.MaxRetryDelay = 5 * time.Second
+	}
+	if policy.MaxRetryDelay < policy.InitialRetryDelay {
+		policy.MaxRetryDelay = policy.InitialRetryDelay
+	}
+	if policy.FailureBudget <= 0 {
+		policy.FailureBudget = 2 * policy.Interval
+	}
+	if policy.Wait == nil {
+		policy.Wait = waitForHeartbeat
+	}
+	if policy.Now == nil {
+		policy.Now = time.Now
+	}
+	return policy
+}
+
+func transientHeartbeatError(err error) bool {
+	switch connect.CodeOf(err) {
+	case connect.CodeUnavailable, connect.CodeDeadlineExceeded, connect.CodeResourceExhausted, connect.CodeAborted:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForHeartbeat(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -1098,6 +1173,22 @@ func waitForServiceBuild(ctx context.Context, api autbackv1connect.ControlServic
 		return build, connection, fmt.Errorf("remote build became %s before admission", build.Status)
 	}
 	return build, connection, nil
+}
+
+func dataPlaneCredential(connection *autbackv1.DataPlaneConnection) dataplane.Credential {
+	credential := dataplane.Credential{}
+	if connection == nil {
+		return credential
+	}
+	credential.Endpoint = connection.Endpoint
+	credential.ServerName = connection.ServerName
+	credential.CAPEM = connection.CaPem
+	credential.CertificatePEM = connection.CertificatePem
+	credential.PrivateKeyPEM = connection.PrivateKeyPem
+	if connection.ExpiresAt != nil {
+		credential.ExpiresAt = connection.ExpiresAt.AsTime()
+	}
+	return credential
 }
 
 func finishServiceBuildRecord(ctx context.Context, api autbackv1connect.ControlServiceClient, id string, exitCode int32, cancelled bool) error {

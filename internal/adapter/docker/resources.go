@@ -10,7 +10,7 @@ import (
 	"github.com/moby/moby/client"
 )
 
-const managedLabel = "autback.managed"
+const managedLabel = operationcleanup.ProtectedResourceLabel
 
 type engine interface {
 	ServiceList(context.Context, client.ServiceListOptions) (client.ServiceListResult, error)

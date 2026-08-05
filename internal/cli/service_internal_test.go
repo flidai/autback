@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -466,6 +467,100 @@ func TestHeartbeatServiceBuildKeepsRunningLeaseAlive(t *testing.T) {
 	}
 }
 
+func TestHeartbeatServiceBuildRetriesTransientFailureAndPublishesCredential(t *testing.T) {
+	service := &transientHeartbeatBuildService{polled: make(chan struct{}, 1)}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var endpoint string
+	done := make(chan error, 1)
+	go func() {
+		done <- heartbeatServiceBuildWithPolicy(ctx, client, "bld-running", func(connection *autbackv1.DataPlaneConnection) error {
+			endpoint = connection.Endpoint
+			cancel()
+			return nil
+		}, heartbeatPolicy{
+			Interval: time.Millisecond, RequestTimeout: time.Second, InitialRetryDelay: time.Millisecond,
+			MaxRetryDelay: time.Millisecond, FailureBudget: time.Second, Jitter: func(delay time.Duration) time.Duration { return delay },
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not recover from a transient failure")
+	}
+	if service.calls != 2 || endpoint != "buildkit-generation-2.example:1234" {
+		t.Fatalf("calls=%d refreshed endpoint=%q", service.calls, endpoint)
+	}
+}
+
+func TestHeartbeatServiceJobPreparationRetriesTransientFailureAndPublishesCredential(t *testing.T) {
+	service := &transientHeartbeatJobService{}
+	client, closeServer := testServiceClient(t, service)
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var endpoint string
+	err := heartbeatServiceJobPreparationWithPolicy(ctx, client, "job-uploading", func(connection *autbackv1.DataPlaneConnection) error {
+		endpoint = connection.Endpoint
+		cancel()
+		return nil
+	}, heartbeatPolicy{
+		Interval: time.Millisecond, RequestTimeout: time.Second, InitialRetryDelay: time.Millisecond,
+		MaxRetryDelay: time.Millisecond, FailureBudget: time.Second, Jitter: func(delay time.Duration) time.Duration { return delay },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.calls != 2 || endpoint != "cas-generation-2.example:50052" {
+		t.Fatalf("calls=%d refreshed endpoint=%q", service.calls, endpoint)
+	}
+}
+
+func TestRunLeaseHeartbeatBoundsTransientRetriesInsideFailureBudget(t *testing.T) {
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	var waits []time.Duration
+	attempts := 0
+	err := runLeaseHeartbeat(context.Background(), heartbeatPolicy{
+		Interval: 30 * time.Second, RequestTimeout: time.Second,
+		InitialRetryDelay: time.Second, MaxRetryDelay: 4 * time.Second, FailureBudget: 6 * time.Second,
+		Now: func() time.Time { return now },
+		Wait: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			now = now.Add(delay)
+			return nil
+		},
+		Jitter: func(delay time.Duration) time.Duration { return delay },
+	}, func(context.Context) error {
+		attempts++
+		return connect.NewError(connect.CodeUnavailable, errors.New("control plane unavailable"))
+	})
+	if err == nil || !strings.Contains(err.Error(), "retry budget exhausted") {
+		t.Fatalf("error = %v, want exhausted retry budget", err)
+	}
+	if attempts != 4 || !reflect.DeepEqual(waits, []time.Duration{30 * time.Second, time.Second, 2 * time.Second, 3 * time.Second}) {
+		t.Fatalf("attempts=%d waits=%v", attempts, waits)
+	}
+}
+
+func TestRunLeaseHeartbeatDoesNotRetryPermanentFailure(t *testing.T) {
+	attempts := 0
+	err := runLeaseHeartbeat(context.Background(), heartbeatPolicy{
+		Interval: time.Second,
+		Wait:     func(context.Context, time.Duration) error { return nil },
+	}, func(context.Context) error {
+		attempts++
+		return connect.NewError(connect.CodePermissionDenied, errors.New("operation revoked"))
+	})
+	if connect.CodeOf(err) != connect.CodePermissionDenied || attempts != 1 {
+		t.Fatalf("error=%v attempts=%d, want one permanent failure", err, attempts)
+	}
+}
+
 func TestWaitForServiceBuildRenewsGitHubOIDCSessionMoreThanOnce(t *testing.T) {
 	stale := &expiringQueuedBuildService{rejectAfter: 0}
 	staleClient, closeStale := testServiceClient(t, stale)
@@ -552,6 +647,17 @@ type heartbeatBuildService struct {
 	polled chan struct{}
 }
 
+type transientHeartbeatBuildService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	calls  int
+	polled chan struct{}
+}
+
+type transientHeartbeatJobService struct {
+	autbackv1connect.UnimplementedControlServiceHandler
+	calls int
+}
+
 type queuedJobPreparationService struct {
 	autbackv1connect.UnimplementedControlServiceHandler
 	polls int
@@ -586,7 +692,36 @@ func (s *heartbeatBuildService) GetBuild(_ context.Context, request *connect.Req
 	case s.polled <- struct{}{}:
 	default:
 	}
-	return connect.NewResponse(&autbackv1.GetBuildResponse{Build: &autbackv1.Build{Id: request.Msg.Id, Status: autbackv1.BuildStatus_BUILD_STATUS_RUNNING}}), nil
+	return connect.NewResponse(&autbackv1.GetBuildResponse{
+		Build:    &autbackv1.Build{Id: request.Msg.Id, Status: autbackv1.BuildStatus_BUILD_STATUS_RUNNING},
+		Buildkit: &autbackv1.DataPlaneConnection{Endpoint: "buildkit.example:1234"},
+	}), nil
+}
+
+func (s *transientHeartbeatBuildService) GetBuild(_ context.Context, request *connect.Request[autbackv1.GetBuildRequest]) (*connect.Response[autbackv1.GetBuildResponse], error) {
+	s.calls++
+	if s.calls == 1 {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("control plane restarting"))
+	}
+	select {
+	case s.polled <- struct{}{}:
+	default:
+	}
+	return connect.NewResponse(&autbackv1.GetBuildResponse{
+		Build:    &autbackv1.Build{Id: request.Msg.Id, Status: autbackv1.BuildStatus_BUILD_STATUS_RUNNING},
+		Buildkit: &autbackv1.DataPlaneConnection{Endpoint: "buildkit-generation-2.example:1234"},
+	}), nil
+}
+
+func (s *transientHeartbeatJobService) GetJob(_ context.Context, request *connect.Request[autbackv1.GetJobRequest]) (*connect.Response[autbackv1.GetJobResponse], error) {
+	s.calls++
+	if s.calls == 1 {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("control plane restarting"))
+	}
+	return connect.NewResponse(&autbackv1.GetJobResponse{
+		Job: &autbackv1.Job{Id: request.Msg.Id, Status: autbackv1.JobStatus_JOB_STATUS_PREPARING},
+		Cas: &autbackv1.DataPlaneConnection{Endpoint: "cas-generation-2.example:50052"},
+	}), nil
 }
 
 type expiringQueuedBuildService struct {

@@ -1022,18 +1022,18 @@ func newFixtureWithBuildCapability(t *testing.T, capability string) *fixture {
 }
 
 func newFixtureWithBuildCapabilityAndCapacity(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, capability string) *fixture {
-	return newFixtureWithOptions(t, verifier, capacity, capability, "", nil)
+	return newFixtureWithOptions(t, verifier, capacity, capability, "", nil, nil, 0)
 }
 
 func newFixtureWithJobCapability(t *testing.T, capability string) *fixture {
-	return newFixtureWithOptions(t, nil, nil, "", capability, nil)
+	return newFixtureWithOptions(t, nil, nil, "", capability, nil, nil, 0)
 }
 
 func newFixtureWithDirectory(t *testing.T, directory controlapi.GitHubDirectory) *fixture {
-	return newFixtureWithOptions(t, nil, nil, "", "", directory)
+	return newFixtureWithOptions(t, nil, nil, "", "", directory, nil, 0)
 }
 
-func newFixtureWithOptions(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string, directory controlapi.GitHubDirectory) *fixture {
+func newFixtureWithOptions(t *testing.T, verifier controlapi.OIDCVerifier, capacity controlapi.Capacity, buildCapability, jobCapability string, directory controlapi.GitHubDirectory, dependencies []controlapi.ReadinessDependency, probeTimeout time.Duration) *fixture {
 	t.Helper()
 	root := t.TempDir()
 	store, err := controlsqlite.Open(filepath.Join(root, "state"), []byte("test-pepper-that-is-at-least-32-bytes"))
@@ -1062,6 +1062,8 @@ func newFixtureWithOptions(t *testing.T, verifier controlapi.OIDCVerifier, capac
 		RequiredJobClientCapability:   jobCapability,
 		Ready:                         func() bool { return !draining.Load() },
 		GitHubDirectory:               directory,
+		ReadinessDependencies:         dependencies,
+		ReadinessProbeTimeout:         probeTimeout,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1185,6 +1187,62 @@ func TestReadinessChecksStoreAndScheduler(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unready status = %d", response.StatusCode)
+	}
+}
+
+func TestReadinessChecksBoundedDataPlaneDependenciesAndRecovers(t *testing.T) {
+	casErr := errors.New("dial cas with secret credential")
+	buildKitErr := error(nil)
+	fixture := newFixtureWithOptions(t, nil, nil, "", "", nil, []controlapi.ReadinessDependency{
+		{Name: "CAS", Check: func(context.Context) error { return casErr }},
+		{Name: "BuildKit", Check: func(context.Context) error { return buildKitErr }},
+	}, 20*time.Millisecond)
+
+	response, err := http.Get(fixture.server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "CAS unavailable") || strings.Contains(string(body), "secret credential") {
+		t.Fatalf("CAS readiness status=%d body=%q", response.StatusCode, body)
+	}
+
+	casErr = nil
+	buildKitErr = errors.New("buildkit socket failed")
+	response, err = http.Get(fixture.server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "BuildKit unavailable") || strings.Contains(string(body), "socket failed") {
+		t.Fatalf("BuildKit readiness status=%d body=%q", response.StatusCode, body)
+	}
+
+	buildKitErr = nil
+	response, err = http.Get(fixture.server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("recovered readiness status=%d", response.StatusCode)
+	}
+}
+
+func TestReadinessBoundsHungDependencyProbe(t *testing.T) {
+	fixture := newFixtureWithOptions(t, nil, nil, "", "", nil, []controlapi.ReadinessDependency{{
+		Name: "CAS", Check: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+	}}, 10*time.Millisecond)
+	started := time.Now()
+	response, err := http.Get(fixture.server.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable || time.Since(started) > time.Second {
+		t.Fatalf("hung probe status=%d elapsed=%s", response.StatusCode, time.Since(started))
 	}
 }
 

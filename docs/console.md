@@ -62,9 +62,11 @@ durations and relative timestamps derive from that signal, so they advance witho
 timers, polling, or a full document refresh. Durable projections are still re-queried only
 after their committed change notification.
 
-The server samples whole-VM CPU, memory, and disk capacity every two seconds by default,
-attributes occupied samples to the admitted run, and records the sample in the same SQLite
-store. Raw two-second samples are retained for 14 days, minute rollups for 180 days, and
+The server samples whole-VM CPU, memory, disk and inode capacity, cgroup v2 memory/OOM/PID
+events, and CPU/memory/I/O pressure every two seconds by default. It attributes occupied
+samples and event deltas to the admitted run, explicitly counts host-only pressure when no
+operation owns the FIFO, and records the sample in the same SQLite store. Raw two-second
+samples are retained for 14 days, minute rollups for 180 days, and
 compact per-run averages and peaks permanently. The interval and retention windows can be
 set with `AUTBACK_METRICS_INTERVAL`, `AUTBACK_METRICS_RAW_RETENTION`, and
 `AUTBACK_METRICS_ROLLUP_RETENTION`.

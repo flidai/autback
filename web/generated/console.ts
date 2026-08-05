@@ -43,6 +43,8 @@ export interface ResourceView {
   memoryTotalBytes: number
   diskUsageBytes: number
   diskTotalBytes: number
+  diskInodesUsed: number
+  diskInodesTotal: number
   busyRatio: number
   cpuAverage: number
   cpuPeak: number
@@ -50,12 +52,24 @@ export interface ResourceView {
   memoryPeak: number
   memoryBytesPeak: number
   queueWaitP95Millis: number
+  cpuPressurePeak: number
+  memoryPressurePeak: number
+  ioPressurePeak: number
+  memoryHighEvents: number
+  oomEvents: number
+  oomKills: number
+  pidsCurrent: number
+  pidsLimit: number
+  unattributedPressureSamples: number
 }
 
 export interface ResourceSampleView {
   observedAt: string
   cpuUtilization: number
   memoryUtilization: number
+  cpuPressure: number
+  memoryPressure: number
+  ioPressure: number
 }
 
 export interface OperationResourceView {

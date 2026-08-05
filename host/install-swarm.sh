@@ -49,6 +49,64 @@ install -o root -g root -m 0644 /tmp/autback-buildkit.service /etc/systemd/syste
 install -o root -g root -m 0644 /tmp/autback-maintenance.service /etc/systemd/system/autback-maintenance.service
 install -o root -g root -m 0644 /tmp/autback-maintenance.timer /etc/systemd/system/autback-maintenance.timer
 
+memory_bytes="$(awk '/^MemTotal:/ { print $2 * 1024 }' /proc/meminfo | cut -d. -f1)"
+host_memory_headroom="${AUTBACK_HOST_MEMORY_HEADROOM_BYTES:-2147483648}"
+(( memory_bytes > host_memory_headroom + 1073741824 )) || { printf 'worker requires more than 3 GiB RAM\n' >&2; exit 1; }
+workload_memory_max="${AUTBACK_WORKLOAD_MEMORY_MAX_BYTES:-$(( memory_bytes - host_memory_headroom ))}"
+workload_memory_high="${AUTBACK_WORKLOAD_MEMORY_HIGH_BYTES:-$(( workload_memory_max * 9 / 10 ))}"
+worker_cpus="$(nproc)"
+workload_cpu_quota="${AUTBACK_WORKLOAD_CPU_QUOTA_PERCENT:-$(( (worker_cpus > 1 ? worker_cpus - 1 : 1) * 100 ))}"
+workload_tasks_max="${AUTBACK_WORKLOAD_TASKS_MAX:-8192}"
+job_memory_limit="${AUTBACK_JOB_MEMORY_LIMIT_BYTES:-$(( workload_memory_max * 9 / 10 ))}"
+job_memory_reservation="${AUTBACK_JOB_MEMORY_RESERVATION_BYTES:-1073741824}"
+job_cpu_limit_nano="${AUTBACK_JOB_CPU_LIMIT_NANO:-$(( (worker_cpus > 1 ? worker_cpus - 1 : 1) * 1000000000 ))}"
+job_cpu_reservation_nano="${AUTBACK_JOB_CPU_RESERVATION_NANO:-1000000000}"
+job_pids_limit="${AUTBACK_JOB_PIDS_LIMIT:-4096}"
+
+cat >/etc/systemd/system/autback-workloads.slice <<EOF
+[Unit]
+Description=Autback job and sibling-container resource envelope
+
+[Slice]
+MemoryHigh=${workload_memory_high}
+MemoryMax=${workload_memory_max}
+CPUQuota=${workload_cpu_quota}%
+TasksMax=${workload_tasks_max}
+EOF
+cat >/etc/systemd/system/autback-infrastructure.slice <<'EOF'
+[Unit]
+Description=Autback protected infrastructure containers
+
+[Slice]
+TasksMax=8192
+EOF
+
+# The worker is an exclusive Docker ownership domain. Applying the daemon's
+# default cgroup parent bounds both Swarm tasks and uncooperative sibling
+# containers created through the mounted Docker socket. Infrastructure
+# containers explicitly opt into the separate protected slice above.
+python3 - <<'PY'
+import json
+import os
+
+path = "/etc/docker/daemon.json"
+try:
+    with open(path, encoding="utf-8") as source:
+        config = json.load(source)
+except FileNotFoundError:
+    config = {}
+current = config.get("cgroup-parent")
+if current not in (None, "autback-workloads.slice"):
+    raise SystemExit(f"refusing to replace Docker cgroup-parent {current!r}")
+config["cgroup-parent"] = "autback-workloads.slice"
+temporary = path + ".autback.tmp"
+with open(temporary, "w", encoding="utf-8") as output:
+    json.dump(config, output, sort_keys=True)
+    output.write("\n")
+os.chmod(temporary, 0o644)
+os.replace(temporary, path)
+PY
+
 umask 077
 disk_bytes="$(df --output=size --block-size=1 /var/lib/autback | tail -1 | tr -d ' ')"
 gib=1073741824
@@ -86,6 +144,9 @@ chmod 0600 /etc/autback/buildkitd.toml
   printf 'AUTBACK_CAS_MAX_SIZE=%s\n' "$cas_max"
   printf 'AUTBACK_CAS_HARD_LIMIT=%s\n' "$cas_hard"
   printf 'AUTBACK_BUILDKIT_IMAGE=%s\n' "$buildkit_image"
+  printf 'AUTBACK_BUILDKIT_MEMORY_LIMIT=%s\n' "${AUTBACK_BUILDKIT_MEMORY_LIMIT:-$job_memory_limit}"
+  printf 'AUTBACK_BUILDKIT_MEMORY_RESERVATION=%s\n' "${AUTBACK_BUILDKIT_MEMORY_RESERVATION:-$job_memory_reservation}"
+  printf 'AUTBACK_BUILDKIT_CPU_LIMIT=%s\n' "${AUTBACK_BUILDKIT_CPU_LIMIT:-$(( job_cpu_limit_nano / 1000000000 ))}"
 } >/etc/autback/swarm.env
 {
   printf 'AUTBACK_DATA_DIR=/var/lib/autback\n'
@@ -99,6 +160,11 @@ chmod 0600 /etc/autback/buildkitd.toml
   printf 'AUTBACK_BUILDKIT_LISTEN=:1235\n'
   printf 'AUTBACK_BUILDKIT_ENDPOINT=%s:1235\n' "$public_name"
   printf 'AUTBACK_JOB_ENTRYPOINT=/usr/local/lib/autback/autback-job-entrypoint\n'
+  printf 'AUTBACK_JOB_MEMORY_LIMIT_BYTES=%s\n' "$job_memory_limit"
+  printf 'AUTBACK_JOB_MEMORY_RESERVATION_BYTES=%s\n' "$job_memory_reservation"
+  printf 'AUTBACK_JOB_CPU_LIMIT_NANO=%s\n' "$job_cpu_limit_nano"
+  printf 'AUTBACK_JOB_CPU_RESERVATION_NANO=%s\n' "$job_cpu_reservation_nano"
+  printf 'AUTBACK_JOB_PIDS_LIMIT=%s\n' "$job_pids_limit"
   printf 'AUTBACK_GITHUB_OIDC_AUDIENCES=%s\n' "$oidc_audiences"
   [[ -z "$public_url" ]] || printf 'AUTBACK_PUBLIC_URL=%s\n' "$public_url"
   [[ -z "$acme_domain" ]] || printf 'AUTBACK_ACME_DOMAIN=%s\n' "$acme_domain"
@@ -111,7 +177,8 @@ if [[ -f /tmp/autback-auth.env ]]; then
 fi
 
 systemctl daemon-reload
-systemctl stop autback-maintenance.timer autback-maintenance.service autback-server
+systemctl stop autback-maintenance.timer autback-maintenance.service autback-server autback-cas autback-buildkit
+systemctl restart docker
 
 docker pull "$cas_image"
 docker pull "$buildkit_image"

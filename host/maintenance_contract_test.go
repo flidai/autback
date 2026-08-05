@@ -27,7 +27,13 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 
 	buildkit := readFile(t, filepath.Join(root, "host", "autback-buildkit.service"))
-	for _, required := range []string{"/etc/autback/buildkitd.toml", "--config /etc/buildkit/buildkitd.toml", "--log-driver local"} {
+	for _, required := range []string{
+		"docker volume create --label autback.managed=true autback-buildkit-state",
+		"--label autback.managed=true",
+		"/etc/autback/buildkitd.toml",
+		"--config /etc/buildkit/buildkitd.toml",
+		"--log-driver local",
+	} {
 		if !strings.Contains(buildkit, required) {
 			t.Errorf("BuildKit service missing %q", required)
 		}
@@ -37,7 +43,12 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	}
 
 	cas := readFile(t, filepath.Join(root, "host", "autback-cas.service"))
-	for _, required := range []string{"--max_size ${AUTBACK_CAS_MAX_SIZE}", "--max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT}", "--log-driver local"} {
+	for _, required := range []string{
+		"--label autback.managed=true",
+		"--max_size ${AUTBACK_CAS_MAX_SIZE}",
+		"--max_size_hard_limit ${AUTBACK_CAS_HARD_LIMIT}",
+		"--log-driver local",
+	} {
 		if !strings.Contains(cas, required) {
 			t.Errorf("CAS service missing %q", required)
 		}
@@ -53,6 +64,32 @@ func TestWorkerMaintenanceTargetsOwnedDockerStorage(t *testing.T) {
 	pull := strings.Index(install, "docker pull \"$cas_image\"")
 	if stop < 0 || pull < 0 || stop >= pull {
 		t.Fatal("installer must stop every lifecycle writer before pulling owned Docker images")
+	}
+}
+
+func TestWorkerResourcePolicyReservesControlPlaneHeadroom(t *testing.T) {
+	root := repositoryRoot(t)
+	server := readFile(t, filepath.Join(root, "host", "autback-server.service"))
+	for _, required := range []string{"MemoryHigh=512M", "MemoryMax=768M", "TasksMax=1024"} {
+		if !strings.Contains(server, required) {
+			t.Errorf("server service missing %q", required)
+		}
+	}
+	buildkit := readFile(t, filepath.Join(root, "host", "autback-buildkit.service"))
+	for _, required := range []string{"--memory ${AUTBACK_BUILDKIT_MEMORY_LIMIT}", "--memory-reservation ${AUTBACK_BUILDKIT_MEMORY_RESERVATION}", "--cpus ${AUTBACK_BUILDKIT_CPU_LIMIT}", "--cgroup-parent autback-infrastructure.slice"} {
+		if !strings.Contains(buildkit, required) {
+			t.Errorf("BuildKit service missing %q", required)
+		}
+	}
+	cas := readFile(t, filepath.Join(root, "host", "autback-cas.service"))
+	if !strings.Contains(cas, "--cgroup-parent autback-infrastructure.slice") {
+		t.Fatal("CAS is not isolated from the workload slice")
+	}
+	install := readFile(t, filepath.Join(root, "host", "install-swarm.sh"))
+	for _, required := range []string{"autback-workloads.slice", `config["cgroup-parent"] = "autback-workloads.slice"`, "AUTBACK_JOB_MEMORY_LIMIT_BYTES", "AUTBACK_JOB_CPU_LIMIT_NANO", "AUTBACK_JOB_PIDS_LIMIT"} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installer resource policy missing %q", required)
+		}
 	}
 }
 

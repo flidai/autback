@@ -10,6 +10,11 @@ import (
 	"github.com/flidai/autback/internal/control"
 )
 
+// ProtectedResourceLabel marks Docker resources that belong to Autback's
+// infrastructure or control plane. ResourceRuntime implementations must omit
+// resources carrying this label from operation cleanup inventories.
+const ProtectedResourceLabel = "autback.managed"
+
 type ResourceSet struct {
 	Services   []string `json:"services"`
 	Containers []string `json:"containers"`

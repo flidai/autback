@@ -212,8 +212,11 @@ OAuth/ACME variables does not silently disable an already configured public cons
 Before deployment:
 
 1. Create an `A` record for `console.autback.dev` pointing to the worker public IP.
-2. Create a GitHub OAuth App with homepage `https://autback.dev` and callback
-   `https://console.autback.dev/auth/github/callback`. The app requests no OAuth scopes.
+2. Create a GitHub App with homepage `https://autback.dev` and callback
+   `https://console.autback.dev/auth/github/callback`. Disable webhooks and device flow,
+   leave installation-time user authorization off, grant no permissions, and subscribe
+   to no events. Autback starts GitHub's user authorization flow itself and discards the
+   resulting GitHub token after resolving the user's immutable identity.
 3. Export the client ID and client secret only in the deploying shell. The deploy script
    transfers them through a mode-0600 temporary file and installs root-owned
    `/etc/autback/auth.env`; secrets never appear in process arguments or service logs.
